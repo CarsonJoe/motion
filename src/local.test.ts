@@ -124,6 +124,29 @@ describe('sharing race', () => {
   })
 })
 
+describe('losing access to a share', () => {
+  it('removes every trace of a share the user is no longer a member of', async () => {
+    const store = await openLocalStore()
+    const goneShare = crypto.randomUUID()
+    const keptShare = crypto.randomUUID()
+    const orphan = note({ shareId: goneShare, title: 'deleted elsewhere', updatedAt: 1 })
+    const kept = note({ shareId: keptShare, updatedAt: 1 })
+    const privateNote = note({ updatedAt: 1 })
+    for (const value of [orphan, kept, privateNote]) await store.putNote(value)
+    await store.putDocState(orphan.id, 'body')
+    await store.enqueueNote(orphan.id)
+
+    // What fullSync does when the resource stops appearing in the list.
+    await store.removeShare(goneShare)
+
+    expect(store.getNote(orphan.id)).toBeNull()
+    expect(await store.getDocState(orphan.id)).toBeNull()
+    expect((await store.listOps()).some((op) => op.noteId === orphan.id)).toBe(false)
+    expect(store.getNote(kept.id)).not.toBeNull()
+    expect(store.getNote(privateNote.id)).not.toBeNull()
+  })
+})
+
 describe('subtreeIds', () => {
   it('collects a root and every transitive child', () => {
     const a = note({ id: 'a' })

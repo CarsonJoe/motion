@@ -226,6 +226,10 @@ export async function fullSync() {
       if (!navigator.onLine) { setState({ phase: 'offline' }); return }
       setState({ phase: 'syncing', error: null })
 
+      // Captured before the resource list is fetched: a share created
+      // concurrently by this device is absent here and so is never pruned.
+      const sharesBefore = new Set(local.getSnapshot().map((note) => note.shareId).filter(Boolean))
+
       for (const row of await selectAll((cursor) => {
         const query = tallpond.table('notes').select()
         return cursor ? query.after(cursor) : query
@@ -242,6 +246,17 @@ export async function fullSync() {
           const query = tallpond.resource(resource.id).table('member_notes').select()
           return cursor ? query.after(cursor) : query
         })) await local.applyRemoteNote(rowToNote(row, resource.id))
+      }
+
+      // A share that has dropped out of the list is one this user is no longer
+      // a member of — it was deleted, or access was revoked, on another
+      // device. Without this the notes linger locally forever, editable
+      // against a cached role and invisible to everyone else.
+      for (const shareId of sharesBefore) {
+        if (resources.some((resource) => resource.id === shareId)) continue
+        localStorage.removeItem(`${ROLE_KEY}${shareId}`)
+        delete roles[shareId]
+        await local.removeShare(shareId)
       }
       setState({ roles })
       subscribeLive(tallpond, resources.map((resource) => resource.id))
