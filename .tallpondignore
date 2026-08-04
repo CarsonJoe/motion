@@ -1,0 +1,7 @@
+# Built static files are published separately by Tallpond.
+dist/
+
+# Local-only artifacts must not enter a source snapshot.
+.tallpond-auth/
+Motion-source.zip
+.sync-response.json

@@ -1,0 +1,13 @@
+node_modules/
+.motion-git/
+dist/
+.tallpond-auth/
+.env.local
+.sync-response.json
+*.zip
+*.log
+motion-clean.*/
+motion-final.*/
+motion-mobile.*/
+motion-package.*/
+upload/

@@ -1,0 +1,10 @@
+{
+  "name": "Motion Notes",
+  "short_name": "Motion",
+  "description": "Local-first collaborative workspace",
+  "theme_color": "#101010",
+  "background_color": "#101010",
+  "display": "standalone",
+  "orientation": "portrait",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}
