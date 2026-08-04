@@ -103,6 +103,27 @@ describe('leaving a share', () => {
   })
 })
 
+describe('sharing race', () => {
+  it('ignores the private soft-delete that sharing leaves behind', async () => {
+    const store = await openLocalStore()
+    const id = crypto.randomUUID()
+    const shareId = crypto.randomUUID()
+    await store.putNote(note({ id, title: 'page', updatedAt: 10 }))
+    await store.putDocState(id, 'body')
+
+    // shareNoteTree re-homes locally first, then retires the private row.
+    await store.putNote({ ...note({ id, title: 'page', updatedAt: 10 }), shareId })
+    const retiredAt = Date.now()
+    const applied = await store.applyRemoteNote(note({ id, deletedAt: retiredAt, updatedAt: retiredAt }))
+
+    expect(applied).toBe(false)
+    expect(store.getNote(id)?.deletedAt).toBe(0)
+    expect(store.getNote(id)?.shareId).toBe(shareId)
+    // The body must survive: it is the same note, only in a new scope.
+    expect(await store.getDocState(id)).toBe('body')
+  })
+})
+
 describe('subtreeIds', () => {
   it('collects a root and every transitive child', () => {
     const a = note({ id: 'a' })

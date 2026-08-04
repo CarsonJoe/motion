@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { drainOutbox } = await import('./sync')
+const { drainOutbox, saveNote } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -65,6 +65,38 @@ const encodedInsert = (value: string) => {
   doc.getText('content').insert(0, value)
   return toBase64(Y.encodeStateAsUpdate(doc))
 }
+
+describe('saveNote', () => {
+  it('never lets a stale caller snapshot revert the note scope or a delete', async () => {
+    const store = await openLocalStore()
+    const id = crypto.randomUUID()
+    const shareId = crypto.randomUUID()
+    const beforeSharing = note({ id, title: 'draft', updatedAt: 10 })
+    await store.putNote(beforeSharing)
+    // The note is shared (and could equally have been deleted) after the UI
+    // captured `beforeSharing` for a title edit.
+    await store.putNote({ ...beforeSharing, shareId })
+
+    await saveNote(store, { ...beforeSharing, title: 'renamed', updatedAt: 20 })
+
+    const current = store.getNote(id)
+    expect(current?.title).toBe('renamed')
+    expect(current?.shareId).toBe(shareId)
+    expect(current?.deletedAt).toBe(0)
+  })
+
+  it('keeps a note deleted when a queued edit lands afterwards', async () => {
+    const store = await openLocalStore()
+    const id = crypto.randomUUID()
+    const live = note({ id, title: 'doomed', updatedAt: 10 })
+    await store.putNote(live)
+    await store.putNote({ ...live, deletedAt: 30, updatedAt: 30 })
+
+    await saveNote(store, { ...live, title: 'edited', updatedAt: 40 })
+
+    expect(store.getNote(id)?.deletedAt).toBe(30)
+  })
+})
 
 describe('drainOutbox', () => {
   it('merges content updates per note into one insert against the right scope', async () => {

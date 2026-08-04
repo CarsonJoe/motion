@@ -322,8 +322,13 @@ export function noteChanged() {
 // ---------------------------------------------------------------------------
 
 export async function saveNote(store: LocalStore, note: Note) {
-  await store.putNote(note)
-  await store.enqueueNote(note.id)
+  const current = store.getNote(note.id)
+  // Callers pass a snapshot taken at render time, which may predate a
+  // concurrent re-home or delete. Scope and liveness belong to the store —
+  // only sharing and deleting may change them, and both write directly.
+  const merged = current ? { ...note, shareId: current.shareId, deletedAt: current.deletedAt } : note
+  await store.putNote(merged)
+  await store.enqueueNote(merged.id)
   noteChanged()
 }
 
@@ -363,8 +368,11 @@ export async function shareNoteTree(store: LocalStore, root: Note) {
     if (body) await tallpond.resource(resource.id).table('member_note_updates').insert({
       updateId: crypto.randomUUID(), noteId: note.id, payload: body
     })
-    await tallpond.table('notes').update({ deletedAt, clientUpdatedAt: deletedAt }).eq('noteId', note.id)
+    // Re-home locally *before* retiring the private row. The private live
+    // subscription reports that soft delete, and only a note already carrying
+    // the new scope is protected from it by the cross-scope guard.
     await store.putNote({ ...note, parentId, shareId: resource.id })
+    await tallpond.table('notes').update({ deletedAt, clientUpdatedAt: deletedAt }).eq('noteId', note.id)
   }
   const roles = { ...state.roles, [resource.id]: 'owner' }
   localStorage.setItem(`${ROLE_KEY}${resource.id}`, 'owner')
@@ -397,7 +405,14 @@ export async function leaveShare(store: LocalStore, shareId: string) {
 
 export async function listInvitations(): Promise<InvitationInfo[]> {
   if (!tallpond) return []
-  return tallpond.resource.invitations({ type: 'shared_notes' })
+  // SDK 0.0.15 defines `invitations` on the internal resource API but does not
+  // copy it onto the public callable wrapper (only create/list/browse/static
+  // are assigned), so the helper is undefined at runtime. Use it when a later
+  // SDK restores it, and call the same authenticated route otherwise.
+  const api = tallpond.resource as Partial<{ invitations: (opts: { type: string }) => Promise<InvitationInfo[]> }>
+  if (typeof api.invitations === 'function') return api.invitations({ type: 'shared_notes' })
+  const response = await tallpond.gateway.request<{ invitations: InvitationInfo[] }>('/v1/resources/invitations?type=shared_notes')
+  return response.invitations ?? []
 }
 
 export async function acceptInvitation(resourceId: string) {
@@ -411,6 +426,8 @@ export async function rejectInvitation(resourceId: string) {
   await tallpond.resource(resourceId).members.reject()
 }
 
+// Resolving the handle first means a typo costs nothing: an unshared note is
+// still unshared, with no empty resource left behind.
 export async function inviteByHandle(shareId: string, handle: string, role: 'reader' | 'writer'): Promise<MemberInfo> {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   const profile = await tallpond.users.byHandle(handle.replace(/^@/, ''))
