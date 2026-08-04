@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { $createParagraphNode, $createTextNode, $getSelection, $insertNodes, $isRangeSelection, $isTextNode, COMMAND_PRIORITY_CRITICAL, KEY_ARROW_DOWN_COMMAND, KEY_ARROW_UP_COMMAND, KEY_ENTER_COMMAND, KEY_ESCAPE_COMMAND, KEY_TAB_COMMAND, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $createTextNode, $getSelection, $insertNodes, $isElementNode, $isRangeSelection, $isTextNode, $setSelection, COMMAND_PRIORITY_CRITICAL, KEY_ENTER_COMMAND, type LexicalEditor } from 'lexical'
 import { $createHeadingNode, $createQuoteNode } from '@lexical/rich-text'
-import { $createLinkNode } from '@lexical/link'
+import { $createLinkNode, $isLinkNode } from '@lexical/link'
+import { $findMatchingParent } from '@lexical/utils'
 import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, useCellValue, usePublisher } from '@mdxeditor/editor'
-import { $createPageLinkNode, usePageLinkServices } from './pageLink'
+import { $createPageLinkNode, $isPageLinkNode, usePageLinkServices } from './pageLink'
 
 // A single trigger-driven command menu, shared by `[[` page links and `/` slash
 // commands. The important property is that it is *stateful*: a session opens on
@@ -135,7 +136,14 @@ function EditorMenu() {
       const caret = selection.anchor.offset
       const match = active?.match(node.getTextContent().slice(0, caret))
       if (!match) return
-      node.spliceText(match.start, caret - match.start, '', true)
+      // Select the trigger run and delete it via the selection, which handles
+      // emptying the whole text node cleanly (spliceText can throw doing that,
+      // which rolled the update back and left the `/div` text behind).
+      const range = $createRangeSelection()
+      range.anchor.set(node.getKey(), match.start, 'text')
+      range.focus.set(node.getKey(), caret, 'text')
+      $setSelection(range)
+      range.removeText()
     })
     item.run(editor)
     dismissedRef.current = null
@@ -182,38 +190,61 @@ function EditorMenu() {
     })
   }, [editor, providers])
 
-  // Keyboard: drive the list while a session is open, and preempt the editor's
-  // own Enter/Tab/Arrow handling so it doesn't insert newlines or move the caret.
+  // Keyboard while a session is open. A window capture listener is used instead
+  // of Lexical commands so navigation is deterministic: it fires before the
+  // contenteditable acts, and preventDefault reliably stops caret movement,
+  // newlines, and tab indentation.
   useEffect(() => {
-    if (!editor) return
-    const active = () => stateRef.current.session && stateRef.current.items.length > 0
-    const move = (delta: number) => (event: KeyboardEvent | null) => {
-      if (!active()) return false
-      event?.preventDefault()
-      setHighlight((value) => { const count = stateRef.current.items.length; return count ? (value + delta + count) % count : 0 })
-      return true
+    if (!session) return
+    const onKey = (event: KeyboardEvent) => {
+      const { items, highlight } = stateRef.current
+      const take = () => { event.preventDefault(); event.stopPropagation() }
+      if (event.key === 'ArrowDown') { take(); setHighlight((value) => items.length ? (value + 1) % items.length : 0) }
+      else if (event.key === 'ArrowUp') { take(); setHighlight((value) => items.length ? (value - 1 + items.length) % items.length : 0) }
+      else if (event.key === 'Escape') { take(); dismissRef.current() }
+      else if ((event.key === 'Enter' || event.key === 'Tab') && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+        if (items.length === 0) { if (event.key === 'Enter') dismissRef.current(); return }
+        take(); completeRef.current(highlight)
+      }
     }
-    const commit = (event: KeyboardEvent | null) => {
-      if (!active()) return false
-      event?.preventDefault()
-      completeRef.current(stateRef.current.highlight)
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [session])
+
+  // Ctrl/Cmd+Enter opens the link the caret is on — an internal page or an
+  // external URL — regardless of whether a menu is open.
+  useEffect(() => {
+    if (!editor || !services) return
+    return editor.registerCommand(KEY_ENTER_COMMAND, (event) => {
+      if (!event || !(event.ctrlKey || event.metaKey)) return false
+      let action: { page: string } | { url: string } | null = null
+      editor.getEditorState().read(() => {
+        const selection = $getSelection()
+        if (!$isRangeSelection(selection)) return
+        const candidates = [...selection.getNodes(), selection.anchor.getNode()]
+        const anchor = selection.anchor.getNode()
+        if ($isElementNode(anchor)) {
+          const before = anchor.getChildAtIndex(selection.anchor.offset - 1)
+          const at = anchor.getChildAtIndex(selection.anchor.offset)
+          if (before) candidates.push(before)
+          if (at) candidates.push(at)
+        } else {
+          const prev = anchor.getPreviousSibling()
+          if (prev) candidates.push(prev)
+        }
+        for (const node of candidates) {
+          if ($isPageLinkNode(node)) { action = { page: node.getId() }; return }
+          const link = $findMatchingParent(node, $isLinkNode)
+          if (link) { action = { url: (link as ReturnType<typeof $createLinkNode>).getURL() }; return }
+        }
+      })
+      if (!action) return false
+      event.preventDefault()
+      if ('page' in action) services.navigate(action.page)
+      else window.open(action.url, '_blank', 'noopener,noreferrer')
       return true
-    }
-    const escape = (event: KeyboardEvent | null) => {
-      if (!stateRef.current.session) return false
-      event?.preventDefault()
-      dismissRef.current()
-      return true
-    }
-    const removers = [
-      editor.registerCommand(KEY_ARROW_DOWN_COMMAND, move(1), COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(KEY_ARROW_UP_COMMAND, move(-1), COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(KEY_ENTER_COMMAND, commit, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(KEY_TAB_COMMAND, commit, COMMAND_PRIORITY_CRITICAL),
-      editor.registerCommand(KEY_ESCAPE_COMMAND, escape, COMMAND_PRIORITY_CRITICAL)
-    ]
-    return () => removers.forEach((remove) => remove())
-  }, [editor])
+    }, COMMAND_PRIORITY_CRITICAL)
+  }, [editor, services])
 
   // A click anywhere outside the menu dismisses it, leaving the trigger as prose.
   useEffect(() => {
