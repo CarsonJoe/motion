@@ -1,6 +1,6 @@
 import { useSyncExternalStore, type ReactNode } from 'react'
 import { DecoratorNode, $getSelection, $isRangeSelection, type EditorConfig, type LexicalEditor, type LexicalNode, type NodeKey, type SerializedLexicalNode } from 'lexical'
-import { realmPlugin, addImportVisitor$, addLexicalNode$, addExportVisitor$, activeEditor$, useCellValue } from '@mdxeditor/editor'
+import { realmPlugin, addImportVisitor$, addLexicalNode$, addExportVisitor$, activeEditor$, ButtonWithTooltip, iconComponentFor$, useCellValue } from '@mdxeditor/editor'
 import { PAGE_LINK_SCHEME } from './links'
 
 // Internal page links are stored as ordinary markdown links with a `motion:`
@@ -157,17 +157,19 @@ const LexicalPageLinkVisitor = {
 }
 
 // ---------------------------------------------------------------------------
-// Toolbar affordance: type the trigger and let the universal menu take over.
+// The single link toolbar button. It opens the `[[` menu, which covers both
+// internal pages and external URLs, and is built from the same primitives as
+// the other toolbar tools so it matches them exactly.
 // ---------------------------------------------------------------------------
 
 export function InsertPageLink() {
   const editor = useCellValue(activeEditor$) as LexicalEditor | null
+  const iconComponentFor = useCellValue(iconComponentFor$)
   return (
-    <button
-      type="button"
-      className="page-ref-insert"
-      title="Link to page"
-      aria-label="Link to page"
+    <ButtonWithTooltip
+      title="Add link"
+      aria-label="Add link"
+      onPointerDown={(event) => event.preventDefault()}
       onClick={() => {
         editor?.focus()
         editor?.update(() => {
@@ -176,8 +178,8 @@ export function InsertPageLink() {
         })
       }}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>
-    </button>
+      {iconComponentFor('link')}
+    </ButtonWithTooltip>
   )
 }
 
