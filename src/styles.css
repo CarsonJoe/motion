@@ -184,8 +184,9 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .editor-menu-item svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
 .editor-menu-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-menu-detail { flex-shrink: 0; color: var(--baseSolid); font-size: 12px; }
-.editor-menu-item.active { background: var(--baseBgActive); }
-.editor-menu-item.active .editor-menu-icon { border-color: var(--baseBorderHover); background: var(--baseBg); }
+.editor-menu-item.active { background: rgba(124, 120, 255, .18); color: #fff; }
+.editor-menu-item.active .editor-menu-icon { border-color: #7a76ff; background: rgba(124, 120, 255, .16); }
+.editor-menu-item.active .editor-menu-detail { color: #cfccff; }
 
 /* Linked references (backlinks) */
 .backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--baseLine); }

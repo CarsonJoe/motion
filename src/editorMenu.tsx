@@ -4,7 +4,9 @@ import { $createParagraphNode, $createRangeSelection, $createTextNode, $getSelec
 import { $createHeadingNode, $createQuoteNode } from '@lexical/rich-text'
 import { $createLinkNode, $isLinkNode } from '@lexical/link'
 import { $findMatchingParent } from '@lexical/utils'
-import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, useCellValue, usePublisher } from '@mdxeditor/editor'
+import { registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
+import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
+import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, rootEditor$, useCellValue, usePublisher } from '@mdxeditor/editor'
 import { $createPageLinkNode, $isPageLinkNode, usePageLinkServices } from './pageLink'
 
 // A single trigger-driven command menu, shared by `[[` page links and `/` slash
@@ -287,6 +289,35 @@ function EditorMenu() {
 
 export const editorMenuPlugin = realmPlugin({
   init(realm) { realm.pubIn({ [addComposerChild$]: EditorMenu }) }
+})
+
+// A corrected `---` / `***` / `___` shortcut. MDXEditor's built-in one inserts
+// the rule *before* the line and leaves the dashes behind when the line is last
+// in the document; this always replaces the line and drops a fresh paragraph
+// after. Register `markdownShortcutPlugin` before `thematicBreakPlugin` so the
+// built-in horizontal-rule transformer is excluded and this is the only one.
+const HORIZONTAL_RULE: ElementTransformer = {
+  dependencies: [HorizontalRuleNode],
+  export: () => null,
+  regExp: /^(-{3,}|\*{3,}|_{3,})\s?$/,
+  replace: (parentNode) => {
+    const line = $createHorizontalRuleNode()
+    parentNode.replace(line)
+    const paragraph = $createParagraphNode()
+    line.insertAfter(paragraph)
+    paragraph.select()
+  },
+  type: 'element'
+}
+
+function ThematicBreakRule() {
+  const editor = useCellValue(rootEditor$) as LexicalEditor | null
+  useEffect(() => { if (editor) return registerMarkdownShortcuts(editor, [HORIZONTAL_RULE]) }, [editor])
+  return null
+}
+
+export const thematicBreakRulePlugin = realmPlugin({
+  init(realm) { realm.pubIn({ [addComposerChild$]: ThematicBreakRule }) }
 })
 
 // ---------------------------------------------------------------------------
