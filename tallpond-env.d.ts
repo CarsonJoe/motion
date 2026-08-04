@@ -2,6 +2,26 @@
 /* eslint-disable */
 import type {} from '@tallpond/sdk'
 
+export interface DocumentUpdatesRow {
+  id: string
+  updateId: string
+  documentId: string
+  payload: string
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MarkdownUpdatesRow {
+  id: string
+  updateId: string
+  documentId: string
+  payload: string
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
 export interface MemberNoteUpdatesRow {
   id: string
   updateId: string
@@ -33,6 +53,62 @@ export interface MemberPresenceRow {
   updatedAt: string
 }
 
+export interface MotionCrdtDocumentsRow {
+  id: string
+  pageId: string
+  title: string
+  parentId: string
+  markdown: string
+  yState: string
+  blocks: unknown
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MotionCrdtTombstonesRow {
+  id: string
+  pageId: string
+  deleteRootId: string
+  deleteId: string
+  deletedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MotionCrdtUpdatesRow {
+  id: string
+  updateId: string
+  documentId: string
+  payload: string
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MotionDocumentsRow {
+  id: string
+  pageId: string
+  title: string
+  parentId: string
+  markdown: string
+  blocks: unknown
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface MotionPagesRow {
+  id: string
+  pageId: string
+  title: string
+  parentId: string
+  blocks: string
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
 export interface NoteUpdatesRow {
   id: string
   updateId: string
@@ -53,14 +129,70 @@ export interface NotesRow {
   updatedAt: string
 }
 
+export interface PageTombstonesRow {
+  id: string
+  pageId: string
+  deleteRootId: string
+  deleteId: string
+  deletedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PagesRow {
+  id: string
+  pageId: string
+  title: string
+  parentId: string
+  blocks: string
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PresenceRow {
+  id: string
+  presenceId: string
+  documentId: string
+  displayName: string
+  selection: unknown
+  expiresAt: number
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SharedPagesRow {
+  id: string
+  pageId: string
+  parentId: string
+  title: string
+  markdown: string
+  yState: string
+  blocks: unknown
+  clientUpdatedAt: number
+  createdAt: string
+  updatedAt: string
+}
+
 declare module '@tallpond/sdk' {
   interface Register {
     tables: {
+    document_updates: DocumentUpdatesRow
+    markdown_updates: MarkdownUpdatesRow
     member_note_updates: MemberNoteUpdatesRow
     member_notes: MemberNotesRow
     member_presence: MemberPresenceRow
+    motion_crdt_documents: MotionCrdtDocumentsRow
+    motion_crdt_tombstones: MotionCrdtTombstonesRow
+    motion_crdt_updates: MotionCrdtUpdatesRow
+    motion_documents: MotionDocumentsRow
+    motion_pages: MotionPagesRow
     note_updates: NoteUpdatesRow
     notes: NotesRow
+    page_tombstones: PageTombstonesRow
+    pages: PagesRow
+    presence: PresenceRow
+    shared_pages: SharedPagesRow
     }
   }
 }

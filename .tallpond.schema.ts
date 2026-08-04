@@ -7,6 +7,81 @@ import { defineSchema } from '@tallpond/schema'
 // never resurrect a removed note.
 export default defineSchema({
   tables: {
+    // ---------------------------------------------------------------------
+    // Legacy tables from earlier schema generations. The app no longer reads
+    // or writes any of these — the current model is `notes` / `note_updates`
+    // below and the `shared_notes` resource. They stay declared, unchanged,
+    // solely because this platform blocks a deploy that drops a table
+    // ("write a custom migration"); removing them here would delete
+    // whatever production data still lives in them. Do not add new fields to
+    // this app against these tables — extend the live schema instead.
+    // ---------------------------------------------------------------------
+    pages: (table) => {
+      table.text('pageId').notNull().unique()
+      table.text('title').notNull()
+      table.text('parentId').notNull()
+      table.text('blocks').notNull()
+      table.integer('clientUpdatedAt').notNull().default(0)
+      table.timestamps()
+      table.index(['pageId'])
+      table.index(['clientUpdatedAt'])
+    },
+    motion_pages: (table) => {
+      table.text('pageId').notNull().unique()
+      table.text('title').notNull()
+      table.text('parentId').notNull()
+      table.text('blocks').notNull()
+      table.integer('clientUpdatedAt').notNull().default(0)
+      table.timestamps()
+      table.index(['pageId'])
+      table.index(['clientUpdatedAt'])
+    },
+    motion_documents: (table) => {
+      table.text('pageId').notNull().unique()
+      table.text('title').notNull()
+      table.text('parentId').notNull()
+      table.text('markdown').notNull().default('')
+      table.jsonb('blocks').notNull()
+      table.bigint('clientUpdatedAt').notNull()
+      table.timestamps()
+      table.index(['pageId'])
+      table.index(['clientUpdatedAt'])
+    },
+    motion_crdt_documents: (table) => {
+      table.text('pageId').notNull().unique()
+      table.text('title').notNull()
+      table.text('parentId').notNull()
+      table.text('markdown').notNull().default('')
+      table.text('yState').notNull()
+      table.jsonb('blocks').notNull()
+      table.bigint('clientUpdatedAt').notNull()
+      table.timestamps()
+      table.index(['pageId'])
+      table.index(['parentId'])
+      table.index(['clientUpdatedAt'])
+    },
+    motion_crdt_updates: (table) => {
+      table.uuid('updateId').notNull().unique()
+      table.text('documentId').notNull()
+      table.text('payload').notNull()
+      table.bigint('clientUpdatedAt').notNull()
+      table.timestamps()
+      table.index(['documentId'])
+      table.index(['clientUpdatedAt'])
+    },
+    motion_crdt_tombstones: (table) => {
+      table.text('pageId').notNull().unique()
+      table.text('deleteRootId').notNull()
+      table.uuid('deleteId').notNull().unique()
+      table.bigint('deletedAt').notNull()
+      table.timestamps()
+      table.index(['pageId'])
+      table.index(['deleteRootId'])
+      table.index(['deletedAt'])
+    },
+    // ---------------------------------------------------------------------
+    // Live schema.
+    // ---------------------------------------------------------------------
     notes: (table) => {
       table.text('noteId').notNull().unique()
       table.text('title').notNull().default('')
@@ -30,6 +105,71 @@ export default defineSchema({
     }
   },
   resources: {
+    // Legacy resource type from an earlier schema generation. Unused by the
+    // app; kept declared for the same reason as the legacy tables above —
+    // dropping a resource type is a destructive migration on this platform.
+    shared_document: (document) => {
+      document.visibility('members')
+      document.defaultRole('reader')
+      document.grant({ owner: 'admin', admin: 'writer', writer: 'reader', reader: null })
+      document.owns('shared_pages', (table) => {
+        table.text('pageId').notNull().unique()
+        table.text('parentId').notNull()
+        table.text('title').notNull()
+        table.text('markdown').notNull().default('')
+        table.text('yState').notNull()
+        table.jsonb('blocks').notNull()
+        table.bigint('clientUpdatedAt').notNull()
+        table.timestamps()
+        table.index(['pageId'])
+        table.index(['parentId'])
+        table.index(['clientUpdatedAt'])
+        table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'admin' })
+      })
+      document.owns('page_tombstones', (table) => {
+        table.text('pageId').notNull().unique()
+        table.text('deleteRootId').notNull()
+        table.uuid('deleteId').notNull().unique()
+        table.bigint('deletedAt').notNull()
+        table.timestamps()
+        table.index(['pageId'])
+        table.index(['deleteRootId'])
+        table.index(['deletedAt'])
+        table.access({ read: 'reader', create: 'admin', update: 'admin', delete: 'admin' })
+      })
+      document.owns('document_updates', (table) => {
+        table.uuid('updateId').notNull().unique()
+        table.text('documentId').notNull()
+        table.text('payload').notNull()
+        table.bigint('clientUpdatedAt').notNull()
+        table.timestamps()
+        table.index(['documentId'])
+        table.index(['clientUpdatedAt'])
+        table.index(['createdAt'])
+        table.access({ read: 'reader', create: 'writer', update: 'none', delete: 'admin' })
+      })
+      document.owns('markdown_updates', (table) => {
+        table.uuid('updateId').notNull().unique()
+        table.text('documentId').notNull()
+        table.text('payload').notNull()
+        table.bigint('clientUpdatedAt').notNull()
+        table.timestamps()
+        table.index(['documentId'])
+        table.index(['clientUpdatedAt'])
+        table.access({ read: 'reader', create: 'writer', update: 'none', delete: 'admin' })
+      })
+      document.owns('presence', (table) => {
+        table.text('presenceId').notNull().unique()
+        table.text('documentId').notNull()
+        table.text('displayName').notNull()
+        table.jsonb('selection').notNull()
+        table.bigint('expiresAt').notNull()
+        table.timestamps()
+        table.index(['documentId'])
+        table.index(['expiresAt'])
+        table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'writer' })
+      })
+    },
     // One shared resource is one shared root note plus every note nested
     // beneath it. Members see the same two-table model as the private scope;
     // the member_ prefix exists because resource tables share a namespace
