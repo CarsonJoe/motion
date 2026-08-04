@@ -1,12 +1,12 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 
-function motionServiceWorker() {
+function motionServiceWorker(): Plugin {
   return {
     name: 'motion-service-worker',
-    apply: 'build' as const,
+    apply: 'build',
     generateBundle(_: unknown, bundle: Record<string, unknown>) {
       const assets = Object.keys(bundle)
         .filter((fileName) => !fileName.endsWith('.map') && fileName !== 'sw.js')
