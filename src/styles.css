@@ -176,15 +176,16 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .page-ref-missing { color: #8a8a8a; background: #242424; cursor: default; text-decoration: line-through; }
 .page-ref-insert svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-/* [[ picker popover */
-.page-ref-picker { position: fixed; z-index: 40; max-height: 280px; padding: 5px; overflow-y: auto; border: 1px solid var(--baseBorder); border-radius: 10px; background: var(--baseBase); box-shadow: 0 12px 32px rgba(0, 0, 0, .5); }
-.page-ref-empty { padding: 8px 10px; color: var(--baseSolid); font-size: 13px; }
-.page-ref-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: 0; border-radius: 6px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
-.page-ref-option svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .65; }
-.page-ref-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.page-ref-option.active { background: var(--baseBgHover); }
-.page-ref-create { color: var(--accentText); }
-.page-ref-create svg { opacity: 1; }
+/* Universal trigger menu ([[ links and / commands) */
+.editor-menu { position: fixed; z-index: 40; max-height: 320px; padding: 6px; overflow-y: auto; border: 1px solid #4a4a4a; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); }
+.editor-menu-empty { padding: 9px 11px; color: var(--baseSolid); font-size: 13px; }
+.editor-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.editor-menu-item .editor-menu-icon { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border: 1px solid var(--baseLine); border-radius: 6px; background: var(--baseBgSubtle); }
+.editor-menu-item svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+.editor-menu-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-menu-detail { flex-shrink: 0; color: var(--baseSolid); font-size: 12px; }
+.editor-menu-item.active { background: var(--baseBgActive); }
+.editor-menu-item.active .editor-menu-icon { border-color: var(--baseBorderHover); background: var(--baseBg); }
 
 /* Linked references (backlinks) */
 .backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--baseLine); }

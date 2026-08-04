@@ -6,6 +6,7 @@ import { openLocalStore, type LocalStore, type Note } from './local'
 import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin, setPageLinkServices } from './pageLink'
+import { editorMenuPlugin } from './editorMenu'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { acceptInvitation, connectInteractive, deleteNoteTree, fullSync, getSyncState, inviteByHandle, leaveShare, listInvitations, listMembers, rejectInvitation, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond } from './sync'
 
@@ -80,7 +81,7 @@ function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: {
     }))
   }, [markdown])
   return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" onChange={(value, initial) => { current.current = value; if (!initial) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), thematicBreakPlugin(), tablePlugin(), linkPlugin(), linkDialogPlugin(), pageLinkPlugin(), markdownShortcutPlugin(), persistentBlankLinesPlugin({}),
+    headingsPlugin(), listsPlugin(), quotePlugin(), thematicBreakPlugin(), tablePlugin(), linkPlugin(), linkDialogPlugin(), pageLinkPlugin(), editorMenuPlugin(), markdownShortcutPlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeSelect /><BoldItalicUnderlineToggles /><ListsToggle /><CreateLink /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
@@ -259,13 +260,15 @@ export default function App() {
           .slice(0, 8)
           .map((note) => ({ id: note.id, title: note.title }))
       },
-      createSubpage: async (title) => {
-        const parent = activeId ? byId.get(activeId) ?? null : null
-        if (!parent) return null
-        if (parent.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId))) return null
-        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: parent.id, shareId: parent.shareId, deletedAt: 0, updatedAt: Date.now() }
+      // `parent` nests the new page under the one being edited; otherwise it is
+      // created at the top level. A subpage inherits the parent's share scope.
+      createPage: async (title, parent) => {
+        const host = parent && activeId ? byId.get(activeId) ?? null : null
+        if (parent && !host) return null
+        if (host?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(host.shareId))) return null
+        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: host?.id ?? '', shareId: host?.shareId ?? '', deletedAt: 0, updatedAt: Date.now() }
         await saveNote(store, note)
-        setExpandedIds((current) => new Set(current).add(parent.id))
+        if (host) setExpandedIds((current) => new Set(current).add(host.id))
         return note.id
       }
     })
