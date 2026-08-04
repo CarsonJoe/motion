@@ -167,6 +167,32 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .motion-md-content td, .motion-md-content th { padding: 6px; border: 1px solid #3a3a3a; }
 .mdxeditor [role="toolbar"] { background: #111 !important; }
 
+/* Internal page links (pills) */
+.page-ref-host { display: inline; }
+.page-ref { display: inline-flex; align-items: baseline; gap: 3px; margin: 0 1px; padding: 1px 6px 1px 4px; border-radius: 5px; color: #c5c2ff; background: rgba(122, 118, 255, .12); box-decoration-break: clone; -webkit-box-decoration-break: clone; font-weight: 500; text-decoration: none; cursor: pointer; user-select: none; }
+.page-ref:hover { background: rgba(122, 118, 255, .2); }
+.page-ref:focus-visible { outline: 2px solid #7a76ff; outline-offset: 1px; }
+.page-ref-icon { width: 13px; height: 13px; align-self: center; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+.page-ref-missing { color: #8a8a8a; background: #242424; cursor: default; text-decoration: line-through; }
+.page-ref-insert svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* [[ picker popover */
+.page-ref-picker { position: fixed; z-index: 40; max-height: 280px; padding: 5px; overflow-y: auto; border: 1px solid var(--baseBorder); border-radius: 10px; background: var(--baseBase); box-shadow: 0 12px 32px rgba(0, 0, 0, .5); }
+.page-ref-empty { padding: 8px 10px; color: var(--baseSolid); font-size: 13px; }
+.page-ref-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border: 0; border-radius: 6px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.page-ref-option svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .65; }
+.page-ref-option span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-ref-option.active { background: var(--baseBgHover); }
+.page-ref-create { color: var(--accentText); }
+.page-ref-create svg { opacity: 1; }
+
+/* Linked references (backlinks) */
+.backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--baseLine); }
+.backlinks h2 { margin: 0 0 10px; color: var(--baseSolid); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.backlink { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; margin-bottom: 3px; border: 1px solid transparent; border-radius: 8px; color: var(--baseText); background: var(--baseBgSubtle); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+.backlink:hover { border-color: var(--baseBorder); color: var(--baseTextContrast); background: var(--baseBg); }
+.backlink svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .6; }
+
 @media (min-width: 761px) {
   .back-button { display: none; }
 }

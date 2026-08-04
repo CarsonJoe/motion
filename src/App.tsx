@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
-import { BlockTypeSelect, BoldItalicUnderlineToggles, codeBlockPlugin, CodeToggle, CreateLink, headingsPlugin, InsertCodeBlock, InsertTable, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
+import { BlockTypeSelect, BoldItalicUnderlineToggles, CreateLink, headingsPlugin, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
 import { openLocalStore, type LocalStore, type Note } from './local'
 import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
+import { InsertPageLink, pageLinkPlugin, setPageLinkServices } from './pageLink'
+import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { acceptInvitation, connectInteractive, deleteNoteTree, fullSync, getSyncState, inviteByHandle, leaveShare, listInvitations, listMembers, rejectInvitation, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond } from './sync'
 
 const uid = () => crypto.randomUUID()
@@ -78,8 +80,8 @@ function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: {
     }))
   }, [markdown])
   return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" onChange={(value, initial) => { current.current = value; if (!initial) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), thematicBreakPlugin(), tablePlugin(), codeBlockPlugin(), linkPlugin(), markdownShortcutPlugin(), persistentBlankLinesPlugin({}),
-    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeSelect /><BoldItalicUnderlineToggles /><ListsToggle /><CreateLink /></span><span className="extra-tools"><InsertTable /><InsertCodeBlock /><CodeToggle /></span></>, toolbarHost) })
+    headingsPlugin(), listsPlugin(), quotePlugin(), thematicBreakPlugin(), tablePlugin(), linkPlugin(), linkDialogPlugin(), pageLinkPlugin(), markdownShortcutPlugin(), persistentBlankLinesPlugin({}),
+    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeSelect /><BoldItalicUnderlineToggles /><ListsToggle /><CreateLink /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
 
@@ -240,6 +242,47 @@ export default function App() {
   const roleFor = (shareId: string) => sync.roles[shareId] ?? ''
   const canEditActiveNote = !activeNote?.shareId || ['writer', 'admin', 'owner'].includes(roleFor(activeNote.shareId))
   const canDeleteNote = (note: Note) => !note.shareId || ['admin', 'owner'].includes(roleFor(note.shareId))
+
+  // Publish the services the editor's page links need: resolving live titles,
+  // navigating, searching pages, and spawning a subpage from the `[[` picker.
+  // Re-runs whenever notes change so a rename instantly repaints every pill.
+  useEffect(() => {
+    if (!store) { setPageLinkServices(null); return }
+    const byId = new Map(notes.map((note) => [note.id, note]))
+    setPageLinkServices({
+      resolveTitle: (id) => byId.has(id) ? (byId.get(id)!.title || '') : null,
+      navigate: (id) => { setNoteMenuId(null); setActiveId(id); setMobileView('editor') },
+      searchPages: (query) => {
+        const q = query.trim().toLowerCase()
+        return notes
+          .filter((note) => note.id !== activeId && (q === '' || (note.title || '').toLowerCase().includes(q)))
+          .slice(0, 8)
+          .map((note) => ({ id: note.id, title: note.title }))
+      },
+      createSubpage: async (title) => {
+        const parent = activeId ? byId.get(activeId) ?? null : null
+        if (!parent) return null
+        if (parent.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId))) return null
+        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: parent.id, shareId: parent.shareId, deletedAt: 0, updatedAt: Date.now() }
+        await saveNote(store, note)
+        setExpandedIds((current) => new Set(current).add(parent.id))
+        return note.id
+      }
+    })
+    return () => setPageLinkServices(null)
+  }, [store, notes, activeId, sync.roles])
+
+  // Seed the backlink index from every body already on this device, then keep
+  // the open note's outgoing links current as its text changes (below).
+  useEffect(() => { if (store) void rebuildLinkIndex(store) }, [store])
+  useEffect(() => { if (collaborativeMarkdown) indexNote(collaborativeMarkdown.noteId, collaborativeMarkdown.value) }, [collaborativeMarkdown])
+
+  const linksVersion = useSyncExternalStore(subscribeLinks, getLinksVersion)
+  const backlinks = useMemo(() => {
+    if (!activeNote) return []
+    const byId = new Map(notes.map((note) => [note.id, note]))
+    return backlinkSources(activeNote.id).map((id) => byId.get(id)).filter((note): note is Note => Boolean(note))
+  }, [activeNote, notes, linksVersion])
 
   // Adopt remote renames of the open note. While this device is typing in the
   // field its own draft wins; the metadata row is last-write-wins regardless.
@@ -443,8 +486,9 @@ export default function App() {
   return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
     <aside><div className="list-header"><span>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}</div>}</section>}<div className="section-label">PAGES</div><nav><NoteTree notes={notes} parentId="" activeId={activeId} depth={0} onOpen={openNote} menuId={noteMenuId} onToggleMenu={(id) => setNoteMenuId((current) => current === id ? null : id)} onCreateChild={(note) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(note.id)); void createNote(note) }} onDelete={(note) => void removeNote(note)} canDeleteNote={canDeleteNote} expandedIds={expandedIds} onToggleExpanded={(id) => { setExpandedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) }} /></nav><div className="sidebar-footer"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span className="sync-status">{syncIndicator.label}</span>{syncAction && <button className="sync-button" disabled={!tallpond || !navigator.onLine || sync.phase === 'connecting'} onClick={() => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())}>{syncAction}</button>}{syncError && <span className="sync-error">{syncError}</span>}</div></aside>
     <main onMouseDown={focusEditorCanvas}>{activeNote ? <><header className="editor-header"><div className="editor-header-row"><div className="header-left">{!sidebarOpen && <button className="sidebar-open header-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<button className="back-button" aria-label="Back to page list" onClick={() => { if (window.innerWidth <= 760) setMobileView('list'); else { openSidebar(); setActiveId(null) } }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button><div className="page-path" aria-label="Page path">{breadcrumbs.length === 1 ? <span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span> : <><span className="breadcrumb-root"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span><i>/</i>{breadcrumbs.length > 2 && <><span className="breadcrumb-ellipsis">…</span><i>/</i></>}<span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[breadcrumbs.length - 1].id)}>{breadcrumbs[breadcrumbs.length - 1].title || 'Untitled'}</button></span></>}</div></div><div ref={setToolbarHost} className="editor-toolbar" role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}<div className="header-status"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span>{syncIndicator.label}</span></div><div className="header-actions"><button className="header-button share-button" aria-label={activeNote.shareId ? 'Open sharing' : 'Share page'} disabled={!sync.connected || !navigator.onLine} onClick={() => setShareOpen(!shareOpen)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12L8 7m4-4 4 4"/><path d="M7 10H5v10h14V10h-2"/></svg></button></div></div></div></header><article ref={articleRef}><input ref={titleInputRef} aria-label="Page title" className="title" readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} placeholder="Untitled Note" />
-      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); touchActiveNote() }} />}
+      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} />}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
+      {backlinks.length > 0 && <section className="backlinks" aria-label="Linked references"><h2>Linked references</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
       </article></> : <section className="empty">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><h1>Welcome back{sync.user ? `, ${sync.user.name}` : ''}</h1><p>Pick up where you left off.</p><div className="recent-pages" aria-label="Recent pages">{notes.slice(0, 3).map((note) => <button className="recent-page" key={note.id} onClick={() => openNote(note.id)}><span className="recent-page-icon">📄</span><span>{note.title || 'Untitled'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button>)}</div><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}</main>
     {shareOpen && activeNote && createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><p>Links to other pages remain private unless you share them separately.</p><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => setInviteHandle(e.target.value)} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div>{membersLoading && members.length === 0 ? <div className="member-list"><span>Loading people…</span></div> : members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)}
   </div>

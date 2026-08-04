@@ -127,6 +127,10 @@ export async function openLocalStore() {
       const row = await asPromise(db.transaction('docs').objectStore('docs').get(noteId) as IDBRequest<{ noteId: string; state: string } | undefined>)
       return row?.state ?? null
     },
+    // Every locally-held body, used to seed the backlink index. Only notes
+    // this device has opened have a row here, so the index is complete for the
+    // working set, not necessarily for pages that only live on other devices.
+    allDocStates: async () => asPromise(db.transaction('docs').objectStore('docs').getAll() as IDBRequest<Array<{ noteId: string; state: string }>>),
     putDocState: async (noteId: string, state: string) => {
       const transaction = db.transaction('docs', 'readwrite')
       transaction.objectStore('docs').put({ noteId, state })
