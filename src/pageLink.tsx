@@ -26,6 +26,9 @@ export type PageRefState = { kind: 'ok'; title: string } | { kind: 'deleted' } |
 export type PageLinkServices = {
   resolveTitle: (id: string) => PageRefState
   navigate: (id: string) => void
+  // The shareable href for a page, so link pills are real anchors that honor
+  // middle/ctrl-click (open in a new tab).
+  pageHref: (id: string) => string
   // Candidate pages for the `[[` picker, already filtered and ranked.
   searchPages: (query: string) => PageOption[]
   // Creates a page and resolves to its id, or null when not possible (e.g. no
@@ -98,32 +101,43 @@ export function $isPageLinkNode(node: LexicalNode | null | undefined): node is P
 // The rendered pill.
 // ---------------------------------------------------------------------------
 
+const DOC_ICON = <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>
+const LOCK_ICON = <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+
 function PageRef({ id }: { id: string; nodeKey: NodeKey }) {
   const svc = usePageLinkServices()
   const state = svc?.resolveTitle(id) ?? { kind: 'private' as const }
+
+  // Non-navigable states render as plain spans — there is nothing to open.
+  if (state.kind !== 'ok') {
+    const label = state.kind === 'deleted' ? 'Deleted page' : 'Private page'
+    const hint = state.kind === 'deleted' ? 'This page no longer exists' : 'You don’t have access to this page'
+    return (
+      <span className={`page-ref ${state.kind === 'deleted' ? 'page-ref-missing' : 'page-ref-private'}`} contentEditable={false} title={hint}>
+        {state.kind === 'private' ? LOCK_ICON : DOC_ICON}{label}
+      </span>
+    )
+  }
+
+  // A real anchor so middle/ctrl/shift-click open a new tab; plain left-click is
+  // intercepted for instant in-app navigation.
   const open = (event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    if (state.kind === 'ok') svc?.navigate(id)
+    svc?.navigate(id)
   }
-  const label = state.kind === 'ok' ? (state.title || 'Untitled') : state.kind === 'deleted' ? 'Deleted page' : 'Private page'
-  const hint = state.kind === 'deleted' ? 'This page no longer exists' : state.kind === 'private' ? 'You don’t have access to this page' : state.title || undefined
   return (
-    <span
-      className={`page-ref${state.kind === 'deleted' ? ' page-ref-missing' : state.kind === 'private' ? ' page-ref-private' : ''}`}
+    <a
+      className="page-ref"
+      href={svc?.pageHref(id) ?? '#'}
       contentEditable={false}
-      role="link"
-      tabIndex={0}
-      title={hint}
-      onMouseDown={(event) => event.preventDefault()}
+      title={state.title || undefined}
+      onMouseDown={(event) => { if (event.button === 0) event.preventDefault() }}
       onClick={open}
-      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') open(event as unknown as React.MouseEvent) }}
     >
-      {state.kind === 'private'
-        ? <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
-        : <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>}
-      {label}
-    </span>
+      {DOC_ICON}{state.title || 'Untitled'}
+    </a>
   )
 }
 

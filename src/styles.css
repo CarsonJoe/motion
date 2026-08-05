@@ -195,6 +195,16 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .backlink:hover { border-color: var(--baseBorder); color: var(--baseTextContrast); background: var(--baseBg); }
 .backlink svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .6; }
 
+/* Share modal: copy link */
+.share-link-row { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; }
+.copy-link { flex-shrink: 0; padding: 8px 14px; border: 1px solid var(--baseBorder); border-radius: 8px; color: var(--baseTextContrast); background: var(--baseBgSubtle); font: inherit; font-size: 14px; cursor: pointer; }
+.copy-link:hover { border-color: var(--baseBorderHover); background: var(--baseBg); }
+.share-link-row span { color: var(--baseSolid); font-size: 13px; }
+
+/* Deep-link access landing */
+.landing-dismiss { margin-top: 18px; padding: 8px 16px; border: 0; border-radius: 8px; color: var(--baseText); background: transparent; font: inherit; font-size: 14px; cursor: pointer; }
+.landing-dismiss:hover { color: var(--baseTextContrast); background: var(--baseBgSubtle); }
+
 @media (min-width: 761px) {
   .back-button { display: none; }
 }

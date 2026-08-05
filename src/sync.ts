@@ -1,4 +1,4 @@
-import { createClient, type InvitationInfo, type MemberInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
+import { createClient, type InvitationInfo, type MemberInfo, type ResourceInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
 import { mergeBase64Updates } from './codec'
 import { subtreeIds, type LocalStore, type Note, type NoteOp, type UpdateOp } from './local'
 
@@ -433,6 +433,27 @@ export async function listInvitations(): Promise<InvitationInfo[]> {
 export async function acceptInvitation(resourceId: string) {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   await tallpond.resource(resourceId).members.accept()
+  await fullSync()
+}
+
+// Opening a shared link: what is this viewer's standing with the resource?
+// Returns null when the resource can't be read (a stranger to a private one),
+// in which case the caller can still offer to request access blindly.
+export async function getResourceInfo(resourceId: string): Promise<ResourceInfo | null> {
+  if (!tallpond) return null
+  try { return await tallpond.resource(resourceId).get() } catch { return null }
+}
+
+// Ask an owner to let you in. Pending until they approve; nothing syncs yet.
+export async function requestAccess(resourceId: string, role: 'reader' | 'writer' = 'writer') {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  await tallpond.resource(resourceId).members.request({ role })
+}
+
+// Join an open (discoverable) resource outright, then pull its pages.
+export async function joinResource(resourceId: string) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  await tallpond.resource(resourceId).members.join()
   await fullSync()
 }
 

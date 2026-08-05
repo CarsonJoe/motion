@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
+import type { InvitationInfo, MemberInfo, ResourceInfo } from '@tallpond/sdk'
 import { BlockTypeSelect, BoldItalicUnderlineToggles, headingsPlugin, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
 import { openLocalStore, type LocalStore, type Note } from './local'
 import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
@@ -8,10 +8,16 @@ import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin, setPageLinkServices } from './pageLink'
 import { editorMenuPlugin, thematicBreakRulePlugin } from './editorMenu'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
-import { acceptInvitation, connectInteractive, deleteNoteTree, fullSync, getSyncState, inviteByHandle, leaveShare, listInvitations, listMembers, rejectInvitation, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond } from './sync'
+import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
+import { acceptInvitation, connectInteractive, deleteNoteTree, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listInvitations, listMembers, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond } from './sync'
 
 const uid = () => crypto.randomUUID()
 type SyncTone = 'gray' | 'green' | 'amber' | 'red'
+// The interstitial shown when a link points at a page this device can't open
+// yet: it might need sign-in, an invite to accept, an open resource to join,
+// or a request to the owner.
+type LandingStatus = 'checking' | 'sign-in' | 'invited' | 'join' | 'request' | 'requested' | 'unknown'
+type Landing = { note: string; resource: string | null; status: LandingStatus; info: ResourceInfo | null }
 const EMPTY_NOTES: Note[] = []
 
 function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean }) {
@@ -183,6 +189,11 @@ export default function App() {
   const [noteMenuId, setNoteMenuId] = useState<string | null>(null)
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set())
   const [titleDraft, setTitleDraft] = useState<{ noteId: string | null; value: string }>({ noteId: null, value: '' })
+  const [pendingRoute, setPendingRoute] = useState<Route>(() => readRoute())
+  const [copiedLink, setCopiedLink] = useState(false)
+  const [landing, setLanding] = useState<Landing | null>(null)
+  const [landingBusy, setLandingBusy] = useState(false)
+  const mirrorReadyRef = useRef(false)
   const controllerRef = useRef<NoteDocController | null>(null)
   const contentTouchRef = useRef(new Map<string, number>())
 
@@ -262,6 +273,7 @@ export default function App() {
         return { kind: 'ok', title: note.title || '' }
       },
       navigate: (id) => { setNoteMenuId(null); setActiveId(id); setMobileView('editor') },
+      pageHref: (id) => pageUrl(id, known.get(id)?.shareId || null),
       searchPages: (query) => {
         const q = query.trim().toLowerCase()
         return notes
@@ -295,6 +307,65 @@ export default function App() {
     const byId = new Map(notes.map((note) => [note.id, note]))
     return backlinkSources(activeNote.id).map((id) => byId.get(id)).filter((note): note is Note => Boolean(note))
   }, [activeNote, notes, linksVersion])
+
+  // --- Hash routing ---------------------------------------------------------
+  // Only real URL navigation (back/forward, an opened link) emits these events;
+  // our own pushState mirror below does not, so the two never fight.
+  useEffect(() => subscribeRoute(() => setPendingRoute(readRoute())), [])
+
+  // URL -> active page. Resolves once the store is up, and again as pages arrive
+  // so a deep link opens the moment its page syncs. Consumed on success so an
+  // unrelated edit can't re-apply a stale target.
+  useEffect(() => {
+    if (!store) return
+    mirrorReadyRef.current = true
+    const target = pendingRoute.noteId
+    if (!target) return
+    if (allNotes.some((note) => note.id === target && !note.deletedAt)) {
+      setActiveId(target)
+      setMobileView('editor')
+      setPendingRoute({ noteId: null, resourceId: null })
+    }
+  }, [store, pendingRoute, allNotes])
+
+  // Active page -> URL. Suppressed until the initial deep link has had a chance
+  // to resolve, so it never clobbers an incoming link on load. Same-page writes
+  // (normalizing the resource id) replace rather than push a history entry.
+  useEffect(() => {
+    if (!mirrorReadyRef.current) return
+    writeRoute(activeId, activeNote?.shareId ?? null, readRoute().noteId === activeId)
+  }, [activeId, activeNote?.shareId])
+
+  // When a link points at a page we can't open, work out why and offer the way
+  // in. Keyed on the target + connection (not the note list) so it doesn't
+  // re-query on every edit; the resolver above clears pendingRoute once the page
+  // arrives, which re-runs this and dismisses the landing.
+  useEffect(() => {
+    const target = pendingRoute.noteId
+    if (!store || !target) { setLanding(null); return }
+    const existing = store.getNote(target)
+    if (existing && !existing.deletedAt) { setLanding(null); return }
+    const rid = pendingRoute.resourceId
+    if (!rid) { setLanding({ note: target, resource: null, status: 'unknown', info: null }); return }
+    if (!sync.connected) { setLanding({ note: target, resource: rid, status: 'sign-in', info: null }); return }
+    let cancelled = false
+    setLanding({ note: target, resource: rid, status: 'checking', info: null })
+    void getResourceInfo(rid).then((info) => {
+      if (cancelled) return
+      if (info?.currentMember?.state === 'active') { void fullSync(); return }
+      if (info?.currentMember) { setLanding({ note: target, resource: rid, status: 'invited', info }); return }
+      setLanding({ note: target, resource: rid, status: info?.discoverable ? 'join' : 'request', info })
+    })
+    return () => { cancelled = true }
+  }, [store, pendingRoute, sync.connected])
+
+  const runLanding = async (action: () => Promise<void>, done?: () => void) => {
+    setLandingBusy(true)
+    try { await action(); done?.() }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not complete that') }
+    finally { setLandingBusy(false) }
+  }
+  const dismissLanding = () => { setLanding(null); setPendingRoute({ noteId: null, resourceId: null }); setActiveId(null) }
 
   // Adopt remote renames of the open note. While this device is typing in the
   // field its own draft wins; the metadata row is last-write-wins regardless.
@@ -481,6 +552,12 @@ export default function App() {
   })()
   const syncAction = tallpond ? syncIndicator.action : 'Sync setup required'
   const openNote = (id: string) => { setNoteMenuId(null); setActiveId(id); setMobileView('editor') }
+  const copyPageLink = async () => {
+    if (!activeNote) return
+    const url = `${window.location.origin}${window.location.pathname}${pageUrl(activeNote.id, activeNote.shareId || null)}`
+    try { await navigator.clipboard.writeText(url); setCopiedLink(true); window.setTimeout(() => setCopiedLink(false), 1500) }
+    catch { setActionError('Could not copy the link') }
+  }
   const focusEditorCanvas = (event: React.MouseEvent<HTMLElement>) => {
     const target = event.target as HTMLElement
     if (target.closest('button, input, select, a, [contenteditable="true"]')) return
@@ -501,7 +578,18 @@ export default function App() {
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} />}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
       {backlinks.length > 0 && <section className="backlinks" aria-label="Linked references"><h2>Linked references</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
-      </article></> : <section className="empty">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><h1>Welcome back{sync.user ? `, ${sync.user.name}` : ''}</h1><p>Pick up where you left off.</p><div className="recent-pages" aria-label="Recent pages">{notes.slice(0, 3).map((note) => <button className="recent-page" key={note.id} onClick={() => openNote(note.id)}><span className="recent-page-icon">📄</span><span>{note.title || 'Untitled'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button>)}</div><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}</main>
-    {shareOpen && activeNote && createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><p>Links to other pages remain private unless you share them separately.</p><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => setInviteHandle(e.target.value)} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div>{membersLoading && members.length === 0 ? <div className="member-list"><span>Loading people…</span></div> : members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)}
+      </article></> : landing ? <section className="empty access-landing">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}<div className="empty-mark">M</div>{(() => {
+      const name = landing.info?.name
+      switch (landing.status) {
+        case 'checking': return <><h1>Opening…</h1><p>Checking your access.</p></>
+        case 'sign-in': return <><h1>Sign in to open this page</h1><p>Connect your Tallpond account to continue.</p><button className="new" onClick={() => void connect()}>Connect to Tallpond</button></>
+        case 'invited': return <><h1>{name || 'You’re invited'}</h1><p>You’ve been invited to this page. Accept to open it.</p><button className="new" disabled={landingBusy} onClick={() => void runLanding(() => acceptInvitation(landing.resource!))}>{landingBusy ? 'Accepting…' : 'Accept invitation'}</button></>
+        case 'join': return <><h1>{name || 'Open page'}</h1><p>This page is open to join.</p><button className="new" disabled={landingBusy} onClick={() => void runLanding(() => joinResource(landing.resource!))}>{landingBusy ? 'Joining…' : 'Join page'}</button></>
+        case 'request': return <><h1>{name || 'Private page'}</h1><p>You don’t have access yet. Ask the owner to let you in.</p><button className="new" disabled={landingBusy} onClick={() => void runLanding(() => requestAccess(landing.resource!), () => setLanding((current) => current ? { ...current, status: 'requested' } : current))}>{landingBusy ? 'Requesting…' : 'Request access'}</button></>
+        case 'requested': return <><h1>Request sent</h1><p>You’ll be able to open {name || 'this page'} once the owner approves.</p></>
+        default: return <><h1>You don’t have access</h1><p>Ask the owner to share this page with you.</p></>
+      }
+    })()}<button className="landing-dismiss" onClick={dismissLanding}>Back to your pages</button></section> : <section className="empty">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><h1>Welcome back{sync.user ? `, ${sync.user.name}` : ''}</h1><p>Pick up where you left off.</p><div className="recent-pages" aria-label="Recent pages">{notes.slice(0, 3).map((note) => <button className="recent-page" key={note.id} onClick={() => openNote(note.id)}><span className="recent-page-icon">📄</span><span>{note.title || 'Untitled'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button>)}</div><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}</main>
+    {shareOpen && activeNote && createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><p>Links to other pages remain private unless you share them separately.</p><div className="share-link-row"><button className="copy-link" onClick={() => void copyPageLink()}>{copiedLink ? 'Copied' : 'Copy link'}</button><span>Invitees open the page straight from the link.</span></div><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => setInviteHandle(e.target.value)} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div>{membersLoading && members.length === 0 ? <div className="member-list"><span>Loading people…</span></div> : members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)}
   </div>
 }
