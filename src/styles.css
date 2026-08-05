@@ -23,10 +23,15 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
 .sidebar-close svg, .sidebar-open svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .icon-new { display: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
-nav { overflow: auto; padding-bottom: 8px; }
+nav { overflow: auto; padding-bottom: 8px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+nav::-webkit-scrollbar { width: 10px; }
+nav::-webkit-scrollbar-track { background: transparent; }
+nav::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
+nav::-webkit-scrollbar-thumb:hover { background-color: #505050; }
 .page-tree-item { position: relative; }
 .page-row { display: flex; align-items: center; border-radius: 6px; }
-.page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-toggle, .page-toggle-spacer { width: 22px; height: 28px; flex: none; }
 .page-toggle { display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: #777; background: transparent; cursor: pointer; }
 .page-toggle:hover { color: #eee; background: #303030; }
@@ -36,9 +41,10 @@ nav { overflow: auto; padding-bottom: 8px; }
 .page-row.active { background: #292929; }
 .page-row.active .page-link { color: #fff; }
 .page-menu-button { width: 28px; height: 28px; flex: none; margin-right: 4px; padding: 0; border: 0; border-radius: 5px; color: #777; background: transparent; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; }
-.page-row:hover .page-menu-button, .page-menu-button:focus { opacity: 1; }
-.page-menu-button:hover { color: #eee; background: #303030; }
-.page-menu { position: absolute; z-index: 8; top: 36px; right: 2px; display: grid; width: 145px; padding: 5px; border-radius: 7px; background: #292929; box-shadow: 0 8px 20px rgba(0, 0, 0, .3); }
+.page-row:hover .page-menu-button, .page-menu-button:focus, .page-menu-button.menu-open { opacity: 1; }
+.page-menu-button:hover, .page-menu-button.menu-open { color: #eee; background: #303030; }
+.page-menu { z-index: 30; display: grid; width: 160px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: page-menu-in .12s ease; }
+@keyframes page-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .page-menu button { padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .page-menu button:hover { background: #383838; }
 .page-menu .danger { color: #ee9999; }
@@ -54,7 +60,11 @@ nav { overflow: auto; padding-bottom: 8px; }
 .sync-button:disabled { color: #555; cursor: not-allowed; }
 .sync-error { width: 100%; color: #e99191; font-size: 11px; line-height: 1.35; }
 
-main { min-width: 0; flex: 1; overflow: auto; overscroll-behavior-y: contain; background: #111; }
+main { min-width: 0; flex: 1; overflow: auto; overscroll-behavior-y: contain; background: #111; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+main::-webkit-scrollbar { width: 12px; }
+main::-webkit-scrollbar-track { background: transparent; }
+main::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
+main::-webkit-scrollbar-thumb:hover { background-color: #505050; }
 article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56px 60px; }
 .editor-header { position: sticky; top: 0; z-index: 5; height: 52px; color: #929292; background: #111; font-size: 12px; }
 .editor-header-row { position: relative; display: grid; width: 100%; height: 52px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
@@ -83,7 +93,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .header-status { gap: 6px; }
 .header-actions { gap: 10px; }
 .header-button:disabled { opacity: .4; cursor: not-allowed; }
-.title { width: 100%; margin: 0 0 28px; border: 0; outline: 0; color: #f5f5f5; background: transparent; font-family: inherit; font-size: 42px; font-weight: 700; line-height: 1.16; letter-spacing: -1.5px; }
+.title { display: block; box-sizing: border-box; width: 100%; margin: 0 0 28px; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden; color: #f5f5f5; background: transparent; font-family: inherit; font-size: 42px; font-weight: 700; line-height: 1.16; letter-spacing: -1.5px; white-space: pre-wrap; overflow-wrap: break-word; }
 .title::placeholder { color: #505050; }
 .empty { position: relative; display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
 .empty-sidebar-open { position: absolute; top: 16px; left: 16px; }
