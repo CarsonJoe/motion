@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { $createParagraphNode, $createRangeSelection, $createTextNode, $getSelection, $insertNodes, $isElementNode, $isRangeSelection, $isTextNode, $setSelection, COMMAND_PRIORITY_CRITICAL, KEY_ENTER_COMMAND, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $createTextNode, $getRoot, $getSelection, $insertNodes, $isElementNode, $isRangeSelection, $isTextNode, $setSelection, COMMAND_PRIORITY_CRITICAL, KEY_ENTER_COMMAND, type LexicalEditor } from 'lexical'
+import { $getClipboardDataFromSelection, setLexicalClipboardDataTransfer } from '@lexical/clipboard'
 import { $createHeadingNode, $createQuoteNode } from '@lexical/rich-text'
 import { $createLinkNode, $isLinkNode } from '@lexical/link'
+import { $isListItemNode, $isListNode } from '@lexical/list'
 import { $findMatchingParent } from '@lexical/utils'
 import { registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
 import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
@@ -64,6 +66,7 @@ function EditorMenu() {
 
   const [session, setSession] = useState<Session | null>(null)
   const [highlight, setHighlight] = useState(0)
+  const listRef = useRef<HTMLDivElement>(null)
   const dismissedRef = useRef<{ key: string; start: number } | null>(null)
 
   const providers = useMemo<Provider[]>(() => {
@@ -120,6 +123,11 @@ function EditorMenu() {
   const provider = session ? providers.find((candidate) => candidate.id === session.providerId) ?? null : null
   const items = useMemo(() => (provider && session ? provider.items(session.query) : []), [provider, session?.query])
   useEffect(() => { setHighlight(0) }, [session?.providerId, session?.query])
+
+  // Keep the highlighted option scrolled into view during arrow-key navigation.
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${highlight}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [highlight])
 
   // Latest values for the imperative command handlers, without re-registering.
   const stateRef = useRef({ session, items, highlight, providers })
@@ -248,6 +256,43 @@ function EditorMenu() {
     }, COMMAND_PRIORITY_CRITICAL)
   }, [editor, services])
 
+  // Cut with a collapsed caret removes the whole block it sits in — the list
+  // item inside a list, otherwise the top-level block (paragraph, heading, …) —
+  // rather than just emptying it. We serialize the block into the cut event's
+  // clipboardData ourselves (so formatting and page-link pills round-trip on
+  // paste) and then delete the node outright. A real selection is left to the
+  // native cut.
+  useEffect(() => {
+    if (!editor) return
+    const onCut = (event: ClipboardEvent) => {
+      if (!event.clipboardData) return
+      let handled = false
+      editor.update(() => {
+        const selection = $getSelection()
+        if (!$isRangeSelection(selection) || !selection.isCollapsed()) return
+        const anchor = selection.anchor.getNode()
+        const block = $findMatchingParent(anchor, $isListItemNode) ?? anchor.getTopLevelElement()
+        if (!$isElementNode(block)) return
+        const range = $createRangeSelection()
+        range.anchor.set(block.getKey(), 0, 'element')
+        range.focus.set(block.getKey(), block.getChildrenSize(), 'element')
+        setLexicalClipboardDataTransfer(event.clipboardData!, $getClipboardDataFromSelection(range))
+        handled = true
+        // Where the caret lands once the block is gone.
+        const fallback = block.getPreviousSibling() ?? block.getNextSibling()
+        const list = block.getParent()
+        block.remove()
+        if ($isListNode(list) && list.getChildrenSize() === 0) list.remove()
+        const root = $getRoot()
+        if (root.getChildrenSize() === 0) { const p = $createParagraphNode(); root.append(p); p.select() }
+        else if (fallback) fallback.selectEnd()
+      }, { discrete: true })
+      if (handled) event.preventDefault()
+    }
+    window.addEventListener('cut', onCut, true)
+    return () => window.removeEventListener('cut', onCut, true)
+  }, [editor])
+
   // A click anywhere outside the menu dismisses it, leaving the trigger as prose.
   useEffect(() => {
     if (!session) return
@@ -264,7 +309,7 @@ function EditorMenu() {
     ? { left, bottom: window.innerHeight - session.top + 6, width }
     : { left, top: session.bottom + 6, width }
   return createPortal(
-    <div className="editor-menu" style={style} onMouseDown={(event) => event.preventDefault()} role="listbox">
+    <div ref={listRef} className="editor-menu" style={style} onMouseDown={(event) => event.preventDefault()} role="listbox">
       {items.length === 0
         ? <div className="editor-menu-empty">{provider?.emptyLabel}</div>
         : items.map((item, index) => (
@@ -272,6 +317,7 @@ function EditorMenu() {
             key={item.key}
             type="button"
             role="option"
+            data-index={index}
             aria-selected={index === highlight}
             className={`editor-menu-item${index === highlight ? ' active' : ''}`}
             onMouseEnter={() => setHighlight(index)}

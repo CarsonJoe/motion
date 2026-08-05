@@ -107,9 +107,9 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .modal-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: #b5b5b5; background: #292929; font: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
 .modal-close:hover { color: #fff; background: #353535; }
 .invite-row { display: flex; gap: 7px; }
-.invite-row input, .invite-row select { min-width: 0; padding: 8px; border: 1px solid #3a3a3a; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
+.invite-row input, .invite-row select { min-width: 0; padding: 8px; border: none; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
 .invite-row input { flex: 1; }
-.invite-row .new { padding: 8px 10px; font-size: 12px; }
+.invite-row .new { padding: 6px 12px; font-size: 12px; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .member-list span { padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
 
@@ -152,11 +152,23 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   background: transparent !important;
   overflow: visible !important;
 }
-.mdxeditor [data-radix-popper-content-wrapper] { z-index: 10 !important; }
+[data-radix-popper-content-wrapper] { z-index: 40 !important; }
 .motion-md-toolbar { display: none !important; }
 .editor-toolbar .core-tools, .editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
 .editor-toolbar button { margin: 0 1px; border-radius: 5px !important; color: #a7a7a7 !important; }
 .editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; }
+
+/* MDXEditor tooltip — sit above the sticky editor header (z-index 5). */
+[class*="_popupContainer_"], [class*="_tooltipContent_"] { z-index: 40 !important; }
+
+/* Block-type dropdown — force our dark palette (defaults render light). */
+[class*="_selectTrigger_"] { border: 0 !important; padding-left: 10px !important; background-color: transparent !important; color: #c2c2c2 !important; }
+[class*="_selectTrigger_"]:hover { background-color: #292929 !important; }
+[class*="_selectTrigger_"][data-state='open'] { background-color: #232323 !important; }
+[class*="_selectContainer_"], [class*="_toolbarButtonDropdownContainer_"] { overflow: hidden; border: 1px solid #383838 !important; border-radius: 8px !important; background-color: #232323 !important; box-shadow: 0 14px 34px rgba(0, 0, 0, .55); }
+[class*="_selectItem_"] { color: #c9c9c9 !important; font-size: 13px; }
+[class*="_selectItem_"][data-highlighted] { background-color: #303030 !important; color: #f1f1f1 !important; }
+[class*="_selectItem_"][data-state='checked'] { background-color: #2b2b2b !important; color: #fff !important; }
 .motion-md-content { min-height: 430px; padding: 0; border: 0; outline: 0; color: #e4e4e4; font-family: inherit; font-size: 18px; line-height: 1.72; }
 .motion-md-content h1, .motion-md-content h2, .motion-md-content h3 { color: #f4f4f4; line-height: 1.25; }
 .motion-md-content a { color: #c5c2ff; }
@@ -177,29 +189,34 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .page-ref-private { color: #9a97c0; background: rgba(124, 120, 255, .08); cursor: default; }
 
 /* Universal trigger menu ([[ links and / commands) */
-.editor-menu { position: fixed; z-index: 40; max-height: 320px; padding: 6px; overflow-y: auto; border: 1px solid #4a4a4a; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); }
+.editor-menu { position: fixed; z-index: 40; max-height: 320px; padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #4a4a4a; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
+.editor-menu::-webkit-scrollbar { width: 10px; }
+.editor-menu::-webkit-scrollbar-track { background: transparent; }
+.editor-menu::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #4a4a4a; }
+.editor-menu::-webkit-scrollbar-thumb:hover { background-color: #5f5f5f; }
 .editor-menu-empty { padding: 9px 11px; color: var(--baseSolid); font-size: 13px; }
 .editor-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
 .editor-menu-item .editor-menu-icon { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border: 1px solid var(--baseLine); border-radius: 6px; background: var(--baseBgSubtle); }
 .editor-menu-item svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
 .editor-menu-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .editor-menu-detail { flex-shrink: 0; color: var(--baseSolid); font-size: 12px; }
-.editor-menu-item.active { background: rgba(124, 120, 255, .18); color: #fff; }
-.editor-menu-item.active .editor-menu-icon { border-color: #7a76ff; background: rgba(124, 120, 255, .16); }
-.editor-menu-item.active .editor-menu-detail { color: #cfccff; }
+.editor-menu-item.active { background: #333; color: #fff; }
+.editor-menu-item.active .editor-menu-icon { border-color: #6a6a6a; background: #3a3a3a; }
+.editor-menu-item.active .editor-menu-detail { color: #dcdcdc; }
 
 /* Linked references (backlinks) */
-.backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid var(--baseLine); }
-.backlinks h2 { margin: 0 0 10px; color: var(--baseSolid); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
-.backlink { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; margin-bottom: 3px; border: 1px solid transparent; border-radius: 8px; color: var(--baseText); background: var(--baseBgSubtle); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
-.backlink:hover { border-color: var(--baseBorder); color: var(--baseTextContrast); background: var(--baseBg); }
-.backlink svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .6; }
+.backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid #2b2b2b; }
+.backlinks h2 { margin: 0 0 10px; color: #6a6a6a; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.backlink { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 11px; margin-bottom: 1px; border: 1px solid transparent; border-radius: 8px; color: #6e6e6e; background: transparent; font: inherit; font-size: 15px; text-align: left; cursor: pointer; transition: color .12s, background .12s; }
+.backlink:hover { color: #a8a8a8; background: #1d1d1d; }
+.backlink svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .5; }
 
 /* Share modal: copy link */
-.share-link-row { display: flex; align-items: center; gap: 12px; margin: 0 0 16px; }
-.copy-link { flex-shrink: 0; padding: 8px 14px; border: 1px solid var(--baseBorder); border-radius: 8px; color: var(--baseTextContrast); background: var(--baseBgSubtle); font: inherit; font-size: 14px; cursor: pointer; }
-.copy-link:hover { border-color: var(--baseBorderHover); background: var(--baseBg); }
-.share-link-row span { color: var(--baseSolid); font-size: 13px; }
+.share-link-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.share-link-label { min-width: 0; color: #8a8a8a; font-size: 12px; line-height: 1.4; }
+.copy-link { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 7px 12px; border: 0; border-radius: 7px; color: #f1f1f1; background: #454545; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .12s; }
+.copy-link:hover { background: #525252; }
+.copy-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Deep-link access landing */
 .landing-dismiss { margin-top: 18px; padding: 8px 16px; border: 0; border-radius: 8px; color: var(--baseText); background: transparent; font: inherit; font-size: 14px; cursor: pointer; }
