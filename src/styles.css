@@ -167,6 +167,10 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .editor-toolbar .core-tools, .editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
 .editor-toolbar button { margin: 0 1px; border-radius: 5px !important; color: #a7a7a7 !important; }
 .editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; }
+/* Active toggle (bold/italic/underline/highlight at the caret). Radix marks the
+   pressed ToggleItem with data-state="on"; our flat button color above hides it. */
+.editor-toolbar button[data-state='on'] { color: #fff !important; background: #343434 !important; }
+.editor-toolbar button[data-state='on']:hover { background: #3c3c3c !important; }
 
 /* MDXEditor tooltip — sit above the sticky editor header (z-index 5). */
 [class*="_popupContainer_"], [class*="_tooltipContent_"] { z-index: 40 !important; }
@@ -184,6 +188,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .motion-md-content a { color: #c5c2ff; }
 .motion-md-content blockquote { margin-left: 0; padding-left: 15px; border-left: 3px solid #aaa; color: #bababa; }
 .motion-md-content code { padding: 2px 4px; border-radius: 4px; background: #252525; }
+.motion-md-content mark { color: #00011c; background: #66adff; }
 .motion-md-content pre { padding: 12px; border: 1px solid #2d2d2d; border-radius: 8px; background: #191919; }
 .motion-md-content table { border-collapse: collapse; }
 .motion-md-content td, .motion-md-content th { padding: 6px; border: 1px solid #3a3a3a; }

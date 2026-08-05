@@ -6,7 +6,7 @@ import { $createHeadingNode, $createQuoteNode } from '@lexical/rich-text'
 import { $createLinkNode, $isLinkNode } from '@lexical/link'
 import { $isListItemNode, $isListNode } from '@lexical/list'
 import { $findMatchingParent } from '@lexical/utils'
-import { registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
+import { HIGHLIGHT, registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
 import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
 import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, rootEditor$, useCellValue, usePublisher } from '@mdxeditor/editor'
 import { $createPageLinkNode, $isPageLinkNode, usePageLinkServices } from './pageLink'
@@ -358,7 +358,10 @@ const HORIZONTAL_RULE: ElementTransformer = {
 
 function ThematicBreakRule() {
   const editor = useCellValue(rootEditor$) as LexicalEditor | null
-  useEffect(() => { if (editor) return registerMarkdownShortcuts(editor, [HORIZONTAL_RULE]) }, [editor])
+  // HIGHLIGHT (`==text==`) rides along here: MDXEditor imports/exports the mark
+  // syntax but deliberately leaves its live typing shortcut unregistered, so we
+  // add it ourselves next to the corrected horizontal-rule shortcut.
+  useEffect(() => { if (editor) return registerMarkdownShortcuts(editor, [HORIZONTAL_RULE, HIGHLIGHT]) }, [editor])
   return null
 }
 
