@@ -194,6 +194,7 @@ export default function App() {
   const [copiedLink, setCopiedLink] = useState(false)
   const [landing, setLanding] = useState<Landing | null>(null)
   const [landingBusy, setLandingBusy] = useState(false)
+  const [flash, setFlash] = useState<string | null>(null)
   const mirrorReadyRef = useRef(false)
   const controllerRef = useRef<NoteDocController | null>(null)
   const contentTouchRef = useRef(new Map<string, number>())
@@ -232,6 +233,8 @@ export default function App() {
     finally { setNotificationsLoading(false) }
   }, [])
 
+  // Membership has no realtime channel, so notifications are fetched on connect
+  // and on window focus — event-driven, no background timer.
   useEffect(() => {
     if (!sync.connected) { setInvitations([]); setRequests([]); return }
     void loadInvitations()
@@ -378,6 +381,31 @@ export default function App() {
   }
   const dismissLanding = () => { setLanding(null); setPendingRoute({ noteId: null, resourceId: null }); setActiveId(null) }
 
+  // The one place a short poll earns its keep: while the user waits on the
+  // "request sent" screen there is no other signal that an owner approved them.
+  // Bounded to ~2 minutes — after that they can reopen the link, and a normal
+  // sync (startup, reconnect) will have pulled the page anyway.
+  useEffect(() => {
+    if (landing?.status !== 'requested' || !sync.connected || !store) return
+    const target = landing.note
+    let attempts = 0
+    const interval = window.setInterval(async () => {
+      attempts += 1
+      if (attempts > 20) { window.clearInterval(interval); return }
+      await fullSync().catch(() => {})
+      const note = store.getNote(target)
+      if (note && !note.deletedAt) setFlash('Your request was approved — opening the page.')
+    }, 6000)
+    return () => window.clearInterval(interval)
+  }, [landing?.status, landing?.note, sync.connected, store])
+
+  // Auto-dismiss the flash toast.
+  useEffect(() => {
+    if (!flash) return
+    const timer = window.setTimeout(() => setFlash(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [flash])
+
   // Adopt remote renames of the open note. While this device is typing in the
   // field its own draft wins; the metadata row is last-write-wins regardless.
   useEffect(() => {
@@ -452,13 +480,17 @@ export default function App() {
     return () => { document.removeEventListener('selectionchange', selectionChanged); window.removeEventListener('blur', blurred) }
   }, [activeNote?.id])
 
+  const loadMembers = useCallback(async (shareId: string) => {
+    setMembersLoading(true)
+    try { setMembers(await listMembers(shareId)) }
+    catch { setMembers([]) }
+    finally { setMembersLoading(false) }
+  }, [])
+
   useEffect(() => {
     if (!activeNote?.shareId || !sync.connected) { setMembers([]); setMembersLoading(false); return }
-    let cancelled = false
-    setMembersLoading(true)
-    void listMembers(activeNote.shareId).then((value) => { if (!cancelled) setMembers(value) }).catch(() => { if (!cancelled) setMembers([]) }).finally(() => { if (!cancelled) setMembersLoading(false) })
-    return () => { cancelled = true }
-  }, [activeNote?.shareId, sync.connected])
+    void loadMembers(activeNote.shareId)
+  }, [activeNote?.shareId, sync.connected, loadMembers])
 
   useEffect(() => {
     if (!shareOpen) return
@@ -552,13 +584,20 @@ export default function App() {
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not decline invitation') }
     finally { setNotificationsLoading(false) }
   }
+  // Membership lives on the server, not in a table we can subscribe to, so after
+  // any change refresh both views that show it — notifications and the open
+  // share sheet — to keep them from drifting apart.
+  const refreshMembership = async (resourceId: string) => {
+    await loadInvitations()
+    if (activeNote?.shareId === resourceId) await loadMembers(resourceId)
+  }
   const approveAccessRequest = async (resourceId: string, userId: string) => {
-    try { setNotificationsLoading(true); await approveRequest(resourceId, userId); await loadInvitations() }
+    try { setNotificationsLoading(true); await approveRequest(resourceId, userId); await refreshMembership(resourceId) }
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not approve request') }
     finally { setNotificationsLoading(false) }
   }
   const denyAccessRequest = async (resourceId: string, userId: string) => {
-    try { setNotificationsLoading(true); await denyRequest(resourceId, userId); await loadInvitations() }
+    try { setNotificationsLoading(true); await denyRequest(resourceId, userId); await refreshMembership(resourceId) }
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not decline request') }
     finally { setNotificationsLoading(false) }
   }
@@ -618,6 +657,7 @@ export default function App() {
         default: return <><h1>You don’t have access</h1><p>Ask the owner to share this page with you.</p></>
       }
     })()}<button className="landing-dismiss" onClick={dismissLanding}>Back to your pages</button></section> : <section className="empty">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><h1>Welcome back{sync.user ? `, ${sync.user.name}` : ''}</h1><p>Pick up where you left off.</p><div className="recent-pages" aria-label="Recent pages">{notes.slice(0, 3).map((note) => <button className="recent-page" key={note.id} onClick={() => openNote(note.id)}><span className="recent-page-icon">📄</span><span>{note.title || 'Untitled'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button>)}</div><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}</main>
+    {flash && <div className="flash-toast" role="status">{flash}</div>}
     {shareOpen && activeNote && createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><p>Links to other pages remain private unless you share them separately.</p><div className="share-link-row"><button className="copy-link" onClick={() => void copyPageLink()}>{copiedLink ? 'Copied' : 'Copy link'}</button><span>Invitees open the page straight from the link.</span></div><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => setInviteHandle(e.target.value)} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div>{membersLoading && members.length === 0 ? <div className="member-list"><span>Loading people…</span></div> : members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)}
   </div>
 }
