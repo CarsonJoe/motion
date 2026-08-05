@@ -250,8 +250,17 @@ export default function App() {
   useEffect(() => {
     if (!store) { setPageLinkServices(null); return }
     const byId = new Map(notes.map((note) => [note.id, note]))
+    // Resolve titles against allNotes (which keeps soft-delete tombstones) so a
+    // link to a synced-but-deleted page reads "deleted", while a link to a page
+    // this viewer never had access to — absent entirely — reads "private".
+    const known = new Map(allNotes.map((note) => [note.id, note]))
     setPageLinkServices({
-      resolveTitle: (id) => byId.has(id) ? (byId.get(id)!.title || '') : null,
+      resolveTitle: (id) => {
+        const note = known.get(id)
+        if (!note) return { kind: 'private' }
+        if (note.deletedAt) return { kind: 'deleted' }
+        return { kind: 'ok', title: note.title || '' }
+      },
       navigate: (id) => { setNoteMenuId(null); setActiveId(id); setMobileView('editor') },
       searchPages: (query) => {
         const q = query.trim().toLowerCase()
@@ -273,7 +282,7 @@ export default function App() {
       }
     })
     return () => setPageLinkServices(null)
-  }, [store, notes, activeId, sync.roles])
+  }, [store, notes, allNotes, activeId, sync.roles])
 
   // Seed the backlink index from every body already on this device, then keep
   // the open note's outgoing links current as its text changes (below).

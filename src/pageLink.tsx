@@ -18,9 +18,13 @@ import { PAGE_LINK_SCHEME } from './links'
 // ---------------------------------------------------------------------------
 
 export type PageOption = { id: string; title: string }
+// A link target resolves to a live title, a known tombstone, or nothing this
+// viewer can see. "private" (absent from the store) is deliberately distinct
+// from "deleted" (present with a tombstone): a shared page can link to a page
+// the author kept private, and calling that "deleted" would invite cleanup.
+export type PageRefState = { kind: 'ok'; title: string } | { kind: 'deleted' } | { kind: 'private' }
 export type PageLinkServices = {
-  // The current title for a note id, or null when it no longer exists.
-  resolveTitle: (id: string) => string | null
+  resolveTitle: (id: string) => PageRefState
   navigate: (id: string) => void
   // Candidate pages for the `[[` picker, already filtered and ranked.
   searchPages: (query: string) => PageOption[]
@@ -78,7 +82,7 @@ export class PageLinkNode extends DecoratorNode<ReactNode> {
   updateDOM() { return false }
 
   // Plain-text fallback (copy, accessibility trees) shows the live title.
-  getTextContent() { return services?.resolveTitle(this.__id) ?? 'page' }
+  getTextContent() { const state = services?.resolveTitle(this.__id); return state?.kind === 'ok' ? state.title : 'page' }
 
   decorate(_editor: LexicalEditor, _config: EditorConfig): ReactNode {
     return <PageRef id={this.__id} nodeKey={this.getKey()} />
@@ -96,26 +100,29 @@ export function $isPageLinkNode(node: LexicalNode | null | undefined): node is P
 
 function PageRef({ id }: { id: string; nodeKey: NodeKey }) {
   const svc = usePageLinkServices()
-  const title = svc?.resolveTitle(id) ?? null
-  const missing = title === null
+  const state = svc?.resolveTitle(id) ?? { kind: 'private' as const }
   const open = (event: React.MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
-    if (!missing) svc?.navigate(id)
+    if (state.kind === 'ok') svc?.navigate(id)
   }
+  const label = state.kind === 'ok' ? (state.title || 'Untitled') : state.kind === 'deleted' ? 'Deleted page' : 'Private page'
+  const hint = state.kind === 'deleted' ? 'This page no longer exists' : state.kind === 'private' ? 'You don’t have access to this page' : state.title || undefined
   return (
     <span
-      className={`page-ref${missing ? ' page-ref-missing' : ''}`}
+      className={`page-ref${state.kind === 'deleted' ? ' page-ref-missing' : state.kind === 'private' ? ' page-ref-private' : ''}`}
       contentEditable={false}
       role="link"
       tabIndex={0}
-      title={missing ? 'This page no longer exists' : title ?? undefined}
+      title={hint}
       onMouseDown={(event) => event.preventDefault()}
       onClick={open}
       onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') open(event as unknown as React.MouseEvent) }}
     >
-      <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>
-      {missing ? 'Deleted page' : (title || 'Untitled')}
+      {state.kind === 'private'
+        ? <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+        : <svg viewBox="0 0 24 24" aria-hidden="true" className="page-ref-icon"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>}
+      {label}
     </span>
   )
 }
@@ -147,7 +154,8 @@ const LexicalPageLinkVisitor = {
     actions: { appendToParent: (parent: unknown, node: unknown) => unknown }
   }) => {
     const id = lexicalNode.getId()
-    const title = services?.resolveTitle(id) ?? 'Untitled'
+    const state = services?.resolveTitle(id)
+    const title = state?.kind === 'ok' ? state.title : 'Untitled'
     actions.appendToParent(mdastParent, {
       type: 'link',
       url: `${PAGE_LINK_SCHEME}${id}`,
