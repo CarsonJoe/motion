@@ -680,12 +680,39 @@ export default function App() {
     if (target.closest('button, input, textarea, select, a, [contenteditable="true"]')) return
     const editor = document.querySelector<HTMLElement>('.motion-md-content')
     if (!editor) return
-    editor.focus()
     const selection = window.getSelection()
     if (!selection) return
-    const range = document.createRange()
-    range.selectNodeContents(editor)
-    range.collapse(false)
+    // Prevent the default mousedown so the browser doesn't blur/re-focus and
+    // wipe the caret we place below.
+    event.preventDefault()
+    // Place the caret at the character nearest the click, not always at the end.
+    // caretRangeFromPoint uses the element under the point, so a click in the
+    // gutter (left/right/below the text) lands outside the editor — clamp the
+    // point into the editor's box and retry so we snap to the closest line.
+    const rect = editor.getBoundingClientRect()
+    const clampedX = Math.min(Math.max(event.clientX, rect.left + 1), rect.right - 1)
+    const clampedY = Math.min(Math.max(event.clientY, rect.top + 1), rect.bottom - 1)
+    const caretFromPoint = (x: number, y: number) => {
+      const doc = document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null
+        caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+      }
+      if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y)
+      const position = doc.caretPositionFromPoint?.(x, y)
+      if (!position) return null
+      const range = document.createRange()
+      range.setStart(position.offsetNode, position.offset)
+      range.collapse(true)
+      return range
+    }
+    editor.focus()
+    let range = caretFromPoint(event.clientX, event.clientY)
+    if (!range || !editor.contains(range.startContainer)) range = caretFromPoint(clampedX, clampedY)
+    if (!range || !editor.contains(range.startContainer)) {
+      range = document.createRange()
+      range.selectNodeContents(editor)
+      range.collapse(false)
+    }
     selection.removeAllRanges()
     selection.addRange(range)
   }
