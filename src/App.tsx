@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import type { InvitationInfo, MemberInfo, ResourceInfo } from '@tallpond/sdk'
+import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
 import { BlockTypeSelect, BoldItalicUnderlineToggles, headingsPlugin, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
 import { openLocalStore, type LocalStore, type Note } from './local'
 import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
@@ -9,7 +9,7 @@ import { InsertPageLink, pageLinkPlugin, setPageLinkServices } from './pageLink'
 import { editorMenuPlugin, thematicBreakRulePlugin } from './editorMenu'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
-import { acceptInvitation, connectInteractive, deleteNoteTree, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listInvitations, listMembers, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond } from './sync'
+import { acceptInvitation, approveRequest, connectInteractive, deleteNoteTree, denyRequest, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listAccessRequests, listInvitations, listMembers, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond, type AccessRequest } from './sync'
 
 const uid = () => crypto.randomUUID()
 type SyncTone = 'gray' | 'green' | 'amber' | 'red'
@@ -17,7 +17,7 @@ type SyncTone = 'gray' | 'green' | 'amber' | 'red'
 // yet: it might need sign-in, an invite to accept, an open resource to join,
 // or a request to the owner.
 type LandingStatus = 'checking' | 'sign-in' | 'invited' | 'join' | 'request' | 'requested' | 'unknown'
-type Landing = { note: string; resource: string | null; status: LandingStatus; info: ResourceInfo | null }
+type Landing = { note: string; resource: string | null; status: LandingStatus; name: string | null }
 const EMPTY_NOTES: Note[] = []
 
 function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean }) {
@@ -182,6 +182,7 @@ export default function App() {
   const [membersLoading, setMembersLoading] = useState(false)
   const [inviteBusy, setInviteBusy] = useState(false)
   const [invitations, setInvitations] = useState<InvitationInfo[]>([])
+  const [requests, setRequests] = useState<AccessRequest[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationsLoading, setNotificationsLoading] = useState(false)
   const [remotePresence, setRemotePresence] = useState<CollaboratorPresence[]>([])
@@ -222,13 +223,17 @@ export default function App() {
   const loadInvitations = useCallback(async () => {
     if (!getSyncState().connected || !navigator.onLine) return
     setNotificationsLoading(true)
-    try { setInvitations(await listInvitations()) }
-    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not load invitations') }
+    try {
+      const [invites, incoming] = await Promise.all([listInvitations(), listAccessRequests()])
+      setInvitations(invites)
+      setRequests(incoming)
+    }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not load notifications') }
     finally { setNotificationsLoading(false) }
   }, [])
 
   useEffect(() => {
-    if (!sync.connected) { setInvitations([]); return }
+    if (!sync.connected) { setInvitations([]); setRequests([]); return }
     void loadInvitations()
     const refresh = () => void loadInvitations()
     window.addEventListener('focus', refresh)
@@ -346,16 +351,22 @@ export default function App() {
     const existing = store.getNote(target)
     if (existing && !existing.deletedAt) { setLanding(null); return }
     const rid = pendingRoute.resourceId
-    if (!rid) { setLanding({ note: target, resource: null, status: 'unknown', info: null }); return }
-    if (!sync.connected) { setLanding({ note: target, resource: rid, status: 'sign-in', info: null }); return }
+    if (!rid) { setLanding({ note: target, resource: null, status: 'unknown', name: null }); return }
+    if (!sync.connected) { setLanding({ note: target, resource: rid, status: 'sign-in', name: null }); return }
     let cancelled = false
-    setLanding({ note: target, resource: rid, status: 'checking', info: null })
-    void getResourceInfo(rid).then((info) => {
+    setLanding({ note: target, resource: rid, status: 'checking', name: null })
+    void (async () => {
+      // A pending invite is the authoritative "accept" signal — an invited user
+      // often can't read the resource yet, so check invitations before get().
+      const invite = (await listInvitations().catch(() => [])).find((item) => item.resourceId === rid)
+      if (cancelled) return
+      if (invite) { setLanding({ note: target, resource: rid, status: 'invited', name: invite.name || null }); return }
+      const info = await getResourceInfo(rid)
       if (cancelled) return
       if (info?.currentMember?.state === 'active') { void fullSync(); return }
-      if (info?.currentMember) { setLanding({ note: target, resource: rid, status: 'invited', info }); return }
-      setLanding({ note: target, resource: rid, status: info?.discoverable ? 'join' : 'request', info })
-    })
+      if (info?.currentMember) { setLanding({ note: target, resource: rid, status: 'invited', name: info.name || null }); return }
+      setLanding({ note: target, resource: rid, status: info?.discoverable ? 'join' : 'request', name: info?.name || null })
+    })()
     return () => { cancelled = true }
   }, [store, pendingRoute, sync.connected])
 
@@ -463,6 +474,8 @@ export default function App() {
     }
     const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', shareId: parent?.shareId ?? '', deletedAt: 0, updatedAt: Date.now() }
     await saveNote(store, note)
+    setLanding(null)
+    setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current)
     setActiveId(note.id)
     setMobileView('editor')
   }
@@ -539,6 +552,18 @@ export default function App() {
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not decline invitation') }
     finally { setNotificationsLoading(false) }
   }
+  const approveAccessRequest = async (resourceId: string, userId: string) => {
+    try { setNotificationsLoading(true); await approveRequest(resourceId, userId); await loadInvitations() }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not approve request') }
+    finally { setNotificationsLoading(false) }
+  }
+  const denyAccessRequest = async (resourceId: string, userId: string) => {
+    try { setNotificationsLoading(true); await denyRequest(resourceId, userId); await loadInvitations() }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not decline request') }
+    finally { setNotificationsLoading(false) }
+  }
+  const requesterName = (request: AccessRequest) => request.displayName || (request.handle ? `@${request.handle}` : 'Someone')
+  const requestPageName = (resourceId: string) => notes.find((note) => note.shareId === resourceId && !note.parentId)?.title || 'a page'
 
   const syncError = sync.error ?? actionError
   const syncIndicator = (() => {
@@ -551,7 +576,10 @@ export default function App() {
     return { label: activeNote?.shareId && docTransport === 'live' ? 'Live' : 'Saved', tone: 'green' as SyncTone, action: null }
   })()
   const syncAction = tallpond ? syncIndicator.action : 'Sync setup required'
-  const openNote = (id: string) => { setNoteMenuId(null); setActiveId(id); setMobileView('editor') }
+  // Explicit navigation clears any pending deep-link/landing so it doesn't keep
+  // covering the page the user just chose.
+  const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
+  const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setActiveId(id); setMobileView('editor') }
   const copyPageLink = async () => {
     if (!activeNote) return
     const url = `${window.location.origin}${window.location.pathname}${pageUrl(activeNote.id, activeNote.shareId || null)}`
@@ -573,13 +601,13 @@ export default function App() {
     selection.addRange(range)
   }
   return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
-    <aside><div className="list-header"><span>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}</div>}</section>}<div className="section-label">PAGES</div><nav><NoteTree notes={notes} parentId="" activeId={activeId} depth={0} onOpen={openNote} menuId={noteMenuId} onToggleMenu={(id) => setNoteMenuId((current) => current === id ? null : id)} onCreateChild={(note) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(note.id)); void createNote(note) }} onDelete={(note) => void removeNote(note)} canDeleteNote={canDeleteNote} expandedIds={expandedIds} onToggleExpanded={(id) => { setExpandedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) }} /></nav><div className="sidebar-footer"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span className="sync-status">{syncIndicator.label}</span>{syncAction && <button className="sync-button" disabled={!tallpond || !navigator.onLine || sync.phase === 'connecting'} onClick={() => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())}>{syncAction}</button>}{syncError && <span className="sync-error">{syncError}</span>}</div></aside>
-    <main onMouseDown={focusEditorCanvas}>{activeNote ? <><header className="editor-header"><div className="editor-header-row"><div className="header-left">{!sidebarOpen && <button className="sidebar-open header-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<button className="back-button" aria-label="Back to page list" onClick={() => { if (window.innerWidth <= 760) setMobileView('list'); else { openSidebar(); setActiveId(null) } }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button><div className="page-path" aria-label="Page path">{breadcrumbs.length === 1 ? <span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span> : <><span className="breadcrumb-root"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span><i>/</i>{breadcrumbs.length > 2 && <><span className="breadcrumb-ellipsis">…</span><i>/</i></>}<span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[breadcrumbs.length - 1].id)}>{breadcrumbs[breadcrumbs.length - 1].title || 'Untitled'}</button></span></>}</div></div><div ref={setToolbarHost} className="editor-toolbar" role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}<div className="header-status"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span>{syncIndicator.label}</span></div><div className="header-actions"><button className="header-button share-button" aria-label={activeNote.shareId ? 'Open sharing' : 'Share page'} disabled={!sync.connected || !navigator.onLine} onClick={() => setShareOpen(!shareOpen)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12L8 7m4-4 4 4"/><path d="M7 10H5v10h14V10h-2"/></svg></button></div></div></div></header><article ref={articleRef}><input ref={titleInputRef} aria-label="Page title" className="title" readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} placeholder="Untitled Note" />
+    <aside><div className="list-header"><span>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}<div className="section-label">PAGES</div><nav><NoteTree notes={notes} parentId="" activeId={activeId} depth={0} onOpen={openNote} menuId={noteMenuId} onToggleMenu={(id) => setNoteMenuId((current) => current === id ? null : id)} onCreateChild={(note) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(note.id)); void createNote(note) }} onDelete={(note) => void removeNote(note)} canDeleteNote={canDeleteNote} expandedIds={expandedIds} onToggleExpanded={(id) => { setExpandedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) }} /></nav><div className="sidebar-footer"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span className="sync-status">{syncIndicator.label}</span>{syncAction && <button className="sync-button" disabled={!tallpond || !navigator.onLine || sync.phase === 'connecting'} onClick={() => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())}>{syncAction}</button>}{syncError && <span className="sync-error">{syncError}</span>}</div></aside>
+    <main onMouseDown={focusEditorCanvas}>{activeNote && !landing ? <><header className="editor-header"><div className="editor-header-row"><div className="header-left">{!sidebarOpen && <button className="sidebar-open header-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<button className="back-button" aria-label="Back to page list" onClick={() => { if (window.innerWidth <= 760) setMobileView('list'); else { openSidebar(); setActiveId(null) } }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button><div className="page-path" aria-label="Page path">{breadcrumbs.length === 1 ? <span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span> : <><span className="breadcrumb-root"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span><i>/</i>{breadcrumbs.length > 2 && <><span className="breadcrumb-ellipsis">…</span><i>/</i></>}<span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[breadcrumbs.length - 1].id)}>{breadcrumbs[breadcrumbs.length - 1].title || 'Untitled'}</button></span></>}</div></div><div ref={setToolbarHost} className="editor-toolbar" role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}<div className="header-status"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span>{syncIndicator.label}</span></div><div className="header-actions"><button className="header-button share-button" aria-label={activeNote.shareId ? 'Open sharing' : 'Share page'} disabled={!sync.connected || !navigator.onLine} onClick={() => setShareOpen(!shareOpen)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12L8 7m4-4 4 4"/><path d="M7 10H5v10h14V10h-2"/></svg></button></div></div></div></header><article ref={articleRef}><input ref={titleInputRef} aria-label="Page title" className="title" readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} placeholder="Untitled Note" />
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} />}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
       {backlinks.length > 0 && <section className="backlinks" aria-label="Linked references"><h2>Linked references</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
       </article></> : landing ? <section className="empty access-landing">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}<div className="empty-mark">M</div>{(() => {
-      const name = landing.info?.name
+      const name = landing.name
       switch (landing.status) {
         case 'checking': return <><h1>Opening…</h1><p>Checking your access.</p></>
         case 'sign-in': return <><h1>Sign in to open this page</h1><p>Connect your Tallpond account to continue.</p><button className="new" onClick={() => void connect()}>Connect to Tallpond</button></>

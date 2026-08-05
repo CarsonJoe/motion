@@ -475,6 +475,35 @@ export async function inviteByHandle(shareId: string, handle: string, role: 'rea
   }
 }
 
+// Pending access requests across the resources this user administers, so the
+// owner can be notified and let people in. A requester's membership sits in the
+// 'requested' state until an admin accepts it.
+export type AccessRequest = { resourceId: string; userId: string; role: string; handle: string | null; displayName: string | null }
+
+export async function listAccessRequests(): Promise<AccessRequest[]> {
+  if (!tallpond) return []
+  const adminShares = Object.entries(state.roles).filter(([, role]) => role === 'owner' || role === 'admin').map(([id]) => id)
+  const requests: AccessRequest[] = []
+  for (const resourceId of adminShares) {
+    try {
+      for (const member of await listMembers(resourceId)) {
+        if (member.state === 'requested') requests.push({ resourceId, userId: member.userId, role: member.role, handle: member.ownerHandle, displayName: member.ownerDisplayName })
+      }
+    } catch { /* a resource we lost access to just contributes nothing */ }
+  }
+  return requests
+}
+
+export async function approveRequest(resourceId: string, userId: string) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  await tallpond.resource(resourceId).members.accept(userId)
+}
+
+export async function denyRequest(resourceId: string, userId: string) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  await tallpond.resource(resourceId).members.reject(userId)
+}
+
 export async function listMembers(shareId: string): Promise<MemberInfo[]> {
   if (!tallpond) return []
   const members = await tallpond.resource(shareId).members.list()
