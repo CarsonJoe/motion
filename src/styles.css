@@ -43,9 +43,10 @@ nav::-webkit-scrollbar-thumb:hover { background-color: #505050; }
 .page-menu-button { width: 28px; height: 28px; flex: none; margin-right: 4px; padding: 0; border: 0; border-radius: 5px; color: #777; background: transparent; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; }
 .page-row:hover .page-menu-button, .page-menu-button:focus, .page-menu-button.menu-open { opacity: 1; }
 .page-menu-button:hover, .page-menu-button.menu-open { color: #eee; background: #303030; }
-.page-menu { z-index: 30; display: grid; width: 160px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: page-menu-in .12s ease; }
+.page-menu { z-index: 30; display: grid; width: 170px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: page-menu-in .12s ease; }
 @keyframes page-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-.page-menu button { padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.page-menu button { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.page-menu button svg { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .page-menu button:hover { background: #383838; }
 .page-menu .danger { color: #ee9999; }
 .sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; border-top: 1px solid #2a2a2a; color: #8e8e8e; font-size: 12px; }
