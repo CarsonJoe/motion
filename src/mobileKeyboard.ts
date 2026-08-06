@@ -37,6 +37,14 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
 
     const vv = window.visualViewport
 
+    // The layout-viewport height — the stable reference for keyboard height.
+    // NOT window.innerHeight: in a standalone iOS PWA that shrinks when the
+    // keyboard opens, so `innerHeight - vv.height` collapses to a bogus small
+    // value (~1-in-10 the toolbar/safe-zone are placed for a too-short keyboard
+    // and the app gets pulled up). documentElement.clientHeight does not shrink
+    // under our position:fixed body, so the subtraction stays correct.
+    const layoutH = () => document.documentElement.clientHeight
+
     // Temporary on-screen instrumentation. Open the app with ?debug to see a
     // live log of the focus/scroll pipeline. Remove once the land-before-
     // keyboard behavior is nailed down.
@@ -69,14 +77,29 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // The content element is resolved lazily on focus: MDXEditor mounts it a
     // frame or two after this effect runs, and remounts it per note.
     const getContent = () => main.querySelector<HTMLElement>(CONTENT_SELECTOR)
+    // The scrollable article wrapper — the resting space goes here (below the
+    // backlinks), not on the editor text, so it reads as trailing space rather
+    // than a gap between the note and its backlinks.
+    const getArticle = () => main.querySelector<HTMLElement>('article')
 
     // Reserve scroll room below the content so the caret can sit above the
     // keyboard even on the last line. Only padding — `main` is never resized
     // (every historical bug in the experiment traced back to resizing it).
     function reserveScrollRoom() {
-      const content = getContent()
-      if (content) content.style.paddingBottom = lastKeyboardHeight + KEYBOARD_ESTIMATE_SAFETY + toolbar!.offsetHeight + 40 + 'px'
+      const article = getArticle()
+      if (article) article.style.paddingBottom = lastKeyboardHeight + KEYBOARD_ESTIMATE_SAFETY + toolbar!.offsetHeight + 40 + 'px'
     }
+
+    // Apply the resting space as soon as the article mounts (it appears a frame
+    // or two after this effect runs, and remounts per note), so the space is
+    // there BEFORE the first tap — that's what makes tapping the last line snap-
+    // free, not just once focused.
+    let restingTries = 0
+    const applyRestingSpace = () => {
+      if (getArticle()) reserveScrollRoom()
+      else if (restingTries++ < 40) requestAnimationFrame(applyRestingSpace)
+    }
+    requestAnimationFrame(applyRestingSpace)
 
     // --- toolbar reveal ------------------------------------------------------
     // The toolbar stays off-screen (CSS default) until revealed — either at its
@@ -116,21 +139,26 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // keyboard reopens on a still-focused editor without a fresh focusin.
     function syncToolbar() {
       if (!vv) return
-      const measuredKbHeight = window.innerHeight - vv.height
+      const measuredKbHeight = layoutH() - vv.height
       const focused = Boolean(getContent()?.contains(document.activeElement))
       const holdingDropdown = performance.now() - dropdownArmedAt < 600 || dropdownOpen()
       if (measuredKbHeight > 100 && focused) {
         keyboardWasUp = true
-        lastKeyboardHeight = measuredKbHeight
-        localStorage.setItem('kb-height', String(measuredKbHeight))
+        // Only remember/persist a plausible height. A mid-animation frame is
+        // smaller than the settled height; don't let it shrink the remembered
+        // value (which drives the pre-keyboard estimate and reserved room).
+        if (measuredKbHeight >= lastKeyboardHeight * 0.75) {
+          lastKeyboardHeight = measuredKbHeight
+          localStorage.setItem('kb-height', String(measuredKbHeight))
+        }
         if (!toolbar!.classList.contains('kb-visible')) toolbar!.classList.add('kb-visible')
         reserveScrollRoom()
         const x = vv.offsetLeft
         const y = vv.offsetTop + vv.height - toolbar!.offsetHeight
-        if (!toolbarRevealed) { debug(`sync REVEAL kbH=${Math.round(measuredKbHeight)} y=${Math.round(y)}`); revealToolbar(y) }
+        if (!toolbarRevealed) { debug(`reveal kbH=${Math.round(measuredKbHeight)}`); revealToolbar(y) }
         else toolbar!.style.transform = `translate(${x}px, ${y}px)`
       } else if (measuredKbHeight <= 60 && keyboardWasUp && !holdingDropdown && toolbar!.classList.contains('kb-visible')) {
-        debug(`sync HIDE kbH=${Math.round(measuredKbHeight)}`)
+        debug('hide')
         // Keyboard dismissed. Hysteresis (up >100, gone <=60) avoids flicker
         // near the threshold. A dropdown deliberately collapses the keyboard
         // while staying open, so it's exempt (watchDropdownClose owns that).
@@ -225,7 +253,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       let target: number | null = null
       if (rect.bottom > zone.bottom) target = main!.scrollTop + (rect.bottom - zone.bottom)
       else if (rect.top < zone.top) target = main!.scrollTop - (zone.top - rect.top)
-      debug(`correct rect=${Math.round(rect.top)},${Math.round(rect.bottom)} zone=${Math.round(zone.top)},${Math.round(zone.bottom)} ${target === null ? 'ok' : 'scroll->' + Math.round(target)}`)
+      if (target !== null) debug(`corr  ${Math.round(main!.scrollTop)}→${Math.round(target)}`)
       if (target === null) return
       animateScrollTo(target)
     }
@@ -270,7 +298,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // reveal it, so callers never read the off-screen default as if it were real.
     function currentOrEstimatedToolbarTop() {
       if (toolbarRevealed) return toolbar!.getBoundingClientRect().top
-      return window.innerHeight - (lastKeyboardHeight + KEYBOARD_ESTIMATE_SAFETY) - toolbar!.offsetHeight
+      return layoutH() - (lastKeyboardHeight + KEYBOARD_ESTIMATE_SAFETY) - toolbar!.offsetHeight
     }
 
     function getSafeZone(toolbarTopY: number) {
@@ -312,14 +340,59 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       // dismissed, so tapping to bring it back fires NO focusin — this tap is
       // the only pre-keyboard signal. A fresh (not-yet-focused) tap has already
       // gone through focusin by now (kb-visible set) and is skipped here.
-      const keyboardDown = !vv || window.innerHeight - vv.height <= 100
+      const keyboardDown = !vv || layoutH() - vv.height <= 100
       const focused = Boolean(getContent()?.contains(document.activeElement))
       if (pointerInEditor && focused && keyboardDown && !toolbar.classList.contains('kb-visible')) {
-        debug(`tap REOPEN tapY=${pendingTapY == null ? 'null' : Math.round(pendingTapY)}`)
+        debug(`reopen tap=${pendingTapY == null ? '-' : Math.round(pendingTapY)}`)
         const tapY = pendingTapY
         pendingTapY = null
         beginEngagement(tapY)
       }
+    }
+
+    const caretRangeFromPoint = (x: number, y: number): Range | null => {
+      const doc = document as Document & {
+        caretRangeFromPoint?: (x: number, y: number) => Range | null
+        caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+      }
+      if (doc.caretRangeFromPoint) return doc.caretRangeFromPoint(x, y)
+      const pos = doc.caretPositionFromPoint?.(x, y)
+      if (!pos) return null
+      const r = document.createRange()
+      r.setStart(pos.offsetNode, pos.offset)
+      r.collapse(true)
+      return r
+    }
+
+    // Beat iOS to the punch. iOS runs its "will the keyboard obscure the caret?"
+    // check at FOCUS time and pans the visual viewport if so — a pan that can't
+    // be undone. To win the race we do everything synchronously in the tap,
+    // BEFORE focus: preventDefault iOS's own caret placement, focus (the caret
+    // defaults to the top = visible, so iOS's check finds nothing to reveal and
+    // doesn't pan), then place the caret at the tapped character and scroll it
+    // into the safe zone ourselves. Only for a fresh tap into the keyboard
+    // danger zone; an already-focused editor can't be preempted (preventDefault
+    // would block the keyboard from reopening), and taps above the danger zone
+    // need no scroll so we leave them to the browser.
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Element | null
+      const content = getContent()
+      if (!content || !target || !target.closest(CONTENT_SELECTOR)) return
+      if (content.contains(document.activeElement)) return
+      const zone = getSafeZone(currentOrEstimatedToolbarTop())
+      if (e.clientY <= zone.bottom) return
+      const range = caretRangeFromPoint(e.clientX, e.clientY)
+      if (!range || !content.contains(range.startContainer)) return
+      e.preventDefault()
+      content.focus()
+      const sel = window.getSelection()
+      if (sel) { sel.removeAllRanges(); sel.addRange(range) }
+      reserveScrollRoom()
+      const rect = range.getBoundingClientRect()
+      const span: [number, number] = rect.width === 0 && rect.height === 0 && rect.top === 0 ? [e.clientY, e.clientY + 28] : [rect.top, rect.bottom]
+      const before = main.scrollTop
+      correctIfOutsideSafeZone(span, zone)
+      debug(`preempt y=${Math.round(e.clientY)} zoneB=${Math.round(zone.bottom)} ${Math.round(before)}→${Math.round(main.scrollTop)}`)
     }
 
     // Tapping a formatting button must NOT blur the contenteditable — otherwise
@@ -366,7 +439,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       const landZone = getSafeZone(currentOrEstimatedToolbarTop())
       const scrollBefore = main!.scrollTop
       correctIfOutsideSafeZone(landSpan, landZone)
-      debug(`  land span=${landSpan ? landSpan.map(Math.round).join(',') : 'null'} zone=${Math.round(landZone.top)},${Math.round(landZone.bottom)} scroll ${Math.round(scrollBefore)}->${Math.round(main!.scrollTop)}`)
+      debug(`land  ${Math.round(scrollBefore)}→${Math.round(main!.scrollTop)}`)
     }
 
     function beginEngagement(tapY: number | null) {
@@ -387,6 +460,9 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       // deterministic "now it's safe to scroll" signal (see onSelectionChange).
       // A short timeout is the fallback for when the caret didn't move (no
       // selectionchange), e.g. reopening on the exact same spot.
+      // Hold the document at 0 through the keyboard-open animation so iOS can't
+      // pull the app up.
+      startDocPin()
       reserveScrollRoom()
       landArmed = true
       landTapY = tapY
@@ -404,7 +480,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       noKeyboardFallbackTimer = window.setTimeout(() => {
         if (toolbarRevealed) return
         const measuredBefore = localStorage.getItem('kb-height') !== null
-        revealToolbar(measuredBefore ? currentOrEstimatedToolbarTop() : window.innerHeight - toolbar!.offsetHeight)
+        revealToolbar(measuredBefore ? currentOrEstimatedToolbarTop() : layoutH() - toolbar!.offsetHeight)
       }, NO_KEYBOARD_FALLBACK_MS)
 
       pollSyncToolbar()
@@ -412,12 +488,12 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
 
     const onFocusIn = (e: FocusEvent) => {
       if (!(e.target instanceof Element) || !e.target.closest(CONTENT_SELECTOR)) return
-      debug(`focusin kbVis=${toolbar.classList.contains('kb-visible')} tapY=${pendingTapY == null ? 'null' : Math.round(pendingTapY)}`)
       // Already engaged → a Lexical focus churn, not a fresh open. Skip so we
       // don't reset scroll/toolbar mid-edit. A genuine reopen after the keyboard
       // was dismissed always tore down first (kb-visible removed), so it falls
       // through here — or, if focus was retained, is handled on pointerdown.
-      if (toolbar.classList.contains('kb-visible')) { debug('  -> SKIP (engaged)'); return }
+      if (toolbar.classList.contains('kb-visible')) return
+      debug(`focus tap=${pendingTapY == null ? '-' : Math.round(pendingTapY)}`)
       const tapY = pendingTapY
       pendingTapY = null
       beginEngagement(tapY)
@@ -480,6 +556,8 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       keyboardWasUp = false
       landArmed = false
       if (landFallbackTimer) { clearTimeout(landFallbackTimer); landFallbackTimer = null }
+      docPinUntil = 0
+      if (docPinFrame) { cancelAnimationFrame(docPinFrame); docPinFrame = 0 }
       if (noKeyboardFallbackTimer) clearTimeout(noKeyboardFallbackTimer)
       // Reset instantly (not via the fade) so the next focus's fade-in starts
       // clean from 0 — already off-screen, so no visible effect on the hide.
@@ -488,8 +566,10 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       requestAnimationFrame(() => {
         toolbar!.style.transition = ''
       })
-      const content = getContent()
-      if (content) content.style.paddingBottom = ''
+      // Keep the resting space below the last line (Apple Notes style) rather
+      // than clearing it, so scrolling to the end always leaves the last line
+      // above the keyboard area — tapping it later needs no scroll (no snap).
+      reserveScrollRoom()
       if (pendingCorrectionTimer) clearTimeout(pendingCorrectionTimer)
       pendingCorrectionTimer = null
       if (scrollAnimFrame) cancelAnimationFrame(scrollAnimFrame)
@@ -510,8 +590,43 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       maybeCorrectCaretScroll()
     }
 
+    // iOS pulls the whole document up to reveal the caret when the keyboard
+    // opens, even with position:fixed body. Reacting to the `scroll` event is
+    // too late — it fires after iOS's animation, so you see the pull then a snap
+    // back. Instead, pin the document to 0 every frame across the keyboard-open
+    // window: iOS never gets a visible pull because we overwrite its scroll each
+    // frame before paint. Only touches document/window scroll — our own <main>
+    // caret scroll is untouched.
+    let docPinUntil = 0
+    let docPinFrame = 0
+    const pinDocument = () => {
+      const se = document.scrollingElement as HTMLElement | null
+      if (se && se.scrollTop !== 0) se.scrollTop = 0
+      if (window.scrollY !== 0) window.scrollTo(0, 0)
+      docPinFrame = performance.now() < docPinUntil ? requestAnimationFrame(pinDocument) : 0
+    }
+    const startDocPin = (ms = 700) => {
+      docPinUntil = performance.now() + ms
+      if (!docPinFrame) docPinFrame = requestAnimationFrame(pinDocument)
+    }
+
+    // Diagnostic: log which surface actually moves during the slide. `doc` =
+    // document/window (iOS app-pull), `main` = our caret scroll, `vv` = visual
+    // viewport offset. Only logs meaningful changes to keep it readable.
+    let lastScrollLog = ''
+    const onAnyScroll = (e: Event) => {
+      if (!toolbar.classList.contains('kb-visible')) return
+      const se = document.scrollingElement as HTMLElement | null
+      const doc = se ? Math.round(se.scrollTop) : 0
+      const what = e.target === main ? 'main' : e.target === document ? 'doc' : 'oth'
+      const msg = `sc(${what}) main=${Math.round(main.scrollTop)} doc=${doc} win=${Math.round(window.scrollY)} vv=${Math.round(vv?.offsetTop || 0)}`
+      if (msg !== lastScrollLog) { debug(msg); lastScrollLog = msg }
+    }
+    window.addEventListener('scroll', onAnyScroll, true)
+
     main.addEventListener('pointerdown', onPointerDown)
     main.addEventListener('pointerup', onPointerUp)
+    main.addEventListener('mousedown', onMouseDown)
     // focusin/focusout bubble (unlike focus/blur), so one listener on <main>
     // catches the content element even though it mounts/remounts inside.
     main.addEventListener('focusin', onFocusIn)
@@ -524,8 +639,11 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     }
 
     return () => {
+      if (docPinFrame) cancelAnimationFrame(docPinFrame)
+      window.removeEventListener('scroll', onAnyScroll, true)
       main.removeEventListener('pointerdown', onPointerDown)
       main.removeEventListener('pointerup', onPointerUp)
+      main.removeEventListener('mousedown', onMouseDown)
       toolbar.removeEventListener('pointerdown', onToolbarPointerDown)
       main.removeEventListener('focusin', onFocusIn)
       main.removeEventListener('focusout', onFocusOut)
@@ -548,8 +666,8 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       toolbar.style.transform = ''
       toolbar.style.transition = ''
       toolbar.style.opacity = ''
-      const content = getContent()
-      if (content) content.style.paddingBottom = ''
+      const article = getArticle()
+      if (article) article.style.paddingBottom = ''
     }
   }, [toolbar, main, enabled, noteId])
 }
