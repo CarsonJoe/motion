@@ -87,7 +87,14 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // (every historical bug in the experiment traced back to resizing it).
     function reserveScrollRoom() {
       const article = getArticle()
-      if (article) article.style.paddingBottom = lastKeyboardHeight + KEYBOARD_ESTIMATE_SAFETY + toolbar!.offsetHeight + 40 + 'px'
+      if (!article) return
+      // Room below the last line so the caret can always be scrolled into the
+      // safe zone (this is what lets the preempt beat iOS's pan). Must be at
+      // least a keyboard + toolbar; a generous buffer covers a short note whose
+      // last line sits at the very bottom, where the tall editor min-height used
+      // to supply the room implicitly.
+      article.style.paddingBottom = lastKeyboardHeight + toolbar!.offsetHeight + 200 + 'px'
+      void article.offsetHeight // force reflow so scrollHeight reflects it now
     }
 
     // Apply the resting space as soon as the article mounts (it appears a frame
@@ -372,20 +379,44 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     const onMouseDown = (e: MouseEvent) => {
       const target = e.target as Element | null
       const content = getContent()
-      if (!content || !target || !target.closest(CONTENT_SELECTOR)) return
+      if (!content || !target) return
+      // Skip real controls / links / page-link pills so they act normally.
+      if (target.closest('button, a, input, textarea, [role="toolbar"], .page-ref, .page-ref-host')) return
+      // Handle taps in the editor content AND the empty space below it (the
+      // article / resting space) — a spacer tap's target is the <article>, not
+      // the content.
+      if (!target.closest(CONTENT_SELECTOR) && !target.closest('article')) return
       if (justDismissed()) { e.preventDefault(); return }
+      // Only preempt the FIRST tap (fresh focus) — that's when iOS runs its
+      // focus scroll-into-view and pans, even for an already-visible caret in a
+      // short note. Once focused, leave taps to the browser so selection
+      // gestures (double-tap, drag) work normally.
       if (content.contains(document.activeElement)) return
       const zone = getSafeZone(currentOrEstimatedToolbarTop())
-      if (e.clientY <= zone.bottom) return
-      const range = caretRangeFromPoint(e.clientX, e.clientY)
-      if (!range || !content.contains(range.startContainer)) return
+      const box = content.getBoundingClientRect()
+      // A tap in the empty resting space below the last line has no text under
+      // it, so caretRangeFromPoint returns a random position. Clamp the point
+      // into the editor's box (like focusEditorCanvas) so it snaps to the
+      // nearest real line — and if it still lands outside, place at the end.
+      const cx = Math.min(Math.max(e.clientX, box.left + 1), box.right - 1)
+      const cy = Math.min(Math.max(e.clientY, box.top + 1), box.bottom - 1)
+      // Only trust the raw point INSIDE the editor box. Below the last line
+      // (resting space) it has no text and returns a random caret, so snap to
+      // the clamped point (nearest line), then fall back to the end.
+      let range = e.clientY <= box.bottom ? caretRangeFromPoint(e.clientX, e.clientY) : null
+      if (!range || !content.contains(range.startContainer)) range = caretRangeFromPoint(cx, cy)
+      if (!range || !content.contains(range.startContainer)) {
+        range = document.createRange()
+        range.selectNodeContents(content)
+        range.collapse(false)
+      }
       e.preventDefault()
       content.focus()
       const sel = window.getSelection()
       if (sel) { sel.removeAllRanges(); sel.addRange(range) }
       reserveScrollRoom()
       const rect = range.getBoundingClientRect()
-      const span: [number, number] = rect.width === 0 && rect.height === 0 && rect.top === 0 ? [e.clientY, e.clientY + 28] : [rect.top, rect.bottom]
+      const span: [number, number] = rect.width === 0 && rect.height === 0 && rect.top === 0 ? [cy, cy + 28] : [rect.top, rect.bottom]
       const before = main.scrollTop
       correctIfOutsideSafeZone(span, zone)
       debug(`preempt y=${Math.round(e.clientY)} zoneB=${Math.round(zone.bottom)} ${Math.round(before)}→${Math.round(main.scrollTop)}`)

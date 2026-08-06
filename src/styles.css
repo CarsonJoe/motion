@@ -309,7 +309,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .editor-toolbar .extra-tools { display: none; }
   /* padding-bottom is set dynamically by mobileKeyboard.ts while typing
      (reserveScrollRoom); the static value here is only the resting state. */
-  .motion-md-content { min-height: calc(100dvh - 175px); padding-bottom: 40px; font-size: 17px; line-height: 1.68; }
+  .motion-md-content { min-height: 40dvh; padding-bottom: 40px; font-size: 17px; line-height: 1.68; }
   .empty { padding-bottom: 60px; }
   .invite-row { flex-wrap: wrap; }
   .invite-row input { min-width: 145px; }
