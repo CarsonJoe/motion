@@ -309,7 +309,10 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .editor-toolbar .extra-tools { display: none; }
   /* padding-bottom is set dynamically by mobileKeyboard.ts while typing
      (reserveScrollRoom); the static value here is only the resting state. */
-  .motion-md-content { min-height: 40dvh; padding-bottom: 40px; font-size: 17px; line-height: 1.68; }
+  /* Resting height is compact so backlinks sit close to the content. While the
+     keyboard is open, mobileKeyboard expands min-height (a full page) so iOS has
+     a real scroll surface and doesn't pan the document on short notes. */
+  .motion-md-content { min-height: 30dvh; padding-bottom: 40px; font-size: 17px; line-height: 1.68; }
   .empty { padding-bottom: 60px; }
   .invite-row { flex-wrap: wrap; }
   .invite-row input { min-width: 145px; }

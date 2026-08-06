@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { lexicalAdapter } from './lexicalBridge'
 
 // Ported from the "Notes Lab" PWA experiment. It solves the two things mobile
 // browsers get wrong for a full-screen editor and that no amount of CSS fixes:
@@ -85,25 +86,35 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // Reserve scroll room below the content so the caret can sit above the
     // keyboard even on the last line. Only padding — `main` is never resized
     // (every historical bug in the experiment traced back to resizing it).
-    function reserveScrollRoom() {
+    const RESTING_BOTTOM_ROOM = 80
+    // Room below the last line. While the keyboard is OPEN this is a full
+    // keyboard+ so the caret can always scroll into the safe zone (needed for
+    // long notes, where the tall min-height adds no extra space). At REST it's
+    // just a small trailing margin — no scroll is needed with the keyboard down,
+    // so a big reserve would only be dead space under the backlinks.
+    function reserveScrollRoom(open = true) {
       const article = getArticle()
       if (!article) return
-      // Room below the last line so the caret can always be scrolled into the
-      // safe zone (this is what lets the preempt beat iOS's pan). Must be at
-      // least a keyboard + toolbar; a generous buffer covers a short note whose
-      // last line sits at the very bottom, where the tall editor min-height used
-      // to supply the room implicitly.
-      article.style.paddingBottom = lastKeyboardHeight + toolbar!.offsetHeight + 200 + 'px'
+      article.style.paddingBottom = (open ? lastKeyboardHeight + toolbar!.offsetHeight + 200 : RESTING_BOTTOM_ROOM) + 'px'
       void article.offsetHeight // force reflow so scrollHeight reflects it now
     }
 
-    // Apply the resting space as soon as the article mounts (it appears a frame
-    // or two after this effect runs, and remounts per note), so the space is
-    // there BEFORE the first tap — that's what makes tapping the last line snap-
-    // free, not just once focused.
+    // Expand the editor to a full page WHILE the keyboard is open, so iOS has a
+    // real scroll surface and scrolls `main` instead of pulling the document (the
+    // short-note pan). Compact at rest so backlinks stay close. Must be set
+    // BEFORE focus so it's in place when iOS evaluates on keyboard-open.
+    function setTallEditor(on: boolean) {
+      const content = getContent()
+      if (!content) return
+      content.style.minHeight = on ? 'calc(100dvh - 175px)' : ''
+      if (on) void content.offsetHeight // reflow now
+    }
+
+    // Apply the small resting margin as soon as the article mounts (the keyboard
+    // is down at rest). The full room is reserved on engage.
     let restingTries = 0
     const applyRestingSpace = () => {
-      if (getArticle()) reserveScrollRoom()
+      if (getArticle()) reserveScrollRoom(false)
       else if (restingTries++ < 40) requestAnimationFrame(applyRestingSpace)
     }
     requestAnimationFrame(applyRestingSpace)
@@ -243,6 +254,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       // correction here (esp. on a blank line's degenerate rect) scrolls the
       // wrong way and drags in the iOS pan. Stay out of the way.
       if (justDismissed()) return
+      if (correctionsSuppressed()) return
       if (!toolbar!.classList.contains('kb-visible')) return
       const content = getContent()
       const sel = window.getSelection()
@@ -261,12 +273,10 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
 
     function pollSyncToolbar() {
       pollTimers.forEach(clearTimeout)
-      pollTimers = POLL_DELAYS.map((ms) =>
-        window.setTimeout(() => {
-          syncToolbar()
-          maybeCorrectCaretScroll()
-        }, ms),
-      )
+      // Only re-sync the toolbar geometry here. Caret placement is owned by the
+      // preempt / land; poll-driven caret corrections re-measured a reconciled
+      // empty block and spuriously scrolled.
+      pollTimers = POLL_DELAYS.map((ms) => window.setTimeout(syncToolbar, ms))
     }
 
     // Captures where a tap landed, in absolute scroll-content coordinates,
@@ -318,39 +328,14 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     }
 
     // --- event handlers ------------------------------------------------------
-    // Tap-vs-drag: record the pointer start so onPointerUp can tell a tap (which
-    // reopens the keyboard) from a scroll drag (which must not engage anything).
-    let pointerStartX = 0
-    let pointerStartY = 0
-    let pointerInEditor = false
-    const TAP_SLOP = 12
-
     const onPointerDown = (e: PointerEvent) => {
       pendingTapY = main.scrollTop + (e.clientY - main.getBoundingClientRect().top)
-      pointerStartX = e.clientX
-      pointerStartY = e.clientY
-      const target = e.target as Element | null
-      pointerInEditor = Boolean(target && target.closest(CONTENT_SELECTOR))
     }
 
-    const onPointerUp = (e: PointerEvent) => {
-      if (justDismissed()) return
-      // Only a genuine tap reopens the keyboard; a drag is a scroll and must be
-      // ignored, or the toolbar pops up while just scrolling a dismissed page.
-      if (Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY) > TAP_SLOP) return
-      // Reopen-while-focused: Lexical keeps DOM focus when the keyboard is
-      // dismissed, so tapping to bring it back fires NO focusin — this tap is
-      // the only pre-keyboard signal. A fresh (not-yet-focused) tap has already
-      // gone through focusin by now (kb-visible set) and is skipped here.
-      const keyboardDown = !vv || layoutH() - vv.height <= 100
-      const focused = Boolean(getContent()?.contains(document.activeElement))
-      if (pointerInEditor && focused && keyboardDown && !toolbar.classList.contains('kb-visible')) {
-        debug(`reopen tap=${pendingTapY == null ? '-' : Math.round(pendingTapY)}`)
-        const tapY = pendingTapY
-        pendingTapY = null
-        beginEngagement(tapY)
-      }
-    }
+    // Reopen-while-focused (keyboard dismissed but Lexical kept focus) is handled
+    // by onMouseDown's preempt too — mousedown fires for taps only, and AFTER
+    // pointerup, so a separate pointerup reopen path would double-engage and
+    // fight the preempt.
 
     const caretRangeFromPoint = (x: number, y: number): Range | null => {
       const doc = document as Document & {
@@ -387,38 +372,75 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       // the content.
       if (!target.closest(CONTENT_SELECTOR) && !target.closest('article')) return
       if (justDismissed()) { e.preventDefault(); return }
-      // Only preempt the FIRST tap (fresh focus) — that's when iOS runs its
-      // focus scroll-into-view and pans, even for an already-visible caret in a
-      // short note. Once focused, leave taps to the browser so selection
-      // gestures (double-tap, drag) work normally.
-      if (content.contains(document.activeElement)) return
+      // Preempt a fresh tap (unfocused) AND a reopen (focused but keyboard
+      // dismissed) — both re-run iOS's focus scroll/pan. Only leave taps alone
+      // while actively editing (focused + keyboard up), so selection gestures
+      // (double-tap, drag) work normally.
+      const alreadyFocused = content.contains(document.activeElement)
+      const keyboardDown = !vv || layoutH() - vv.height <= 100
+      if (alreadyFocused && !keyboardDown) return
       const zone = getSafeZone(currentOrEstimatedToolbarTop())
       const box = content.getBoundingClientRect()
-      // A tap in the empty resting space below the last line has no text under
-      // it, so caretRangeFromPoint returns a random position. Clamp the point
-      // into the editor's box (like focusEditorCanvas) so it snaps to the
-      // nearest real line — and if it still lands outside, place at the end.
+      // Clamp to the ACTUAL last line, not box.bottom — with min-height:40dvh the
+      // editor box extends far below the text into empty space, and clamping to
+      // its bottom put the caret (and the scroll target) down there instead of on
+      // the real last line, sliding the note up.
+      const lastEl = content.lastElementChild
+      const textBottom = lastEl ? Math.min(lastEl.getBoundingClientRect().bottom, box.bottom) : box.bottom
       const cx = Math.min(Math.max(e.clientX, box.left + 1), box.right - 1)
-      const cy = Math.min(Math.max(e.clientY, box.top + 1), box.bottom - 1)
-      // Only trust the raw point INSIDE the editor box. Below the last line
-      // (resting space) it has no text and returns a random caret, so snap to
-      // the clamped point (nearest line), then fall back to the end.
-      let range = e.clientY <= box.bottom ? caretRangeFromPoint(e.clientX, e.clientY) : null
-      if (!range || !content.contains(range.startContainer)) range = caretRangeFromPoint(cx, cy)
-      if (!range || !content.contains(range.startContainer)) {
-        range = document.createRange()
-        range.selectNodeContents(content)
-        range.collapse(false)
-      }
+      const cy = Math.min(Math.max(e.clientY, box.top + 1), textBottom - 1)
       e.preventDefault()
-      content.focus()
-      const sel = window.getSelection()
-      if (sel) { sel.removeAllRanges(); sel.addRange(range) }
+      pendingTapY = null
+      // Expand the editor BEFORE focus so iOS sees a full scroll surface (no
+      // document pan on short notes).
+      setTallEditor(true)
+      const belowLast = e.clientY > textBottom
+      // Resolve the click to a DOM range NOW, on the current layout — before
+      // placeCaretAtStart scrolls the content (which would make a later
+      // coordinate re-resolution land on the wrong line). Node-based, so it
+      // survives the scroll.
+      let clickRange = belowLast ? null : caretRangeFromPoint(e.clientX, e.clientY)
+      if (clickRange && !content.contains(clickRange.startContainer)) clickRange = caretRangeFromPoint(cx, cy)
+      if (clickRange && !content.contains(clickRange.startContainer)) clickRange = null
+      // Capture scroll BEFORE placement/focus and restore after, so nothing slides.
+      const savedScroll = main.scrollTop
+      if (lexicalAdapter.hasEditor()) {
+        // Place the caret THROUGH Lexical so it becomes Lexical's OWN selection —
+        // nothing reconciles over it (that fixed the empty-block restore). ORDER
+        // matters for the pan: park the caret at the TOP first, so when we focus,
+        // iOS's obscure-check sees a visible caret and doesn't pan. THEN place it
+        // at the click (no new focus event, so no pan), and our correction below
+        // scrolls it into the safe zone.
+        lexicalAdapter.placeCaretAtStart()
+        if (alreadyFocused) lexicalAdapter.blur()
+        lexicalAdapter.focus()
+        if (!clickRange || !lexicalAdapter.placeCaretAtRange(clickRange)) lexicalAdapter.placeCaretAtEnd()
+      } else {
+        // DOM fallback (no Lexical present): resolve + set the caret directly.
+        let range = e.clientY <= textBottom ? caretRangeFromPoint(e.clientX, e.clientY) : null
+        if (!range || !content.contains(range.startContainer)) range = caretRangeFromPoint(cx, cy)
+        if (!range || !content.contains(range.startContainer)) {
+          range = document.createRange(); range.selectNodeContents(content); range.collapse(false)
+        }
+        const s = window.getSelection()
+        if (s) { s.removeAllRanges(); s.addRange(range) }
+        if (alreadyFocused) content.blur()
+        content.focus({ preventScroll: true })
+        if (s && content.contains(range.startContainer)) { s.removeAllRanges(); s.addRange(range) }
+      }
+      if (main.scrollTop !== savedScroll) main.scrollTop = savedScroll
       reserveScrollRoom()
-      const rect = range.getBoundingClientRect()
-      const span: [number, number] = rect.width === 0 && rect.height === 0 && rect.top === 0 ? [cy, cy + 28] : [rect.top, rect.bottom]
+      // Measure the placed caret. getCaretRect falls back to the block's element
+      // rect on an empty/degenerate line (its true position, not box.bottom).
+      const sel = window.getSelection()
+      const rect = sel && sel.rangeCount ? getCaretRect(sel) : null
+      const span: [number, number] | null = !rect || (rect.width === 0 && rect.height === 0 && rect.top === 0) ? null : [rect.top, rect.bottom]
       const before = main.scrollTop
       correctIfOutsideSafeZone(span, zone)
+      // This correction is authoritative — suppress the follow-up land/poll
+      // corrections that would re-measure a Lexical-reconciled empty block and
+      // yank the caret to a wrong position.
+      suppressCorrectionUntil = performance.now() + 450
       debug(`preempt y=${Math.round(e.clientY)} zoneB=${Math.round(zone.bottom)} ${Math.round(before)}→${Math.round(main.scrollTop)}`)
     }
 
@@ -457,10 +479,17 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     let landArmed = false
     let landTapY: number | null = null
     let landFallbackTimer: number | null = null
+    // When the preempt (onMouseDown) has placed the caret and scrolled it
+    // itself, its correction is authoritative. Suppress the auto-corrections
+    // (land + polls) briefly after — they re-measure the caret once Lexical has
+    // reconciled an empty/degenerate block and yank it to a wrong position.
+    let suppressCorrectionUntil = 0
+    const correctionsSuppressed = () => performance.now() < suppressCorrectionUntil
 
     function landNow() {
       landArmed = false
       if (landFallbackTimer) { clearTimeout(landFallbackTimer); landFallbackTimer = null }
+      if (correctionsSuppressed()) return
       if (!toolbar!.classList.contains('kb-visible')) return
       const landSpan = getCaretScreenSpan(landTapY)
       const landZone = getSafeZone(currentOrEstimatedToolbarTop())
@@ -471,6 +500,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
 
     function beginEngagement(tapY: number | null) {
       toolbar!.classList.add('kb-visible')
+      setTallEditor(true)
       lastCorrectionAt = 0
       keyboardWasUp = false
       if (scrollAnimFrame) cancelAnimationFrame(scrollAnimFrame)
@@ -579,6 +609,8 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     function hideToolbar() {
       toolbar!.classList.remove('kb-visible')
       toolbar!.style.transform = 'translateY(-9999px)'
+      // Collapse the editor back to its compact resting height (backlinks close).
+      setTallEditor(false)
       toolbarRevealed = false
       keyboardWasUp = false
       landArmed = false
@@ -591,10 +623,9 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       requestAnimationFrame(() => {
         toolbar!.style.transition = ''
       })
-      // Keep the resting space below the last line (Apple Notes style) rather
-      // than clearing it, so scrolling to the end always leaves the last line
-      // above the keyboard area — tapping it later needs no scroll (no snap).
-      reserveScrollRoom()
+      // Collapse the reserved room back to the small resting margin (no scroll
+      // needed with the keyboard down — a big reserve is just dead space).
+      reserveScrollRoom(false)
       if (pendingCorrectionTimer) clearTimeout(pendingCorrectionTimer)
       pendingCorrectionTimer = null
       if (scrollAnimFrame) cancelAnimationFrame(scrollAnimFrame)
@@ -608,9 +639,11 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     const onInput = () => requestAnimationFrame(maybeCorrectCaretScroll)
     const onSelectionChange = () => {
       // The first selectionchange after engaging is the caret being placed at
-      // the tap — do the deferred land now (scroll after placement, so the line
-      // is preserved). Otherwise it's an ordinary edit/selection: keep the caret
-      // in the safe zone.
+      // the tap — do the deferred land now (scroll after placement). Otherwise
+      // keep the caret in the safe zone as it moves (arrow keys, taps while the
+      // keyboard is open). This is stable again now that placement goes through
+      // Lexical; the correction is guarded (justDismissed / suppressed-after-
+      // preempt) against the empty-block over-scroll that made me disable it.
       if (landArmed) { landNow(); return }
       maybeCorrectCaretScroll()
     }
@@ -666,7 +699,6 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     main.addEventListener('touchmove', onTouchMove, { passive: true })
 
     main.addEventListener('pointerdown', onPointerDown)
-    main.addEventListener('pointerup', onPointerUp)
     main.addEventListener('mousedown', onMouseDown)
     // focusin/focusout bubble (unlike focus/blur), so one listener on <main>
     // catches the content element even though it mounts/remounts inside.
@@ -684,7 +716,6 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       main.removeEventListener('touchstart', onTouchStart)
       main.removeEventListener('touchmove', onTouchMove)
       main.removeEventListener('pointerdown', onPointerDown)
-      main.removeEventListener('pointerup', onPointerUp)
       main.removeEventListener('mousedown', onMouseDown)
       toolbar.removeEventListener('pointerdown', onToolbarPointerDown)
       main.removeEventListener('focusin', onFocusIn)
@@ -710,6 +741,8 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       toolbar.style.opacity = ''
       const article = getArticle()
       if (article) article.style.paddingBottom = ''
+      const content = getContent()
+      if (content) content.style.minHeight = ''
     }
   }, [toolbar, main, enabled, noteId])
 }

@@ -8,6 +8,7 @@ import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDoc
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin, setPageLinkServices } from './pageLink'
 import { editorMenuPlugin, thematicBreakRulePlugin } from './editorMenu'
+import { lexicalBridgePlugin } from './lexicalBridge'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { useMobileKeyboard } from './mobileKeyboard'
@@ -89,7 +90,7 @@ function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: {
     }))
   }, [markdown])
   return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" onChange={(value, initial) => { current.current = value; if (!initial) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), persistentBlankLinesPlugin({}),
+    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
