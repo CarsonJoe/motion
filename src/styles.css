@@ -168,11 +168,13 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .motion-md-toolbar { display: none !important; }
 .editor-toolbar .core-tools, .editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
 .editor-toolbar button { margin: 0 1px; border-radius: 5px !important; color: #a7a7a7 !important; }
-.editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; }
+/* Gate hover behind a real pointer: on touch, :hover sticks after a tap and
+   the button stays highlighted until you tap elsewhere. */
+@media (hover: hover) { .editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; } }
 /* Active toggle (bold/italic/underline/highlight at the caret). Radix marks the
    pressed ToggleItem with data-state="on"; our flat button color above hides it. */
 .editor-toolbar button[data-state='on'] { color: #fff !important; background: #343434 !important; }
-.editor-toolbar button[data-state='on']:hover { background: #3c3c3c !important; }
+@media (hover: hover) { .editor-toolbar button[data-state='on']:hover { background: #3c3c3c !important; } }
 
 /* MDXEditor tooltip — sit above the sticky editor header (z-index 5). */
 [class*="_popupContainer_"], [class*="_tooltipContent_"] { z-index: 40 !important; }
@@ -185,6 +187,18 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 [class*="_selectItem_"] { color: #c9c9c9 !important; font-size: 13px; }
 [class*="_selectItem_"][data-highlighted] { background-color: #303030 !important; color: #f1f1f1 !important; }
 [class*="_selectItem_"][data-state='checked'] { background-color: #2b2b2b !important; color: #fff !important; }
+
+/* Custom focus-preserving block-type menu (replaces the Radix <BlockTypeSelect />
+   so opening it never blurs the editor / closes the mobile keyboard). */
+.block-type-trigger { display: inline-flex !important; align-items: center; gap: 1px; height: 30px; min-width: 82px; padding: 0 5px 0 9px !important; border: 0 !important; background: transparent !important; color: #c2c2c2 !important; font: inherit; font-size: 13px; cursor: pointer; appearance: none; -webkit-appearance: none; }
+@media (hover: hover) { .block-type-trigger:hover { background: #292929 !important; color: #f1f1f1 !important; } }
+.block-type-trigger[aria-expanded='true'] { background: #232323 !important; color: #f1f1f1 !important; }
+.block-type-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.block-type-trigger-caret { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.block-type-menu { z-index: 60; display: flex; flex-direction: column; gap: 2px; min-width: 172px; max-height: min(340px, 62vh); padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #3d3d3d; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
+.block-type-item { display: flex; align-items: center; min-height: 34px; padding: 7px 12px; border: 0; border-radius: 7px; background: transparent; color: #c9c9c9; font: inherit; font-size: 14px; text-align: left; white-space: nowrap; cursor: pointer; }
+@media (hover: hover) { .block-type-item:hover { background: #303030; color: #f1f1f1; } }
+.block-type-item.active { background: #2b2b2b; color: #fff; }
 .motion-md-content { min-height: 430px; padding: 0; border: 0; outline: 0; color: #e4e4e4; font-family: inherit; font-size: 18px; line-height: 1.72; }
 .motion-md-content h1, .motion-md-content h2, .motion-md-content h3 { color: #f4f4f4; line-height: 1.25; }
 .motion-md-content a { color: #c5c2ff; }
@@ -251,6 +265,10 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 }
 
 @media (max-width: 760px) {
+  /* Lock the page so ONLY <main> can scroll. Without this, iOS scrolls the
+     whole window up when the keyboard opens over a contenteditable and leaves
+     it shifted (the app "jumps up"). Mirrors the Notes Lab experiment. */
+  html, body { position: fixed; inset: 0; width: 100%; overflow: hidden; }
   .app-shell { display: block; }
   .mobile-list main { display: none; }
   .mobile-editor aside { display: none; }
@@ -269,11 +287,18 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
   article { min-height: 100%; padding: 38px 20px 60px; }
-  .editor-header { height: 102px; }
-  .editor-header-row { height: 102px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: 52px 50px; margin: 0; padding: 0 12px; }
+  .editor-header { height: 52px; }
+  .editor-header-row { height: 52px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: 52px; margin: 0; padding: 0 12px; }
   .header-left { grid-row: 1; grid-column: 1; max-width: none; }
   .header-right { grid-row: 1; grid-column: 3; justify-self: end; }
-  .editor-toolbar { position: static; grid-row: 2; grid-column: 1 / -1; height: 50px; margin: 0 -12px; padding: 0 13px; }
+  /* The formatting toolbar leaves the header grid and becomes a floating
+     overlay riding just above the software keyboard. Its transform (and the
+     kb-visible class) are driven by useMobileKeyboard / mobileKeyboard.ts;
+     CSS only supplies the look and the off-screen default. */
+  .editor-toolbar { position: fixed; top: -10px; left: 10px; right: 10px; z-index: 50; height: auto; margin: 0; padding: 8px; gap: 4px; background: rgba(28, 28, 28, .86); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; box-shadow: 0 -8px 28px rgba(0, 0, 0, .32); overflow-x: auto; scrollbar-width: none; touch-action: pan-x; transform: translateY(-9999px); opacity: 0; transition: opacity .28s ease-out; }
+  .editor-toolbar::-webkit-scrollbar { display: none; }
+  .block-type-menu { z-index: 60; }
+  .block-type-item { min-height: 44px; font-size: 15px; }
   .page-path { display: none; }
   .back-button { color: #e1e1e1; }
   .header-actions { gap: 6px; }
@@ -282,7 +307,9 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .header-status { font-size: 11px; }
   .title { margin-top: 0; margin-bottom: 22px; font-size: 32px; letter-spacing: -1px; }
   .editor-toolbar .extra-tools { display: none; }
-  .motion-md-content { min-height: calc(100dvh - 225px); padding-bottom: 52px; font-size: 17px; line-height: 1.68; }
+  /* padding-bottom is set dynamically by mobileKeyboard.ts while typing
+     (reserveScrollRoom); the static value here is only the resting state. */
+  .motion-md-content { min-height: calc(100dvh - 175px); padding-bottom: 40px; font-size: 17px; line-height: 1.68; }
   .empty { padding-bottom: 60px; }
   .invite-row { flex-wrap: wrap; }
   .invite-row input { min-width: 145px; }
