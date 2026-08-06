@@ -231,17 +231,11 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       }
     }
 
-    // Focusing the content also fires `selectionchange`, which independently
-    // triggers a correction on top of the focus handler's own careful "only
-    // move if needed" positioning. Skip exactly one correction right after each
-    // focus so that positioning has the final say.
-    let skipNextCorrection = false
-
     function correctCaretScroll() {
-      if (skipNextCorrection) {
-        skipNextCorrection = false
-        return
-      }
+      // During/just after a swipe-dismiss the editor is being torn down — a
+      // correction here (esp. on a blank line's degenerate rect) scrolls the
+      // wrong way and drags in the iOS pan. Stay out of the way.
+      if (justDismissed()) return
       if (!toolbar!.classList.contains('kb-visible')) return
       const content = getContent()
       const sel = window.getSelection()
@@ -333,6 +327,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     }
 
     const onPointerUp = (e: PointerEvent) => {
+      if (justDismissed()) return
       // Only a genuine tap reopens the keyboard; a drag is a scroll and must be
       // ignored, or the toolbar pops up while just scrolling a dismissed page.
       if (Math.hypot(e.clientX - pointerStartX, e.clientY - pointerStartY) > TAP_SLOP) return
@@ -378,6 +373,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       const target = e.target as Element | null
       const content = getContent()
       if (!content || !target || !target.closest(CONTENT_SELECTOR)) return
+      if (justDismissed()) { e.preventDefault(); return }
       if (content.contains(document.activeElement)) return
       const zone = getSafeZone(currentOrEstimatedToolbarTop())
       if (e.clientY <= zone.bottom) return
@@ -460,9 +456,6 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       // deterministic "now it's safe to scroll" signal (see onSelectionChange).
       // A short timeout is the fallback for when the caret didn't move (no
       // selectionchange), e.g. reopening on the exact same spot.
-      // Hold the document at 0 through the keyboard-open animation so iOS can't
-      // pull the app up.
-      startDocPin()
       reserveScrollRoom()
       landArmed = true
       landTapY = tapY
@@ -488,6 +481,9 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
 
     const onFocusIn = (e: FocusEvent) => {
       if (!(e.target instanceof Element) || !e.target.closest(CONTENT_SELECTOR)) return
+      // A refocus during the dismiss window (Lexical/iOS re-grabbing focus after
+      // our blur) is what kept the keyboard open. Immediately blur it back.
+      if (justDismissed()) { debug('focusin -> reblur'); (e.target as HTMLElement).blur?.(); return }
       // Already engaged → a Lexical focus churn, not a fresh open. Skip so we
       // don't reset scroll/toolbar mid-edit. A genuine reopen after the keyboard
       // was dismissed always tore down first (kb-visible removed), so it falls
@@ -556,8 +552,6 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       keyboardWasUp = false
       landArmed = false
       if (landFallbackTimer) { clearTimeout(landFallbackTimer); landFallbackTimer = null }
-      docPinUntil = 0
-      if (docPinFrame) { cancelAnimationFrame(docPinFrame); docPinFrame = 0 }
       if (noKeyboardFallbackTimer) clearTimeout(noKeyboardFallbackTimer)
       // Reset instantly (not via the fade) so the next focus's fade-in starts
       // clean from 0 — already off-screen, so no visible effect on the hide.
@@ -590,26 +584,6 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       maybeCorrectCaretScroll()
     }
 
-    // iOS pulls the whole document up to reveal the caret when the keyboard
-    // opens, even with position:fixed body. Reacting to the `scroll` event is
-    // too late — it fires after iOS's animation, so you see the pull then a snap
-    // back. Instead, pin the document to 0 every frame across the keyboard-open
-    // window: iOS never gets a visible pull because we overwrite its scroll each
-    // frame before paint. Only touches document/window scroll — our own <main>
-    // caret scroll is untouched.
-    let docPinUntil = 0
-    let docPinFrame = 0
-    const pinDocument = () => {
-      const se = document.scrollingElement as HTMLElement | null
-      if (se && se.scrollTop !== 0) se.scrollTop = 0
-      if (window.scrollY !== 0) window.scrollTo(0, 0)
-      docPinFrame = performance.now() < docPinUntil ? requestAnimationFrame(pinDocument) : 0
-    }
-    const startDocPin = (ms = 700) => {
-      docPinUntil = performance.now() + ms
-      if (!docPinFrame) docPinFrame = requestAnimationFrame(pinDocument)
-    }
-
     // Diagnostic: log which surface actually moves during the slide. `doc` =
     // document/window (iOS app-pull), `main` = our caret scroll, `vv` = visual
     // viewport offset. Only logs meaningful changes to keep it readable.
@@ -618,11 +592,47 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       if (!toolbar.classList.contains('kb-visible')) return
       const se = document.scrollingElement as HTMLElement | null
       const doc = se ? Math.round(se.scrollTop) : 0
-      const what = e.target === main ? 'main' : e.target === document ? 'doc' : 'oth'
-      const msg = `sc(${what}) main=${Math.round(main.scrollTop)} doc=${doc} win=${Math.round(window.scrollY)} vv=${Math.round(vv?.offsetTop || 0)}`
+      const vvTop = Math.round(vv?.offsetTop || 0)
+      // Only the pan cases are interesting; a plain <main> scroll (all others 0)
+      // just floods the log.
+      if (doc === 0 && window.scrollY === 0 && vvTop === 0) return
+      const msg = `PAN doc=${doc} win=${Math.round(window.scrollY)} vv=${vvTop} main=${Math.round(main.scrollTop)}`
       if (msg !== lastScrollLog) { debug(msg); lastScrollLog = msg }
     }
     window.addEventListener('scroll', onAnyScroll, true)
+
+    // Swipe-down-to-dismiss, like iOS's interactive keyboard dismissal: dragging
+    // the content downward into the bottom band (just above the keyboard) blurs
+    // the editor so the keyboard closes. Fires during the drag, the moment it
+    // crosses the threshold. The refocus that a blur provokes (Lexical/iOS
+    // re-grabbing focus) is handled by the dismiss window below + the reblur in
+    // onFocusIn — that, not the blur timing, was what kept the keyboard open.
+    let touchStartY: number | null = null
+    // Set when a swipe-dismiss blurs the editor; suppresses the immediate
+    // re-engagement (focus / reopen / preempt) from the tail of that gesture.
+    let dismissedAt = 0
+    const justDismissed = () => performance.now() - dismissedAt < 500
+    const onTouchStart = (e: TouchEvent) => { touchStartY = e.touches[0]?.clientY ?? null }
+    const onTouchMove = (e: TouchEvent) => {
+      if (touchStartY == null || !toolbar.classList.contains('kb-visible')) return
+      const y = e.touches[0]?.clientY
+      if (y == null) return
+      const viewportBottom = vv ? vv.offsetTop + vv.height : layoutH()
+      if (y - touchStartY > 50 && y > viewportBottom - 10) {
+        const active = document.activeElement as HTMLElement | null
+        if (active && getContent()?.contains(active)) {
+          debug('swipe-dismiss')
+          active.blur()
+          touchStartY = null
+          dismissedAt = performance.now()
+          const swallow = (ev: Event) => { ev.preventDefault(); ev.stopPropagation() }
+          window.addEventListener('click', swallow, { capture: true, once: true })
+          window.setTimeout(() => window.removeEventListener('click', swallow, true), 500)
+        }
+      }
+    }
+    main.addEventListener('touchstart', onTouchStart, { passive: true })
+    main.addEventListener('touchmove', onTouchMove, { passive: true })
 
     main.addEventListener('pointerdown', onPointerDown)
     main.addEventListener('pointerup', onPointerUp)
@@ -639,8 +649,9 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     }
 
     return () => {
-      if (docPinFrame) cancelAnimationFrame(docPinFrame)
       window.removeEventListener('scroll', onAnyScroll, true)
+      main.removeEventListener('touchstart', onTouchStart)
+      main.removeEventListener('touchmove', onTouchMove)
       main.removeEventListener('pointerdown', onPointerDown)
       main.removeEventListener('pointerup', onPointerUp)
       main.removeEventListener('mousedown', onMouseDown)
