@@ -219,10 +219,12 @@ type NoteTreeShared = { scope: string; notes: Note[]; recency: Map<string, numbe
 // reflow the list under the pointer, moving the drop target out from under it
 // and flickering between the two states.
 // Lines up with where the row's title will start, not where its indent box
-// begins: 5px of row padding, 16px per level, then the 22px expand-toggle
-// column that every row reserves whether or not it has children.
+// begins: 5px of row padding, 16px per level, the 22px expand-toggle column
+// every row reserves whether or not it has children, and .page-link's own 9px
+// of padding. Dropping that last 9 put the line more than half an indent step
+// short of the text it was pointing at.
 function DropLine({ depth }: { depth: number }) {
-  return <span className="drop-line" style={{ left: 5 + depth * 16 + 22 }} />
+  return <span className="drop-line" style={{ left: 5 + depth * 16 + 22 + 9 }} />
 }
 
 // Most recent activity anywhere in the branch rooted at a note, newest first.

@@ -15,14 +15,11 @@
 html, body, #root { height: 100%; overflow: hidden; background: #111; }
 html, body { overscroll-behavior: none; }
 body { margin: 0; background: #111; }
-/* `viewport-fit=cover` plus the black-translucent status bar hand this app the
-   whole screen, status bar and home indicator included — padding the content
-   back out of them is the other half of that bargain. box-sizing is border-box
-   globally, so the insets come out of 100dvh rather than overflowing it. */
-/* Only the top inset is reserved. The bottom one is the home indicator, which
-   sits over content harmlessly — reserving for it just steals a band of the
-   article and leaves a dead strip under the text. */
-.app-shell { display: flex; height: 100vh; height: 100dvh; padding-top: env(safe-area-inset-top); overflow: hidden; background: #111; }
+/* No top padding: iOS owns the status bar (see the status-bar-style meta), so
+   the viewport we are handed already starts below it. The bottom inset is ours
+   to reserve, and worth reserving — it lifts the last row and the last line of
+   an article clear of the home indicator instead of running under it. */
+.app-shell { display: flex; height: 100vh; height: 100dvh; padding-bottom: env(safe-area-inset-bottom); overflow: hidden; background: #111; }
 .sidebar-collapsed aside { width: 0; flex-basis: 0; padding-right: 0; padding-left: 0; border-right-color: transparent; opacity: 0; pointer-events: none; }
 
 aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display: flex; flex-direction: column; overflow: hidden; padding: 16px 10px; background: #161616; border-right: 1px solid #2a2a2a; transition: width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), padding .24s ease, border-color .24s ease, opacity .16s ease; }
