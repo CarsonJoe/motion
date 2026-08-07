@@ -15,11 +15,11 @@
 html, body, #root { height: 100%; overflow: hidden; background: #111; }
 html, body { overscroll-behavior: none; }
 body { margin: 0; background: #111; }
-/* No top padding: iOS owns the status bar (see the status-bar-style meta), so
-   the viewport we are handed already starts below it. The bottom inset is ours
-   to reserve, and worth reserving — it lifts the last row and the last line of
-   an article clear of the home indicator instead of running under it. */
-.app-shell { display: flex; height: 100vh; height: 100dvh; padding-bottom: env(safe-area-inset-bottom); overflow: hidden; background: #111; }
+/* No safe-area padding: iOS owns the status bar (see the status-bar-style meta),
+   so the viewport we are handed already starts below it. The bottom inset is
+   reserved by the notes list alone (see the mobile block) rather than here —
+   an article should run to the edge of the screen. */
+.app-shell { display: flex; height: 100vh; height: 100dvh; overflow: hidden; background: #111; }
 .sidebar-collapsed aside { width: 0; flex-basis: 0; padding-right: 0; padding-left: 0; border-right-color: transparent; opacity: 0; pointer-events: none; }
 
 aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display: flex; flex-direction: column; overflow: hidden; padding: 16px 10px; background: #161616; border-right: 1px solid #2a2a2a; transition: width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), padding .24s ease, border-color .24s ease, opacity .16s ease; }
@@ -330,7 +330,9 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .app-shell { display: block; }
   .mobile-list main { display: none; }
   .mobile-editor aside { display: none; }
-  aside { width: 100%; height: 100%; padding: 12px 14px; border: 0; background: #111; }
+  /* The list is a column of tap targets, so its last row has to clear the home
+     indicator. Only here — an article is for reading and can run to the edge. */
+  aside { width: 100%; height: 100%; padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); border: 0; background: #111; }
   .list-header { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 16px; color: #f4f4f4; font-size: 28px; font-weight: 700; letter-spacing: -.8px; }
   .icon-new { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border-radius: 50%; font-size: 24px; font-weight: 400; }
   .desktop-sidebar-actions { display: none; }
