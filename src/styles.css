@@ -152,8 +152,8 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
    screen; toggle the pane on desktop) but the intent doesn't, so it reads as the
    same button. Rendered only when the sidebar isn't already beside the content. */
 .show-sidebar-button { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border-radius: 6px; }
-.show-sidebar-button svg, .share-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.share-button { display: grid; width: 32px; height: 32px; place-items: center; padding: 5px; }
+.show-sidebar-button svg, .share-button svg, .page-options-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.share-button, .page-options-button { display: grid; width: 32px; height: 32px; place-items: center; padding: 5px; }
 .header-status, .header-actions { display: flex; align-items: center; }
 /* Muted to the same weight as the sidebar footer: status in the header is
    something to glance at, never something competing with the page title. */
@@ -390,3 +390,11 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .invite-row .new { margin-left: auto; }
   .notification-center { top: 58px; right: 14px; left: 14px; max-height: calc(100dvh - 74px); overflow: auto; }
 }
+
+/* Page options menu, drop-to-import overlay, and the copy confirmation. The
+   menu itself reuses .page-menu; only the width differs. */
+.header-menu { width: 190px; }
+.page-menu button:disabled { opacity: .4; cursor: default; }
+@media (hover: hover) { .page-menu button:disabled:hover { background: transparent; } }
+.page-options-button svg circle { fill: currentColor; stroke: none; }
+.copied-flash { align-self: center; margin-right: 2px; color: #8bb8a0; font-size: 12px; }
