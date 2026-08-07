@@ -320,7 +320,7 @@ function EditorMenu() {
             data-index={index}
             aria-selected={index === highlight}
             className={`editor-menu-item${index === highlight ? ' active' : ''}`}
-            onMouseEnter={() => setHighlight(index)}
+            onPointerEnter={(event) => { if (event.pointerType === 'mouse') setHighlight(index) }}
             onClick={() => completeRef.current(index)}
           >
             <span className="editor-menu-icon">{ICONS[item.icon]}</span>

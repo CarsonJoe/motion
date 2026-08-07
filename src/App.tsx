@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
 import { BoldItalicUnderlineToggles, headingsPlugin, HighlightToggle, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
 import { BlockTypeMenu } from './blockTypeMenu'
-import { openLocalStore, type LocalStore, type Note } from './local'
+import { moveBlockedBy, openLocalStore, subtreeIds, type LocalStore, type Note } from './local'
 import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin, setPageLinkServices } from './pageLink'
@@ -12,10 +12,47 @@ import { lexicalBridgePlugin } from './lexicalBridge'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { useMobileKeyboard } from './mobileKeyboard'
-import { acceptInvitation, approveRequest, connectInteractive, deleteNoteTree, denyRequest, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listAccessRequests, listInvitations, listMembers, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond, type AccessRequest } from './sync'
+import { acceptInvitation, approveRequest, connectInteractive, deleteNoteTree, denyRequest, dismissSyncError, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listAccessRequests, listInvitations, listMembers, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond, type AccessRequest } from './sync'
 
 const uid = () => crypto.randomUUID()
-type SyncTone = 'gray' | 'green' | 'amber' | 'red'
+
+// Connectivity as a subscribed store. Reading navigator.onLine during render
+// only samples it at that moment, so controls gated on it would stay stale
+// until some unrelated state change happened to repaint them.
+const subscribeOnline = (listener: () => void) => {
+  window.addEventListener('online', listener)
+  window.addEventListener('offline', listener)
+  return () => { window.removeEventListener('online', listener); window.removeEventListener('offline', listener) }
+}
+const getOnline = () => navigator.onLine
+
+// A sync that finishes inside BUSY_DELAY_MS is one the user never needed to
+// know about — the resting state of a healthy app is silence, and a word that
+// flashes up and vanishes is noise, not information. The delay is long enough
+// that only genuinely slow work ever reaches the screen; BUSY_MIN_MS then keeps
+// it there long enough to actually be read.
+const BUSY_DELAY_MS = 700
+const BUSY_MIN_MS = 1200
+
+// True only after `active` has held for `delayMs`, and then for at least
+// `minVisibleMs` afterwards. A flap that never outlasts the delay never shows
+// at all, which is the point: ordinary typing must leave the screen quiet.
+function useDelayedFlag(active: boolean, delayMs: number, minVisibleMs: number) {
+  const [visible, setVisible] = useState(false)
+  const shownAt = useRef(0)
+  useEffect(() => {
+    if (active === visible) return
+    const wait = active ? delayMs : Math.max(0, minVisibleMs - (Date.now() - shownAt.current))
+    const timer = window.setTimeout(() => {
+      if (active) shownAt.current = Date.now()
+      setVisible(active)
+    }, wait)
+    return () => window.clearTimeout(timer)
+  }, [active, visible, delayMs, minVisibleMs])
+  return visible
+}
+
+type SyncTone = 'gray' | 'red'
 // The interstitial shown when a link points at a page this device can't open
 // yet: it might need sign-in, an invite to accept, an open resource to join,
 // or a request to the owner.
@@ -99,6 +136,15 @@ function NotificationButton({ count, onClick }: { count: number; onClick: () => 
   return <button className="notification-button" aria-label={count ? `${count} pending invitation${count === 1 ? '' : 's'}` : 'Notifications'} onClick={onClick}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>{count > 0 && <span>{count > 9 ? '9+' : count}</span>}</button>
 }
 
+// One quiet word, no mark and no motion. Anything animated is a claim on the
+// user's attention, and a sync they did not start and cannot hurry has no
+// business making one — a word they can read once and ignore is the whole job.
+// `announce` is reserved for whichever copy is actually on screen, so a desktop
+// layout showing both doesn't say it twice.
+function SyncBusyLabel({ announce = false }: { announce?: boolean }) {
+  return <span className="sync-status" {...(announce ? { role: 'status', 'aria-live': 'polite' as const } : {})}>Syncing</span>
+}
+
 // Remote carets are placed by walking the rendered markdown to each
 // collaborator's absolute text offset. Offsets come from Yjs relative
 // positions, so they stay attached to the right characters across edits.
@@ -159,21 +205,153 @@ function RemoteCursors({ presence, containerRef }: { presence: CollaboratorPrese
 
 // `scope` namespaces the per-node expand/menu state so a page that appears in
 // both FAVORITES and PAGES tracks each copy independently.
-type NoteTreeShared = { scope: string; notes: Note[]; activeId: string | null; onOpen: (id: string) => void; menuKey: string | null; onToggleMenu: (key: string, anchor: HTMLElement) => void; expandedIds: Set<string>; onToggleExpanded: (key: string) => void }
+// `recency` carries each note's subtree recency (see subtreeRecency below) so
+// every level of the tree can sort by branch activity rather than by the row's
+// own timestamp.
+// `hiddenRootIds` drops top-level rows that FAVORITES already shows, so a
+// favorited root page isn't listed twice. Nested rows are never hidden: a
+// favorited child still belongs under its parent in PAGES.
+type NoteTreeShared = { scope: string; notes: Note[]; recency: Map<string, number>; activeId: string | null; onOpen: (id: string) => void; menuKey: string | null; onToggleMenu: (key: string, anchor: HTMLElement) => void; expandedIds: Set<string>; onToggleExpanded: (key: string) => void; hiddenRootIds?: Set<string>; previewParentId: string | null; dimmedIds: Set<string> | null; dragEnabled: boolean; onDragStart: (note: Note, event: React.PointerEvent) => void; clickSuppressed: () => boolean }
+
+// Marks where the page will come to rest: children sort by recency and the move
+// bumps the dragged note's timestamp, so it lands at the top of its new parent.
+// The line is absolutely positioned on purpose — inserting a real row would
+// reflow the list under the pointer, moving the drop target out from under it
+// and flickering between the two states.
+// Lines up with where the row's title will start, not where its indent box
+// begins: 5px of row padding, 16px per level, then the 22px expand-toggle
+// column that every row reserves whether or not it has children.
+function DropLine({ depth }: { depth: number }) {
+  return <span className="drop-line" style={{ left: 5 + depth * 16 + 22 }} />
+}
+
+// Most recent activity anywhere in the branch rooted at a note, newest first.
+const byRecency = (recency: Map<string, number>) => (a: Note, b: Note) => (recency.get(b.id) ?? b.updatedAt) - (recency.get(a.id) ?? a.updatedAt)
+
+// Only what the tree needs to paint. The cursor-following ghost is a plain DOM
+// node instead, so pointer movement never re-renders App — and App owns the
+// editor, which is far too heavy to re-render at pointer rate.
+type DragState = { noteId: string; targetId: string | null; valid: boolean }
+
+// Pointer-driven because the sidebar is the whole home screen on mobile, where
+// HTML5 drag-and-drop does not exist. A mouse drag starts on movement; a touch
+// drag starts on a hold, since an immediate start would eat every scroll.
+// Hovering a collapsed row deliberately does NOT open it: the rows under the
+// pointer would shift mid-drag, and picking up a page with children opened the
+// page being dragged, which is never what you meant.
+// Nothing follows the pointer: the dimmed subtree and the drop line say what is
+// moving and where it will land, and a floating copy of the row only obscures
+// the list it is being dropped into.
+function useNoteDrag(options: {
+  scrollRef: React.RefObject<HTMLDivElement | null>
+  canDrop: (noteId: string, parentId: string) => boolean
+  onDrop: (noteId: string, parentId: string) => void
+}) {
+  const latest = useRef(options)
+  latest.current = options
+  const [drag, setDrag] = useState<DragState | null>(null)
+  const dragRef = useRef<DragState | null>(null)
+  // A drag ends on the same pointerup that would otherwise read as a tap on the
+  // row, which would navigate away from the page you just moved.
+  const suppressClick = useRef(false)
+  const apply = (next: DragState | null) => {
+    const current = dragRef.current
+    dragRef.current = next
+    if (!next || !current || current.noteId !== next.noteId || current.targetId !== next.targetId || current.valid !== next.valid) setDrag(next)
+  }
+
+  const startDrag = (note: Note, event: React.PointerEvent) => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    const hold = event.pointerType !== 'mouse'
+    const origin = { x: event.clientX, y: event.clientY }
+    let last = origin
+    let active = false
+    let holdTimer = 0
+    let frame = 0
+
+    const blockScroll = (event: Event) => event.preventDefault()
+    const cleanup = () => {
+      window.clearTimeout(holdTimer)
+      window.cancelAnimationFrame(frame)
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('touchmove', blockScroll)
+      window.removeEventListener('contextmenu', blockScroll)
+    }
+    const update = (x: number, y: number) => {
+      const zone = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('[data-drop-id]') as HTMLElement | null
+      const targetId = zone?.getAttribute('data-drop-id') ?? null
+      apply({ noteId: note.id, targetId, valid: targetId !== null && latest.current.canDrop(note.id, targetId) })
+    }
+    const tick = () => {
+      const box = latest.current.scrollRef.current
+      if (box) {
+        const rect = box.getBoundingClientRect()
+        if (last.y < rect.top + 44) box.scrollTop -= 10
+        else if (last.y > rect.bottom - 44) box.scrollTop += 10
+      }
+      frame = window.requestAnimationFrame(tick)
+    }
+    const begin = () => {
+      if (active) return
+      active = true
+      window.addEventListener('touchmove', blockScroll, { passive: false })
+      window.addEventListener('contextmenu', blockScroll)
+      frame = window.requestAnimationFrame(tick)
+      update(last.x, last.y)
+    }
+    const onMove = (event: PointerEvent) => {
+      last = { x: event.clientX, y: event.clientY }
+      if (active) { update(event.clientX, event.clientY); return }
+      const travelled = Math.hypot(event.clientX - origin.x, event.clientY - origin.y)
+      // Before a hold matures, movement means the finger is scrolling the list.
+      if (hold) { if (travelled > 10) cleanup() }
+      else if (travelled > 5) begin()
+    }
+    const onUp = () => {
+      const current = dragRef.current
+      cleanup()
+      if (active) {
+        suppressClick.current = true
+        window.setTimeout(() => { suppressClick.current = false }, 0)
+        if (current?.valid && current.targetId !== null) latest.current.onDrop(current.noteId, current.targetId)
+      }
+      apply(null)
+    }
+    const onCancel = () => { cleanup(); apply(null) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel() }
+
+    if (hold) holdTimer = window.setTimeout(begin, 400)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('keydown', onKey)
+  }
+
+  return { drag, startDrag, clickSuppressed: () => suppressClick.current }
+}
 
 function NoteTreeNode({ note, depth, ...shared }: NoteTreeShared & { note: Note; depth: number }) {
-  const { scope, notes, activeId, onOpen, menuKey, onToggleMenu, expandedIds, onToggleExpanded } = shared
+  const { scope, notes, activeId, onOpen, menuKey, onToggleMenu, expandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled, onDragStart, clickSuppressed } = shared
   const key = `${scope}:${note.id}`
   const hasChildren = notes.some((child) => child.parentId === note.id)
   const expanded = expandedIds.has(key)
+  // The whole subtree greys out: the children travel with the row being moved.
+  const dragging = dimmedIds?.has(note.id)
   return <div className="page-tree-item">
-    <div className={`page-row ${activeId === note.id ? 'active' : ''}`}>{hasChildren ? <button className="page-toggle" style={{ marginLeft: 5 + depth * 16 }} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${note.title || 'Untitled'}`} aria-expanded={expanded} onClick={() => onToggleExpanded(key)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d={expanded ? 'm4 6 4 4 4-4' : 'm6 4 4 4-4 4'} /></svg></button> : <span className="page-toggle-spacer" style={{ marginLeft: 5 + depth * 16 }} />}<button className="page-link" onClick={() => onOpen(note.id)}><span className="page-link-label">{note.title || 'Untitled'}</span></button><button className={`page-menu-button ${menuKey === key ? 'menu-open' : ''}`} aria-label={`Page options for ${note.title || 'Untitled'}`} aria-haspopup="menu" aria-expanded={menuKey === key} onClick={(event) => onToggleMenu(key, event.currentTarget)}>•••</button></div>
+    <div data-drop-id={dragEnabled ? note.id : undefined} className={`page-row ${activeId === note.id ? 'active' : ''} ${dragging ? 'dragging' : ''}`}>{hasChildren ? <button className="page-toggle" style={{ marginLeft: 5 + depth * 16 }} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${note.title || 'Untitled'}`} aria-expanded={expanded} onClick={() => onToggleExpanded(key)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d={expanded ? 'm4 6 4 4 4-4' : 'm6 4 4 4-4 4'} /></svg></button> : <span className="page-toggle-spacer" style={{ marginLeft: 5 + depth * 16 }} />}<button className="page-link" onPointerDown={dragEnabled ? (event) => onDragStart(note, event) : undefined} onClick={() => { if (!clickSuppressed()) onOpen(note.id) }}><span className="page-link-label">{note.title || 'Untitled'}</span></button><button className={`page-menu-button ${menuKey === key ? 'menu-open' : ''}`} aria-label={`Page options for ${note.title || 'Untitled'}`} aria-haspopup="menu" aria-expanded={menuKey === key} onClick={(event) => onToggleMenu(key, event.currentTarget)}>•••</button>{previewParentId === note.id && <DropLine depth={depth + 1} />}</div>
     {hasChildren && expanded && <NoteTree {...shared} parentId={note.id} depth={depth + 1} />}
   </div>
 }
 
 function NoteTree({ parentId, depth, ...shared }: NoteTreeShared & { parentId: string; depth: number }) {
-  return <>{shared.notes.filter((note) => note.parentId === parentId).map((note) => <NoteTreeNode key={note.id} {...shared} note={note} depth={depth} />)}</>
+  const hidden = parentId === '' ? shared.hiddenRootIds : undefined
+  // Nested lines hang off the parent row; the top level has no row to hang off,
+  // so it draws its own against the nav.
+  const rootPreview = parentId === '' && shared.previewParentId === ''
+  return <>{rootPreview && <DropLine depth={depth} />}{shared.notes.filter((note) => note.parentId === parentId && !hidden?.has(note.id)).sort(byRecency(shared.recency)).map((note) => <NoteTreeNode key={note.id} {...shared} note={note} depth={depth} />)}</>
 }
 
 function PageMenu({ anchor, note, canDelete, isFavorite, onToggleFavorite, onCreateChild, onDelete, onClose }: { anchor: HTMLElement; note: Note; canDelete: boolean; isFavorite: boolean; onToggleFavorite: (id: string) => void; onCreateChild: (note: Note) => void; onDelete: (note: Note) => void; onClose: () => void }) {
@@ -214,7 +392,6 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem('motion-sidebar-collapsed') !== 'true')
   const collapseSidebar = () => { setSidebarOpen(false); localStorage.setItem('motion-sidebar-collapsed', 'true') }
   const openSidebar = () => { setSidebarOpen(true); localStorage.removeItem('motion-sidebar-collapsed') }
-  const [mobileView, setMobileView] = useState<'list' | 'editor'>(() => window.innerWidth <= 760 ? 'list' : 'editor')
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 760)
   const [mainEl, setMainEl] = useState<HTMLElement | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -262,6 +439,7 @@ export default function App() {
   const contentTouchRef = useRef(new Map<string, number>())
 
   const sync = useSyncExternalStore(subscribeSyncState, getSyncState)
+  const online = useSyncExternalStore(subscribeOnline, getOnline)
   const subscribeNotes = useCallback((listener: () => void) => store ? store.subscribe(listener) : () => {}, [store])
   const getNotes = useCallback(() => store ? store.getSnapshot() : EMPTY_NOTES, [store])
   const allNotes = useSyncExternalStore(subscribeNotes, getNotes)
@@ -278,7 +456,7 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const resize = () => { setIsMobile(window.innerWidth <= 760); if (window.innerWidth > 760) setMobileView('editor') }
+    const resize = () => setIsMobile(window.innerWidth <= 760)
     window.addEventListener('resize', resize)
     return () => window.removeEventListener('resize', resize)
   }, [])
@@ -321,6 +499,54 @@ export default function App() {
   }, [])
 
   const activeNote = useMemo(() => notes.find((note) => note.id === activeId) ?? null, [notes, activeId])
+  // Everything below the body has to wait for the body. The doc opens
+  // asynchronously (and is cleared on every note switch), so for a frame or two
+  // the article is just a title — anything after it paints hard under the header
+  // and is then shoved down once the editor mounts and claims its min-height.
+  // Mirrors the editor's own gate in the article below; keep the two in step.
+  const bodyMounted = Boolean(toolbarHost && activeNote && collaborativeMarkdown?.noteId === activeNote.id)
+  // Sort key for the sidebar: the newest updatedAt anywhere in a note's subtree,
+  // not just its own. Editing a nested subpage is activity on the whole branch
+  // holding it, so its ancestors have to rise with it — otherwise a root whose
+  // child changed a minute ago sits below one untouched for months, and the
+  // top level (the part you actually navigate by) never reflects real use.
+  // Each note pushes its timestamp up the whole parent chain, taking a max at
+  // every step. Stopping early at an ancestor that already holds something newer
+  // would also be correct, but only because getSnapshot happens to hand us notes
+  // sorted by updatedAt — an invariant in another file that nothing here would
+  // notice losing. A full walk costs a pass per depth level on a note tree and
+  // owes nothing to input order. `seen` guards a corrupt parent chain, the same
+  // way the breadcrumb walk does.
+  const subtreeRecency = useMemo(() => {
+    const byId = new Map(notes.map((note) => [note.id, note]))
+    const recency = new Map(notes.map((note) => [note.id, note.updatedAt]))
+    for (const note of notes) {
+      const seen = new Set<string>([note.id])
+      let parent = note.parentId ? byId.get(note.parentId) : undefined
+      while (parent && !seen.has(parent.id)) {
+        if ((recency.get(parent.id) ?? 0) < note.updatedAt) recency.set(parent.id, note.updatedAt)
+        seen.add(parent.id)
+        parent = parent.parentId ? byId.get(parent.parentId) : undefined
+      }
+    }
+    return recency
+  }, [notes])
+  // Which pane the mobile breakpoint shows. Derived, never stored: the route is
+  // the only navigation state, so a refresh, a deep link and a back gesture all
+  // land wherever the URL says. The landing interstitial counts as content
+  // because it renders into <main>.
+  const mobileView: 'list' | 'editor' = activeId || landing ? 'editor' : 'list'
+  // The page list is `display: none` while the editor is up on mobile, and an
+  // element with no layout forgets its scroll offset. Record it as the user
+  // scrolls (reading it back on the way out is too late — it is already 0) and
+  // put it back when the list returns, so leaving a page and coming back lands
+  // where they were rather than at the top.
+  const pagesNavRef = useRef<HTMLDivElement>(null)
+  const listScroll = useRef(0)
+  useLayoutEffect(() => {
+    if (!isMobile || mobileView !== 'list') return
+    if (pagesNavRef.current) pagesNavRef.current.scrollTop = listScroll.current
+  }, [isMobile, mobileView])
   const roleFor = (shareId: string) => sync.roles[shareId] ?? ''
   const canEditActiveNote = !activeNote?.shareId || ['writer', 'admin', 'owner'].includes(roleFor(activeNote.shareId))
   const canDeleteNote = (note: Note) => !note.shareId || ['admin', 'owner'].includes(roleFor(note.shareId))
@@ -342,7 +568,7 @@ export default function App() {
         if (note.deletedAt) return { kind: 'deleted' }
         return { kind: 'ok', title: note.title || '' }
       },
-      navigate: (id) => { setNoteMenuId(null); setActiveId(id); setMobileView('editor') },
+      navigate: (id) => { setNoteMenuId(null); setActiveId(id) },
       pageHref: (id) => pageUrl(id, known.get(id)?.shareId || null),
       searchPages: (query) => {
         const q = query.trim().toLowerCase()
@@ -381,7 +607,16 @@ export default function App() {
   // --- Hash routing ---------------------------------------------------------
   // Only real URL navigation (back/forward, an opened link) emits these events;
   // our own pushState mirror below does not, so the two never fight.
-  useEffect(() => subscribeRoute(() => setPendingRoute(readRoute())), [])
+  useEffect(() => subscribeRoute(() => {
+    const route = readRoute()
+    setPendingRoute(route)
+    // Landing on the root is a deselection, not a page to resolve, so the
+    // resolver below (which only ever opens pages) would leave the old note on
+    // screen under a `#/` URL. On mobile this is the whole back gesture: `#/`
+    // is the list. Safe to do here because only real navigation — back/forward,
+    // an opened link — emits these events; our own pushState mirror does not.
+    if (!route.noteId) setActiveId(null)
+  }), [])
 
   // URL -> active page. Resolves once the store is up, and again as pages arrive
   // so a deep link opens the moment its page syncs. Consumed on success so an
@@ -393,7 +628,6 @@ export default function App() {
     if (!target) return
     if (allNotes.some((note) => note.id === target && !note.deletedAt)) {
       setActiveId(target)
-      setMobileView('editor')
       setPendingRoute({ noteId: null, resourceId: null })
     }
   }, [store, pendingRoute, allNotes])
@@ -467,6 +701,15 @@ export default function App() {
     const timer = window.setTimeout(() => setFlash(null), 4000)
     return () => window.clearTimeout(timer)
   }, [flash])
+
+  // A one-off action failure describes a moment, not a state — left alone it
+  // would sit in the footer for the rest of the session. The engine's own error
+  // is not on a timer: it clears itself when the next sync succeeds.
+  useEffect(() => {
+    if (!actionError) return
+    const timer = window.setTimeout(() => setActionError(null), 8000)
+    return () => window.clearTimeout(timer)
+  }, [actionError])
 
   // Adopt remote renames of the open note. While this device is typing in the
   // field its own draft wins; the metadata row is last-write-wins regardless.
@@ -576,21 +819,59 @@ export default function App() {
     setLanding(null)
     setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current)
     setActiveId(note.id)
-    setMobileView('editor')
   }
 
+  // Reparenting is a one-field write: the tree is derived from parentId, so the
+  // dragged note's children follow without being touched. moveBlockedBy holds
+  // the invariants (no cycles, no cross-share moves — a share covers a whole
+  // subtree, so leaving one is a join/leave rather than a move).
+  const moveNote = async (noteId: string, parentId: string) => {
+    if (!store) return
+    const blocked = moveBlockedBy(notes, noteId, parentId)
+    if (blocked !== 'none') {
+      if (blocked === 'cycle') setActionError('A page can’t be moved inside itself.')
+      if (blocked === 'scope') setActionError('Pages can only move within the same shared space.')
+      return
+    }
+    const note = store.getNote(noteId)
+    if (!note) return
+    if (note.shareId && !['writer', 'admin', 'owner'].includes(roleFor(note.shareId))) {
+      setActionError('You need edit access to move this page.')
+      return
+    }
+    try { await saveNote(store, { ...note, parentId, updatedAt: Date.now() }) }
+    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not move this page') }
+  }
+  const { drag, startDrag, clickSuppressed } = useNoteDrag({
+    scrollRef: pagesNavRef,
+    canDrop: (noteId, parentId) => moveBlockedBy(notes, noteId, parentId) === 'none',
+    onDrop: (noteId, parentId) => void moveNote(noteId, parentId)
+  })
+  const dimmedIds = drag ? subtreeIds(notes, drag.noteId) : null
+  const previewParentId = drag?.valid ? drag.targetId : null
+
+  // Deleting takes the whole subtree with it and there's no undo, so the menu
+  // only stages the note here — removeNote runs once the dialog is confirmed.
+  const [pendingDelete, setPendingDelete] = useState<Note | null>(null)
+  useEffect(() => {
+    if (!pendingDelete) return
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setPendingDelete(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [pendingDelete])
   const removeNote = async (note: Note) => {
     if (!store) return
     setNoteMenuId(null)
+    setPendingDelete(null)
     try {
       if (note.shareId && !canDeleteNote(note)) {
         await leaveShare(store, note.shareId)
-        if (activeNote?.shareId === note.shareId) { setActiveId(null); setMobileView('list') }
+        if (activeNote?.shareId === note.shareId) setActiveId(null)
         return
       }
       const wasActive = activeId && (activeId === note.id || breadcrumbs.some((crumb) => crumb.id === note.id))
       await deleteNoteTree(store, note.id)
-      if (wasActive) { setActiveId(note.parentId || null); setMobileView('list') }
+      if (wasActive) setActiveId(note.parentId || null)
     } catch (error) {
       setActionError(error instanceof Error ? error.message : 'Could not delete this page')
     }
@@ -693,20 +974,51 @@ export default function App() {
   const requestPageName = (resourceId: string) => notes.find((note) => note.shareId === resourceId && !note.parentId)?.title || 'a page'
 
   const syncError = sync.error ?? actionError
-  const syncIndicator = (() => {
-    if (sync.phase === 'auth-required') return { label: 'Reconnect', tone: 'red' as SyncTone, action: 'Reconnect' }
-    if (sync.phase === 'error') return { label: 'Sync failed', tone: 'red' as SyncTone, action: sync.connected ? 'Retry sync' : 'Connect to Tallpond' }
-    if (sync.phase === 'connecting') return { label: 'Connecting…', tone: 'amber' as SyncTone, action: null }
-    if (sync.phase === 'offline') return { label: 'Saved locally', tone: 'gray' as SyncTone, action: null }
-    if (sync.phase === 'local') return { label: 'Saved locally', tone: 'gray' as SyncTone, action: sync.connected ? null : 'Connect to Tallpond' }
-    if (sync.phase === 'syncing' || docTransport === 'connecting') return { label: 'Syncing', tone: 'green' as SyncTone, action: null }
-    return { label: activeNote?.shareId && docTransport === 'live' ? 'Live' : 'Saved', tone: 'green' as SyncTone, action: null }
+  const clearSyncError = () => { setActionError(null); dismissSyncError() }
+  // The resting state of a healthy, signed-in app is silence. Everything that
+  // reaches the screen is therefore either work in flight (a spinner) or a
+  // condition wanting the user's attention (a notice) — never a running
+  // commentary on a sync that is behaving. `sidebarOnly` marks the standing
+  // conditions that are worth an affordance in the footer but must not put a
+  // permanent badge on every page header.
+  const syncNotice = (() => {
+    if (!tallpond) return { tone: 'gray' as SyncTone, label: 'Sync setup required', action: null, sidebarOnly: true }
+    if (sync.phase === 'auth-required') return { tone: 'red' as SyncTone, label: 'Reconnect', action: 'Reconnect', sidebarOnly: false }
+    if (sync.phase === 'error') return { tone: 'red' as SyncTone, label: 'Sync failed', action: sync.connected ? 'Retry sync' : 'Connect to Tallpond', sidebarOnly: false }
+    // No spinner here: nothing is progressing, so a moving one would lie.
+    if (sync.phase === 'offline') return { tone: 'gray' as SyncTone, label: 'Offline', action: null, sidebarOnly: false }
+    if (sync.phase === 'local') return { tone: 'gray' as SyncTone, label: 'Saved locally', action: sync.connected ? null : 'Connect to Tallpond', sidebarOnly: true }
+    return null
   })()
-  const syncAction = tallpond ? syncIndicator.action : 'Sync setup required'
+  // Heavy work only: establishing a session, or a whole-tree pull at startup /
+  // reconnect. Explicitly NOT `phase === 'syncing'` or `pending > 0` — `settle`
+  // sets both whenever the outbox is non-empty, which is most of the time while
+  // someone is typing, so keying off them marked every keystroke as activity.
+  // Draining the outbox is the background work this app exists to hide.
+  const heavySync = sync.phase === 'connecting' || sync.fullSyncing
+  // A notice outranks work in flight — an expired session, a dead network or an
+  // unconfigured deployment all mean the queue is going nowhere.
+  const syncBusy = useDelayedFlag(!syncNotice && (heavySync || docTransport === 'connecting'), BUSY_DELAY_MS, BUSY_MIN_MS)
+  // The header is the one surface the user is actually reading, so it stays out
+  // of the way: conditions that need them (offline, an error) and the one sync
+  // slow enough to explain a wait, but no commentary on the per-page backfill
+  // behind every page open. The footer still carries that.
+  const headerBusy = useDelayedFlag(!syncNotice && heavySync, BUSY_DELAY_MS, BUSY_MIN_MS)
+  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())
   // Explicit navigation clears any pending deep-link/landing so it doesn't keep
   // covering the page the user just chose.
   const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
-  const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setActiveId(id); setMobileView('editor') }
+  const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setActiveId(id) }
+  // The single header control that means "show me the sidebar". On desktop the
+  // sidebar is a panel beside the content, so this is a toggle and the URL is
+  // untouched — collapsing a panel must never become a history entry. On mobile
+  // the sidebar is a full-screen view that lives at `#/`, so this is a real
+  // navigation; that is what puts the list in the history stack and lets the
+  // system back gesture return to it.
+  const showSidebar = () => {
+    if (!isMobile) { openSidebar(); return }
+    setNoteMenuId(null); clearPendingNavigation(); setActiveId(null)
+  }
   const copyPageLink = async () => {
     if (!activeNote) return
     const url = `${window.location.origin}${window.location.pathname}${pageUrl(activeNote.id, activeNote.shareId || null)}`
@@ -755,12 +1067,12 @@ export default function App() {
     selection.addRange(range)
   }
   return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
-    <aside><div className="list-header"><span>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)); const treeProps = { notes, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds, onToggleExpanded }; return favoriteRoots.length > 0 && <><div className="section-label">FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></> })()}<div className="section-label">PAGES</div><nav><NoteTree scope="pages" notes={notes} parentId="" activeId={activeId} depth={0} onOpen={openNote} menuKey={noteMenuId} onToggleMenu={onToggleMenu} expandedIds={expandedIds} onToggleExpanded={onToggleExpanded} /></nav><div className="sidebar-footer"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span className="sync-status">{syncIndicator.label}</span>{syncAction && <button className="sync-button" disabled={!tallpond || !navigator.onLine || sync.phase === 'connecting'} onClick={() => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())}>{syncAction}</button>}{syncError && <span className="sync-error">{syncError}</span>}</div></aside>
-    <main ref={setMainEl} onMouseDown={focusEditorCanvas}>{activeNote && !landing ? <><header className="editor-header"><div className="editor-header-row"><div className="header-left">{!sidebarOpen && <button className="sidebar-open header-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<button className="back-button" aria-label="Back to page list" onClick={() => { if (window.innerWidth <= 760) setMobileView('list'); else { openSidebar(); setActiveId(null) } }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg></button><div className="page-path" aria-label="Page path">{breadcrumbs.length === 1 ? <span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span> : <><span className="breadcrumb-root"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span><i>/</i>{breadcrumbs.length > 2 && <><span className="breadcrumb-ellipsis">…</span><i>/</i></>}<span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[breadcrumbs.length - 1].id)}>{breadcrumbs[breadcrumbs.length - 1].title || 'Untitled'}</button></span></>}</div></div><div ref={setToolbarHost} className="editor-toolbar" role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}<div className="header-status"><span className={`local-dot sync-dot-${syncIndicator.tone}`}/><span>{syncIndicator.label}</span></div><div className="header-actions"><button className="header-button share-button" aria-label={activeNote.shareId ? 'Open sharing' : 'Share page'} disabled={!sync.connected || !navigator.onLine} onClick={() => setShareOpen(!shareOpen)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12L8 7m4-4 4 4"/><path d="M7 10H5v10h14V10h-2"/></svg></button></div></div></div></header><article ref={articleRef}><textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
+    <aside><div className="list-header"><span>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className="section-label">FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} previewParentId={null} dimmedIds={null} dragEnabled={false} note={note} depth={0} />)}</nav></>}<div className="section-label" data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}<span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
+    <main ref={setMainEl} onMouseDown={focusEditorCanvas}>{activeNote && !landing ? <><header className="editor-header"><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<div className="page-path" aria-label="Page path">{breadcrumbs.length === 1 ? <span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span> : <><span className="breadcrumb-root"><button onClick={() => openNote(breadcrumbs[0].id)}>{breadcrumbs[0].title || 'Untitled'}</button></span><i>/</i>{breadcrumbs.length > 2 && <><span className="breadcrumb-ellipsis">…</span><i>/</i></>}<span className="breadcrumb-current"><button onClick={() => openNote(breadcrumbs[breadcrumbs.length - 1].id)}>{breadcrumbs[breadcrumbs.length - 1].title || 'Untitled'}</button></span></>}</div></div><div ref={setToolbarHost} className="editor-toolbar" role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}<span>{syncNotice.label}</span>{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions"><button className="header-button share-button" aria-label={activeNote.shareId ? 'Open sharing' : 'Share page'} disabled={!sync.connected || !online} onClick={() => setShareOpen(!shareOpen)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0-12L8 7m4-4 4 4"/><path d="M7 10H5v10h14V10h-2"/></svg></button></div></div></div></header><article ref={articleRef}><textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} />}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
-      {backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
-      </article></> : landing ? <section className="empty access-landing">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}<div className="empty-mark">M</div>{(() => {
+      {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
+      </article></> : landing ? <section className="empty access-landing">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<div className="empty-mark">M</div>{(() => {
       const name = landing.name
       switch (landing.status) {
         case 'checking': return <><h1>Opening…</h1><p>Checking your access.</p></>
@@ -771,8 +1083,9 @@ export default function App() {
         case 'requested': return <><h1>Request sent</h1><p>You’ll be able to open {name || 'this page'} once the owner approves.</p></>
         default: return <><h1>You don’t have access</h1><p>Ask the owner to share this page with you.</p></>
       }
-    })()}<button className="landing-dismiss" onClick={dismissLanding}>Back to your pages</button></section> : <section className="empty">{!sidebarOpen && <button className="empty-sidebar-open sidebar-open" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 6 6 6-6 6" /></svg></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><h1>Welcome back{sync.user ? `, ${sync.user.name}` : ''}</h1><p>Pick up where you left off.</p><div className="recent-pages" aria-label="Recent pages">{notes.slice(0, 3).map((note) => <button className="recent-page" key={note.id} onClick={() => openNote(note.id)}><span className="recent-page-icon">📄</span><span>{note.title || 'Untitled'}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg></button>)}</div><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}</main>
-    {noteMenuId && menuAnchor && (() => { const scope = noteMenuId.slice(0, noteMenuId.indexOf(':')); const menuNote = notes.find((note) => note.id === noteMenuId.slice(noteMenuId.indexOf(':') + 1)); return menuNote ? <PageMenu anchor={menuAnchor} note={menuNote} canDelete={canDeleteNote(menuNote)} isFavorite={favorites.has(menuNote.id)} onToggleFavorite={(id) => { setNoteMenuId(null); toggleFavorite(id) }} onCreateChild={(note) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(`${scope}:${note.id}`)); void createNote(note) }} onDelete={(note) => { setNoteMenuId(null); void removeNote(note) }} onClose={() => setNoteMenuId(null)} /> : null })()}
+    })()}<button className="landing-dismiss" onClick={dismissLanding}>Back to your pages</button></section> : <section className="empty">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><p>Select a page to start writing.</p><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}</main>
+    {noteMenuId && menuAnchor && (() => { const scope = noteMenuId.slice(0, noteMenuId.indexOf(':')); const menuNote = notes.find((note) => note.id === noteMenuId.slice(noteMenuId.indexOf(':') + 1)); return menuNote ? <PageMenu anchor={menuAnchor} note={menuNote} canDelete={canDeleteNote(menuNote)} isFavorite={favorites.has(menuNote.id)} onToggleFavorite={(id) => { setNoteMenuId(null); toggleFavorite(id) }} onCreateChild={(note) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(`${scope}:${note.id}`)); void createNote(note) }} onDelete={(note) => { setNoteMenuId(null); setPendingDelete(note) }} onClose={() => setNoteMenuId(null)} /> : null })()}
+    {pendingDelete && (() => { const target = pendingDelete; const leaving = !!target.shareId && !canDeleteNote(target); const childCount = subtreeIds(notes, target.id).size - 1; const title = target.title || 'Untitled'; return createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setPendingDelete(null)}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-delete-title" onMouseDown={(event) => event.stopPropagation()}><strong id="confirm-delete-title">{leaving ? `Leave “${title}”?` : `Delete “${title}”?`}</strong><p>{leaving ? 'You’ll lose access until someone shares it with you again.' : childCount > 0 ? `This also deletes ${childCount} subpage${childCount === 1 ? '' : 's'}. This can’t be undone.` : 'This can’t be undone.'}</p><div className="confirm-actions"><button className="confirm-cancel" onClick={() => setPendingDelete(null)}>Cancel</button><button className="confirm-delete" onClick={() => void removeNote(target)}>{leaving ? 'Leave' : 'Delete'}</button></div></section></div>, document.body) })()}
     {flash && <div className="flash-toast" role="status">{flash}</div>}
     {shareOpen && activeNote && createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><div className="share-link-row"><span className="share-link-label">Anyone you add can open this page from its link</span><button className="copy-link" onClick={() => void copyPageLink()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1" /></svg>{copiedLink ? 'Copied' : 'Copy link'}</button></div><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => setInviteHandle(e.target.value)} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div>{membersLoading && members.length === 0 ? <div className="member-list"><span>Loading people…</span></div> : members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)}
   </div>

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { openLocalStore, subtreeIds, type Note, type NoteOp } from './local'
+import { moveBlockedBy, openLocalStore, subtreeIds, type Note, type NoteOp } from './local'
 
 const note = (patch: Partial<Note>): Note => ({
   id: crypto.randomUUID(), title: '', parentId: '', shareId: '', deletedAt: 0, updatedAt: 0, ...patch
@@ -154,5 +154,37 @@ describe('subtreeIds', () => {
     const c = note({ id: 'c', parentId: 'b' })
     const other = note({ id: 'x' })
     expect([...subtreeIds([a, b, c, other], 'a')].sort()).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('moveBlockedBy', () => {
+  const a = note({ id: 'a' })
+  const b = note({ id: 'b', parentId: 'a' })
+  const c = note({ id: 'c', parentId: 'b' })
+  const other = note({ id: 'x' })
+  const shared = note({ id: 's', shareId: 'resource' })
+  const sharedChild = note({ id: 'sc', parentId: 's', shareId: 'resource' })
+  const notes = [a, b, c, other, shared, sharedChild]
+
+  it('allows a reparent onto an unrelated note or the root', () => {
+    expect(moveBlockedBy(notes, 'b', 'x')).toBe('none')
+    expect(moveBlockedBy(notes, 'c', '')).toBe('none')
+  })
+  it('refuses a drop into the note\'s own subtree, including onto itself', () => {
+    expect(moveBlockedBy(notes, 'a', 'c')).toBe('cycle')
+    expect(moveBlockedBy(notes, 'a', 'a')).toBe('cycle')
+  })
+  it('refuses a move that would cross a share boundary in either direction', () => {
+    expect(moveBlockedBy(notes, 'x', 's')).toBe('scope')
+    expect(moveBlockedBy(notes, 's', 'x')).toBe('scope')
+    expect(moveBlockedBy(notes, 'sc', '')).toBe('scope')
+  })
+  it('reports a move that changes nothing', () => {
+    expect(moveBlockedBy(notes, 'b', 'a')).toBe('noop')
+    expect(moveBlockedBy(notes, 'x', '')).toBe('noop')
+  })
+  it('reports a vanished note or parent', () => {
+    expect(moveBlockedBy(notes, 'gone', 'a')).toBe('missing')
+    expect(moveBlockedBy(notes, 'a', 'gone')).toBe('missing')
   })
 })

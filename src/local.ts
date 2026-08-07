@@ -40,6 +40,22 @@ export function subtreeIds(notes: Note[], rootId: string) {
   return ids
 }
 
+// Why a move is allowed or not. Dropping a note inside its own subtree would
+// detach that whole ring from the root, where nothing renders it and nothing
+// can drag it back, so the check is a hard invariant rather than a UI nicety.
+// Scope is checked here too: `shareId` belongs to a whole subtree, so a move
+// across scopes is a join/leave, not a reparent.
+export function moveBlockedBy(notes: Note[], noteId: string, parentId: string): 'none' | 'noop' | 'cycle' | 'scope' | 'missing' {
+  const note = notes.find((candidate) => candidate.id === noteId)
+  if (!note) return 'missing'
+  const parent = parentId ? notes.find((candidate) => candidate.id === parentId) : null
+  if (parentId && !parent) return 'missing'
+  if (note.parentId === parentId) return 'noop'
+  if ((parent?.shareId ?? '') !== note.shareId) return 'scope'
+  if (parentId && subtreeIds(notes, noteId).has(parentId)) return 'cycle'
+  return 'none'
+}
+
 const DATABASE_NAME = 'motion'
 
 const asPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
@@ -160,16 +176,19 @@ export async function openLocalStore() {
       await done(transaction)
     },
     // A note op only leaves the outbox if no edit bumped its revision while
-    // the flush that pushed it was in flight.
+    // the flush that pushed it was in flight. Reports whether it left, so the
+    // drain can tell a completed push from one that has to be repeated.
     removeNoteOpIfRev: async (op: NoteOp) => {
       const transaction = db.transaction('outbox', 'readwrite')
       const store = transaction.objectStore('outbox')
       const request = store.get(op.id)
+      let removed = false
       request.onsuccess = () => {
         const current = request.result as NoteOp | undefined
-        if (current?.rev === op.rev) store.delete(op.id)
+        if (current?.rev === op.rev) { store.delete(op.id); removed = true }
       }
       await done(transaction)
+      return removed
     },
 
     // Leaving a shared resource removes its notes outright — membership ended,

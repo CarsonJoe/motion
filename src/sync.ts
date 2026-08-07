@@ -27,6 +27,11 @@ export type SyncState = {
   // shareId -> role, refreshed on every full sync and cached for offline UI.
   roles: Record<string, string>
   pending: number
+  // A whole-tree pull is running: startup, reconnect, or an explicit retry.
+  // Tracked separately because `phase: 'syncing'` cannot carry this — `settle`
+  // also uses it to mean "the outbox still has work", which is true through
+  // most of ordinary typing and says nothing about how heavy the work is.
+  fullSyncing: boolean
 }
 
 const ROLE_KEY = 'motion-role:'
@@ -39,7 +44,36 @@ const storedRoles = () => {
   return roles
 }
 
-let state: SyncState = { phase: 'local', connected: false, error: null, user: null, roles: storedRoles(), pending: 0 }
+// "This device has signed in before" — presentation only. It decides whether a
+// failure reads as *offline* or as *signed out*, and is never treated as proof
+// of a live credential; only `state.connected` is that.
+const CONNECTED_KEY = 'motion-connected'
+const rememberedLogin = () => Boolean(localStorage.getItem(CONNECTED_KEY))
+const rememberLogin = () => localStorage.setItem(CONNECTED_KEY, 'true')
+
+// The gateway's OAuth redirect_uri is the bare origin, so the hash route — which
+// is the entire address of a page in this app — does not survive the trip
+// through the identity provider. Carrying it in session storage is what keeps a
+// shared link that prompts for sign-in from landing the user on the home screen
+// instead of the page they were invited to.
+const RETURN_KEY = 'motion-return-route'
+const stashRoute = () => {
+  try { sessionStorage.setItem(RETURN_KEY, window.location.hash) } catch { /* storage unavailable */ }
+}
+const restoreRoute = () => {
+  let stashed = ''
+  try {
+    stashed = sessionStorage.getItem(RETURN_KEY) ?? ''
+    sessionStorage.removeItem(RETURN_KEY)
+  } catch { /* storage unavailable */ }
+  const hash = stashed || window.location.hash
+  window.history.replaceState({}, document.title, `${window.location.pathname}${hash}`)
+  // replaceState never fires hashchange, and the router read the URL before the
+  // callback resolved, so the restored route has to be announced explicitly.
+  if (hash) window.dispatchEvent(new Event('hashchange'))
+}
+
+let state: SyncState = { phase: 'local', connected: false, error: null, user: null, roles: storedRoles(), pending: 0, fullSyncing: false }
 const listeners = new Set<() => void>()
 const setState = (patch: Partial<SyncState>) => {
   state = { ...state, ...patch }
@@ -50,6 +84,18 @@ export const subscribeSyncState = (listener: () => void) => {
   return () => { listeners.delete(listener) }
 }
 export const getSyncState = () => state
+
+// A failure the user has read should not outlive their attention. The condition
+// itself, if it persists, re-reports itself on the next attempt.
+export const dismissSyncError = () => setState({ error: null })
+
+// The phase to fall back to when nothing is in flight. An expired session is
+// sticky: only an explicit reconnect clears it, so an ordinary keystroke can
+// never downgrade the red "Reconnect" prompt to a gray "Saved locally".
+const idlePhase = (): SyncPhase =>
+  state.phase === 'auth-required' ? 'auth-required'
+    : !navigator.onLine ? (state.connected || rememberedLogin() ? 'offline' : 'local')
+      : 'local'
 
 export function isAuthError(error: unknown) {
   const candidate = error as { status?: number; code?: string } | null
@@ -101,9 +147,14 @@ const isPermanentRejection = (error: unknown) => {
 }
 
 export async function drainOutbox(client: TallpondClient, store: LocalStore) {
+  // Bounded by progress rather than by an empty queue. A metadata op whose
+  // revision keeps moving — a title being typed — can never be dequeued, and
+  // looping until it is would cost a gateway round trip per keystroke. A pass
+  // that removes nothing hands the work back to the next flush instead.
   while (true) {
     const ops = await store.listOps()
     if (!ops.length) return
+    let progress = false
 
     const updates = new Map<string, UpdateOp[]>()
     for (const op of ops) {
@@ -123,30 +174,36 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore) {
         if (!isPermanentRejection(error)) throw error
       }
       await store.removeOps(group.map((op) => op.id))
+      progress = true
     }
 
     for (const op of ops) {
       if (op.kind !== 'note') continue
       try {
-        await pushNoteRow(client, store, op)
+        if (await pushNoteRow(client, store, op)) progress = true
       } catch (error) {
         if (!isPermanentRejection(error)) throw error
         await store.removeOps([op.id])
+        progress = true
       }
     }
+
+    if (!progress) return
   }
 }
 
+// Resolves true when the op left the outbox — the drain's signal that another
+// pass is worth making.
 async function pushNoteRow(client: TallpondClient, store: LocalStore, op: NoteOp) {
   const note = store.getNote(op.noteId)
-  if (!note) { await store.removeOps([op.id]); return }
+  if (!note) { await store.removeOps([op.id]); return true }
   const table = () => notesTable(client, note.shareId)
   const values = { title: note.title, parentId: note.parentId, deletedAt: note.deletedAt, clientUpdatedAt: note.updatedAt }
   const updated = await table().update(values).eq('noteId', note.id).lte('clientUpdatedAt', note.updatedAt)
   if (!updated.length && !await table().select('noteId').eq('noteId', note.id).maybeSingle()) {
     await table().insert({ noteId: note.id, ...values })
   }
-  await store.removeNoteOpIfRev(op)
+  return store.removeNoteOpIfRev(op)
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +219,17 @@ let flushQueued = false
 let retryTimer: number | null = null
 let retryAttempt = 0
 let fullSyncPromise: Promise<void> | null = null
+let flushTimer: number | null = null
+
+// Edits arrive per keystroke; pushes do not have to. Content updates already
+// merge per note inside the drain and metadata ops coalesce onto one stable
+// outbox key, so coalescing the flush itself costs nothing but a fraction of a
+// second of latency and removes the round trip per character.
+const FLUSH_DELAY_MS = 600
+const scheduleFlush = () => {
+  if (flushTimer !== null) return
+  flushTimer = window.setTimeout(() => { flushTimer = null; void flush() }, FLUSH_DELAY_MS)
+}
 
 const refreshPending = async () => {
   if (local) setState({ pending: await local.countOps() })
@@ -171,20 +239,39 @@ const settle = async () => {
   await refreshPending()
   setState({ phase: state.pending ? 'syncing' : 'synced', error: null })
   retryAttempt = 0
+  // Success makes a queued retry pointless. Disarming it also matters for the
+  // duplicate-suppression below: an armed timer left over from an outage that
+  // is already over would swallow the first report of the next one.
+  if (retryTimer !== null) { window.clearTimeout(retryTimer); retryTimer = null }
 }
 
+// Rounds of automatic retry that pass without telling the user anything. One
+// dropped request is not news: the outbox still holds the work, the retry below
+// is already scheduled, and on a flaky connection nearly all of these are fixed
+// within seconds. Alarming immediately taught the user to distrust an indicator
+// that was, in the end, wrong.
+const QUIET_RETRIES = 1
+
 function reportFailure(error: unknown) {
+  // An expired session is never transient — no amount of retrying fixes it, and
+  // it always needs the user.
   if (isAuthError(error)) {
     setState({ phase: 'auth-required', connected: false, error: describeError(error) })
     return
   }
   if (!navigator.onLine) { setState({ phase: 'offline' }); return }
-  setState({ phase: 'error', error: describeError(error) })
-  if (retryTimer === null) {
-    const delay = Math.min(2500 * 2 ** retryAttempt, 60000)
-    retryAttempt += 1
-    retryTimer = window.setTimeout(() => { retryTimer = null; void fullSync() }, delay)
-  }
+  // A retry already queued means this is the same outage reported a second time
+  // by another request that was in flight when it hit — one blip, not a new
+  // round, and it must not escalate on its own.
+  if (retryTimer !== null) return
+  // Below the threshold the phase stays 'syncing', which is honest: it really is
+  // still trying, and the UI shows a spinner rather than a red alarm.
+  setState(retryAttempt >= QUIET_RETRIES
+    ? { phase: 'error', error: describeError(error) }
+    : { phase: 'syncing', error: null })
+  const delay = Math.min(2500 * 2 ** retryAttempt, 60000)
+  retryAttempt += 1
+  retryTimer = window.setTimeout(() => { retryTimer = null; void resume() }, delay)
 }
 
 async function flush() {
@@ -224,7 +311,7 @@ export async function fullSync() {
     try {
       if (!tallpond || !local || !state.connected) return
       if (!navigator.onLine) { setState({ phase: 'offline' }); return }
-      setState({ phase: 'syncing', error: null })
+      setState({ phase: 'syncing', error: null, fullSyncing: true })
 
       // Captured before the resource list is fetched: a share created
       // concurrently by this device is absent here and so is never pruned.
@@ -265,20 +352,41 @@ export async function fullSync() {
     } catch (error) {
       reportFailure(error)
     }
-  })().finally(() => { fullSyncPromise = null })
+  })().finally(() => { fullSyncPromise = null; setState({ fullSyncing: false }) })
   return fullSyncPromise
+}
+
+// `getSession()` cannot distinguish an unreachable gateway from a real sign-out
+// — it swallows the fetch error and reports "not authenticated" either way. So
+// before discarding a remembered login (which costs the user a full trip through
+// the identity provider) confirm with a call that *can* tell them apart:
+// getUser() resolves null only on a 401 and throws everything else.
+async function confirmSignedOut() {
+  try { return (await tallpond!.auth.getUser()) === null }
+  catch (error) { return isAuthError(error) }
 }
 
 async function establishSession() {
   if (!tallpond) return false
   const url = new URL(window.location.href)
   if (url.searchParams.get('code') && url.searchParams.get('state')) {
+    let failure: unknown = null
     try { await tallpond.auth.handleRedirectCallback(url) }
-    catch { /* stale or foreign callback params — fall through to getSession */ }
-    window.history.replaceState({}, document.title, window.location.pathname)
+    catch (error) { failure = error }
+    restoreRoute()
+    // A callback that was attempted and failed is reported, not swallowed:
+    // falling through silently leaves the user pressing Connect over and over
+    // against an error only the gateway ever saw.
+    if (failure) throw failure
   }
   const session = await tallpond.auth.getSession()
-  if (!session.authenticated) return false
+  if (!session.authenticated) {
+    if (rememberedLogin() && !await confirmSignedOut()) {
+      throw new Error('Could not reach Tallpond to check your session.')
+    }
+    return false
+  }
+  rememberLogin()
   setState({ connected: true })
   void tallpond.auth.getUser().then((user: User | null) => {
     if (user) setState({ user: { id: user.id, name: user.profile.displayName || user.profile.handle || 'You' } })
@@ -286,39 +394,54 @@ async function establishSession() {
   return true
 }
 
+// The one re-entry point for automatic recovery: a session that was never
+// confirmed is re-established before the sync it was blocking.
+async function resume() {
+  if (!tallpond || !local) return
+  if (!navigator.onLine) { setState({ phase: idlePhase() }); return }
+  if (!state.connected) {
+    try {
+      if (!await establishSession()) {
+        // A remembered login that will not establish has expired. That is a
+        // "Reconnect", not a "you were never signed in", and it stays on screen
+        // until an explicit reconnect clears it.
+        const expired = rememberedLogin()
+        setState({
+          phase: expired ? 'auth-required' : 'local',
+          connected: false,
+          error: expired ? 'Your Tallpond session expired.' : null
+        })
+        return
+      }
+    } catch (error) { reportFailure(error); return }
+  }
+  await fullSync()
+}
+
 export async function startSync(store: LocalStore) {
+  if (local) return
   local = store
   await refreshPending()
-  window.addEventListener('online', () => { if (state.connected) void fullSync(); else setState({ phase: 'local' }) })
-  window.addEventListener('offline', () => setState({ phase: state.connected ? 'offline' : 'local' }))
-  if (!tallpond || !navigator.onLine) {
-    setState({ phase: !navigator.onLine && localStorage.getItem('motion-connected') ? 'offline' : 'local' })
-    return
-  }
-  try {
-    if (await establishSession()) {
-      localStorage.setItem('motion-connected', 'true')
-      await fullSync()
-    } else {
-      localStorage.removeItem('motion-connected')
-      setState({ phase: 'local', connected: false })
-    }
-  } catch (error) {
-    reportFailure(error)
-  }
+  window.addEventListener('online', () => {
+    if (state.connected || rememberedLogin()) void resume()
+    else setState({ phase: 'local' })
+  })
+  window.addEventListener('offline', () => setState({ phase: idlePhase() }))
+  if (!tallpond || !navigator.onLine) { setState({ phase: idlePhase() }); return }
+  await resume()
 }
 
 // The explicit "Connect" action: finish a pending session if one exists,
 // otherwise leave for the identity provider.
 export async function connectInteractive() {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
-  if (!navigator.onLine) { setState({ phase: 'local' }); return }
+  if (!navigator.onLine) { setState({ phase: idlePhase() }); return }
+  // Clearing the phase here is what releases the sticky auth-required latch.
   setState({ phase: 'connecting', error: null })
-  if (await establishSession()) {
-    localStorage.setItem('motion-connected', 'true')
-    await fullSync()
-    return
-  }
+  try {
+    if (await establishSession()) { await fullSync(); return }
+  } catch (error) { reportFailure(error); throw error }
+  stashRoute()
   await tallpond.auth.signIn()
 }
 
@@ -326,10 +449,9 @@ export async function connectInteractive() {
 // reflect the pending work and kick a flush.
 export function noteChanged() {
   void refreshPending()
-  if (!state.connected) { setState({ phase: 'local' }); return }
-  if (!navigator.onLine) { setState({ phase: 'offline' }); return }
+  if (!state.connected || !navigator.onLine) { setState({ phase: idlePhase() }); return }
   setState({ phase: 'syncing' })
-  void flush()
+  scheduleFlush()
 }
 
 // ---------------------------------------------------------------------------

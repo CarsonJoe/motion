@@ -2,64 +2,118 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #f1f1f1;
   background: #111;
+  /* Surfaces the UA paints itself — the base canvas exposed mid-transition
+     during a swipe-back, rubber-band overscroll, scrollbars, form controls —
+     default to LIGHT without this, which is the white flash on back navigation.
+     Our own backgrounds never get a chance to cover those frames. */
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; overflow: hidden; }
+/* Every layer that could be the topmost painted thing for a frame carries the
+   background, so no reflow can expose something lighter underneath. */
+html, body, #root { height: 100%; overflow: hidden; background: #111; }
 html, body { overscroll-behavior: none; }
 body { margin: 0; background: #111; }
-.app-shell { display: flex; height: 100vh; height: 100dvh; overflow: hidden; background: #111; }
+/* `viewport-fit=cover` plus the black-translucent status bar hand this app the
+   whole screen, status bar and home indicator included — padding the content
+   back out of them is the other half of that bargain. box-sizing is border-box
+   globally, so the insets come out of 100dvh rather than overflowing it. */
+/* Only the top inset is reserved. The bottom one is the home indicator, which
+   sits over content harmlessly — reserving for it just steals a band of the
+   article and leaves a dead strip under the text. */
+.app-shell { display: flex; height: 100vh; height: 100dvh; padding-top: env(safe-area-inset-top); overflow: hidden; background: #111; }
 .sidebar-collapsed aside { width: 0; flex-basis: 0; padding-right: 0; padding-left: 0; border-right-color: transparent; opacity: 0; pointer-events: none; }
 
 aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display: flex; flex-direction: column; overflow: hidden; padding: 16px 10px; background: #161616; border-right: 1px solid #2a2a2a; transition: width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), padding .24s ease, border-color .24s ease, opacity .16s ease; }
 .list-header { display: none; }
 .list-header-actions { display: flex; align-items: center; gap: 8px; }
 .new { border: 0; border-radius: 7px; padding: 10px 12px; color: #171717; background: #f0f0f0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.new:hover { background: #fff; }
+/* Every :hover in this file is gated behind `(hover: hover)`. On touch, a tap
+   leaves :hover latched on the element until you tap somewhere else, so an
+   ungated hover reads as a stuck selection. Anything that must show state after
+   a tap uses a class or :focus-visible instead. */
+@media (hover: hover) { .new:hover { background: #fff; } }
 .desktop-sidebar-actions { display: flex; align-items: center; gap: 6px; margin-bottom: 24px; }
 .desktop-new { min-width: 0; flex: 1; text-align: left; }
-.sidebar-close, .sidebar-open { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
-.sidebar-close:hover, .sidebar-open:hover { color: #fff; background: #292929; }
-.sidebar-close svg, .sidebar-open svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+.sidebar-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
+@media (hover: hover) { .sidebar-close:hover { color: #fff; background: #292929; } }
+.sidebar-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 .icon-new { display: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
-nav { overflow: auto; padding-bottom: 8px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
-nav::-webkit-scrollbar { width: 10px; }
-nav::-webkit-scrollbar-track { background: transparent; }
-nav::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
-nav::-webkit-scrollbar-thumb:hover { background-color: #505050; }
+/* The list is for navigating and dragging, not reading — a drag that paints a
+   text selection behind it looks broken, and on touch the long-press that
+   starts a drag is also what raises the selection handles and the iOS callout. */
+aside { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* FAVORITES and PAGES scroll together as one list — separate scrollers made the
+   sidebar read as two panes and stranded the bottom of PAGES. */
+.sidebar-scroll { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding-bottom: 8px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+.sidebar-scroll .section-label:not(:first-child) { padding-top: 18px; }
+nav { overflow: visible; }
+.sidebar-scroll::-webkit-scrollbar { width: 10px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background-color: #505050; }
+/* Blank space under the last row is the drop target for "move to top level", so
+   the tree claims the rest of the sidebar rather than ending at its last row. */
+.pages-nav { min-height: 96px; flex: 1 0 auto; }
+.section-label, .favorites-nav { flex: none; }
+.page-row.dragging { opacity: .35; }
+/* Sits below its parent row and takes no space, so nothing under the pointer
+   moves while the line follows it. The dot marks the indent it will land at. */
+.drop-line { position: absolute; right: 6px; bottom: -1px; height: 2px; border-radius: 2px; background: #4c8ef7; pointer-events: none; }
+.drop-line::before { position: absolute; top: -2px; left: -3px; width: 6px; height: 6px; border-radius: 50%; background: #4c8ef7; content: ''; }
+.pages-nav { position: relative; }
+.pages-nav > .drop-line { top: -3px; bottom: auto; }
 .page-tree-item { position: relative; }
-.page-row { display: flex; align-items: center; border-radius: 6px; }
+.page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
 .page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
 .page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .page-toggle, .page-toggle-spacer { width: 22px; height: 28px; flex: none; }
 .page-toggle { display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: #777; background: transparent; cursor: pointer; }
-.page-toggle:hover { color: #eee; background: #303030; }
+@media (hover: hover) { .page-toggle:hover { color: #eee; background: #303030; } }
 .page-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.page-row:hover { background: #222; }
-.page-row:hover .page-link { color: #f2f2f2; }
+@media (hover: hover) {
+  .page-row:hover { background: #222; }
+  .page-row:hover .page-link { color: #f2f2f2; }
+}
 .page-row.active { background: #292929; }
 .page-row.active .page-link { color: #fff; }
 .page-menu-button { width: 28px; height: 28px; flex: none; margin-right: 4px; padding: 0; border: 0; border-radius: 5px; color: #777; background: transparent; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; }
-.page-row:hover .page-menu-button, .page-menu-button:focus, .page-menu-button.menu-open { opacity: 1; }
-.page-menu-button:hover, .page-menu-button.menu-open { color: #eee; background: #303030; }
+/* Revealing this on hover alone would strand it on any touch device — including
+   iPad, which reports `hover: none` at a desktop width and so never matched the
+   mobile breakpoint that used to un-hide it. Without a pointer, show it always. */
+@media (hover: none) { .page-menu-button { opacity: 1; } }
+/* :focus-visible, not :focus — a tap focuses the button and plain :focus would
+   keep it revealed after the menu closes. */
+.page-menu-button:focus-visible, .page-menu-button.menu-open { opacity: 1; }
+.page-menu-button.menu-open { color: #eee; background: #303030; }
+@media (hover: hover) {
+  .page-row:hover .page-menu-button { opacity: 1; }
+  .page-menu-button:hover { color: #eee; background: #303030; }
+}
 .page-menu { z-index: 30; display: grid; width: 170px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: page-menu-in .12s ease; }
 @keyframes page-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .page-menu button { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
 .page-menu button svg { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
-.page-menu button:hover { background: #383838; }
+@media (hover: hover) { .page-menu button:hover { background: #383838; } }
 .page-menu .danger { color: #ee9999; }
 .sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; border-top: 1px solid #2a2a2a; color: #8e8e8e; font-size: 12px; }
 .local-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #6f6f6f; }
 .connected-dot { background: #54c98f; }
-.sync-dot-gray { background: #6f6f6f; }
-.sync-dot-green { background: #54c98f; }
-.sync-dot-amber { background: #d6a24b; }
+/* The only dot left. Informational states say their piece in muted text and
+   need no mark beside it; red is the one tone worth catching an eye that was
+   not looking. */
 .sync-dot-red { background: #e27777; }
 .sync-button { margin-left: auto; padding: 0; border: 0; color: #aaa; background: none; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.sync-button:hover { color: #fff; }
+/* In the footer the action is pushed to the far edge; in the header it sits
+   directly after the label it belongs to. */
+.header-status .sync-button { margin-left: 0; font-size: inherit; }
+@media (hover: hover) { .sync-button:hover { color: #fff; } }
 .sync-button:disabled { color: #555; cursor: not-allowed; }
-.sync-error { width: 100%; color: #e99191; font-size: 11px; line-height: 1.35; }
+.sync-error { display: flex; align-items: flex-start; gap: 6px; width: 100%; color: #e99191; font-size: 11px; line-height: 1.35; }
+.sync-error-dismiss { flex: none; margin-left: auto; padding: 0 2px; border: 0; color: inherit; background: none; font: inherit; font-size: 13px; line-height: 1.1; cursor: pointer; opacity: 0.65; }
+@media (hover: hover) { .sync-error-dismiss:hover { opacity: 1; } }
 
 main { min-width: 0; flex: 1; overflow: auto; overscroll-behavior-y: contain; background: #111; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; cursor: text; }
 .editor-header { cursor: default; }
@@ -74,25 +128,34 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .header-left { max-width: none; gap: 10px; }
 .header-right { grid-column: 3; justify-self: end; justify-content: flex-end; gap: 10px; }
 .notification-button { position: relative; display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #aaa; background: transparent; cursor: pointer; }
-.notification-button:hover { color: #fff; background: #262626; }
+@media (hover: hover) { .notification-button:hover { color: #fff; background: #262626; } }
 .notification-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .notification-button span { position: absolute; top: 0; right: 0; display: grid; min-width: 15px; height: 15px; place-items: center; padding: 0 3px; border-radius: 8px; color: #111; background: #f0f0f0; font-size: 9px; font-weight: 800; }
 .page-path { display: flex; min-width: 0; max-width: min(240px, max(0px, calc((100vw - 1048px) / 4))); overflow: hidden; color: #909090; font-size: 12px; white-space: nowrap; }
 .page-path span { display: flex; min-width: 0; align-items: center; }
 .page-path i { padding: 0 5px; color: #555; font-style: normal; }
 .page-path button { width: 100%; min-width: 0; overflow: hidden; padding: 3px 0; border: 0; color: #8f8f8f; background: transparent; font: inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.page-path button:hover { color: #eee; }
+@media (hover: hover) { .page-path button:hover { color: #eee; } }
 .breadcrumb-root { max-width: 32%; flex: 0 1 auto; }
 .breadcrumb-current { flex: 1 1 auto; }
 .breadcrumb-ellipsis { flex: none; color: #666; }
 .editor-toolbar { position: absolute; left: max(56px, calc((100% - 668px) / 2)); display: flex; height: 52px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
-.back-button, .header-button { padding: 5px; border: 0; color: #aaa; background: transparent; font: inherit; cursor: pointer; }
-.back-button:hover, .header-button:hover { color: #fff; }
-.back-button { visibility: visible; width: 30px; height: 30px; flex: none; padding: 5px; }
-.back-button svg, .share-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.show-sidebar-button, .header-button { padding: 5px; border: 0; color: #aaa; background: transparent; font: inherit; cursor: pointer; }
+@media (hover: hover) {
+  .show-sidebar-button:hover, .header-button:hover { color: #fff; }
+  .show-sidebar-button:hover { background: #292929; }
+}
+/* One control, one icon, one meaning — "show me the sidebar". What that does
+   differs by breakpoint (navigate to the list on mobile, where the sidebar is a
+   screen; toggle the pane on desktop) but the intent doesn't, so it reads as the
+   same button. Rendered only when the sidebar isn't already beside the content. */
+.show-sidebar-button { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border-radius: 6px; }
+.show-sidebar-button svg, .share-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .share-button { display: grid; width: 32px; height: 32px; place-items: center; padding: 5px; }
 .header-status, .header-actions { display: flex; align-items: center; }
-.header-status { gap: 6px; }
+/* Muted to the same weight as the sidebar footer: status in the header is
+   something to glance at, never something competing with the page title. */
+.header-status { gap: 6px; color: #8e8e8e; font-size: 12px; }
 .header-actions { gap: 10px; }
 .header-button:disabled { opacity: .4; cursor: not-allowed; }
 .title { display: block; box-sizing: border-box; width: 100%; margin: 0 0 28px; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden; color: #f5f5f5; background: transparent; font-family: inherit; font-size: 42px; font-weight: 700; line-height: 1.16; letter-spacing: -1.5px; white-space: pre-wrap; overflow-wrap: break-word; }
@@ -102,14 +165,16 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .empty-mark { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 18px; border-radius: 14px; color: #161616; background: #eee; font-size: 22px; font-weight: 800; }
 .empty h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -.7px; }
 .empty p { margin: 0 0 23px; color: #888; font-size: 15px; }
-.recent-pages { display: grid; width: min(100%, 440px); gap: 6px; margin: 0 0 20px; text-align: left; }
-.recent-page { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 12px 13px; border: 1px solid #292929; border-radius: 8px; color: #d4d4d4; background: #171717; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
-.recent-page:hover { border-color: #414141; background: #202020; transform: translateY(-1px); }
-.recent-page > span:nth-child(2) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recent-page-icon { color: #8d8d8d; font-size: 14px; }
-.recent-page svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #777; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 
 .share-modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); }
+.confirm-modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); }
+.confirm-modal { display: grid; width: min(360px, 100%); gap: 10px; padding: 18px; border: 1px solid #3a3a3a; border-radius: 12px; color: #aaa; background: #1b1b1b; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); font-size: 13px; }
+.confirm-modal strong { color: #f4f4f4; font-size: 15px; }
+.confirm-modal p { margin: 0; line-height: 1.5; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.confirm-actions button { border: 1px solid #3a3a3a; border-radius: 7px; padding: 8px 14px; color: #ddd; background: transparent; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.confirm-delete { border-color: transparent; color: #fff; background: #b3382f; }
+@media (hover: hover) { .confirm-cancel:hover { border-color: #555; color: #fff; } .confirm-delete:hover { background: #c9443a; } }
 .share-modal { display: grid; width: min(460px, 100%); gap: 16px; padding: 18px; border: 1px solid #3a3a3a; border-radius: 12px; color: #aaa; background: #1b1b1b; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); font-size: 13px; }
 .share-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .share-modal header div { display: grid; gap: 4px; }
@@ -117,7 +182,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .share-modal header span { color: #888; font-size: 12px; }
 .share-modal p { margin: -5px 0 0; color: #aaa; line-height: 1.45; }
 .modal-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: #b5b5b5; background: #292929; font: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
-.modal-close:hover { color: #fff; background: #353535; }
+@media (hover: hover) { .modal-close:hover { color: #fff; background: #353535; } }
 .invite-row { display: flex; gap: 7px; }
 .invite-row input, .invite-row select { min-width: 0; padding: 8px; border: none; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
 .invite-row input { flex: 1; }
@@ -134,16 +199,18 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .invitation-item strong { color: #e9e9e9; font-size: 12px; font-weight: 600; }
 .invitation-actions { display: flex; flex: none; gap: 4px; }
 .invitation-actions button { height: 27px; padding: 0 7px; border: 0; border-radius: 5px; color: #bbb; background: #333; font: inherit; font-size: 11px; cursor: pointer; }
-.invitation-actions button:hover { color: #fff; background: #353535; }
+@media (hover: hover) { .invitation-actions button:hover { color: #fff; background: #353535; } }
 .invitation-actions .accept { color: #111; background: #eee; font-weight: 650; }
-.invitation-actions .accept:hover { background: #fff; }
+@media (hover: hover) { .invitation-actions .accept:hover { background: #fff; } }
 .invitation-actions button:disabled { opacity: .5; cursor: wait; }
 .presence-list { display: flex; flex-direction: row-reverse; }
 .presence-list span { display: grid; width: 24px; height: 24px; place-items: center; margin-left: -5px; border: 2px solid #111; border-radius: 50%; color: #111; font-size: 10px; font-weight: 800; }
 .remote-cursor { position: absolute; z-index: 2; width: 2px; pointer-events: auto; }
 .remote-cursor::after { position: absolute; inset: -5px; content: ""; }
 .remote-cursor > span { position: absolute; bottom: 100%; left: 0; padding: 2px 5px; border-radius: 4px 4px 4px 0; color: #111; font-size: 10px; font-weight: 700; line-height: 1.3; white-space: nowrap; opacity: 0; transform: translateY(2px); transition: opacity .12s ease, transform .12s ease; }
-.remote-cursor:hover > span { opacity: 1; transform: translateY(0); }
+/* The collaborator name tag. On touch there is no hover to leave, so tapping
+   near a caret would strand the label on screen. */
+@media (hover: hover) { .remote-cursor:hover > span { opacity: 1; transform: translateY(0); } }
 
 .mdxeditor {
   --basePageBg: #111;
@@ -168,8 +235,6 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .motion-md-toolbar { display: none !important; }
 .editor-toolbar .core-tools, .editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
 .editor-toolbar button { margin: 0 1px; border-radius: 5px !important; color: #a7a7a7 !important; }
-/* Gate hover behind a real pointer: on touch, :hover sticks after a tap and
-   the button stays highlighted until you tap elsewhere. */
 @media (hover: hover) { .editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; } }
 /* Active toggle (bold/italic/underline/highlight at the caret). Radix marks the
    pressed ToggleItem with data-state="on"; our flat button color above hides it. */
@@ -181,7 +246,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 
 /* Block-type dropdown — force our dark palette (defaults render light). */
 [class*="_selectTrigger_"] { border: 0 !important; padding-left: 10px !important; background-color: transparent !important; color: #c2c2c2 !important; }
-[class*="_selectTrigger_"]:hover { background-color: #292929 !important; }
+@media (hover: hover) { [class*="_selectTrigger_"]:hover { background-color: #292929 !important; } }
 [class*="_selectTrigger_"][data-state='open'] { background-color: #232323 !important; }
 [class*="_selectContainer_"], [class*="_toolbarButtonDropdownContainer_"] { overflow: hidden; border: 1px solid #383838 !important; border-radius: 8px !important; background-color: #232323 !important; box-shadow: 0 14px 34px rgba(0, 0, 0, .55); }
 [class*="_selectItem_"] { color: #c9c9c9 !important; font-size: 13px; }
@@ -213,7 +278,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 /* Internal page links (pills) */
 .page-ref-host { display: inline; }
 .page-ref { display: inline-flex; align-items: baseline; gap: 3px; margin: 0 1px; padding: 1px 6px 1px 4px; border-radius: 5px; color: #c5c2ff; background: rgba(122, 118, 255, .12); box-decoration-break: clone; -webkit-box-decoration-break: clone; font-weight: 500; text-decoration: none; cursor: pointer; user-select: none; }
-.page-ref:hover { background: rgba(122, 118, 255, .2); }
+@media (hover: hover) { .page-ref:hover { background: rgba(122, 118, 255, .2); } }
 .page-ref:focus-visible { outline: 2px solid #7a76ff; outline-offset: 1px; }
 .page-ref-icon { width: 13px; height: 13px; align-self: center; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
 .page-ref-missing { color: #8a8a8a; background: #242424; cursor: default; text-decoration: line-through; }
@@ -239,26 +304,22 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid #2b2b2b; }
 .backlinks h2 { margin: 0 0 10px; color: #6a6a6a; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .backlink { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 11px; margin-bottom: 1px; border: 1px solid transparent; border-radius: 8px; color: #6e6e6e; background: transparent; font: inherit; font-size: 15px; text-align: left; cursor: pointer; transition: color .12s, background .12s; }
-.backlink:hover { color: #a8a8a8; background: #1d1d1d; }
+@media (hover: hover) { .backlink:hover { color: #a8a8a8; background: #1d1d1d; } }
 .backlink svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .5; }
 
 /* Share modal: copy link */
 .share-link-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .share-link-label { min-width: 0; color: #8a8a8a; font-size: 12px; line-height: 1.4; }
 .copy-link { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 7px 12px; border: 0; border-radius: 7px; color: #f1f1f1; background: #454545; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .12s; }
-.copy-link:hover { background: #525252; }
+@media (hover: hover) { .copy-link:hover { background: #525252; } }
 .copy-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
 /* Deep-link access landing */
 .landing-dismiss { margin-top: 18px; padding: 8px 16px; border: 0; border-radius: 8px; color: var(--baseText); background: transparent; font: inherit; font-size: 14px; cursor: pointer; }
-.landing-dismiss:hover { color: var(--baseTextContrast); background: var(--baseBgSubtle); }
+@media (hover: hover) { .landing-dismiss:hover { color: var(--baseTextContrast); background: var(--baseBgSubtle); } }
 
 /* Transient status toast */
 .flash-toast { position: fixed; left: 50%; bottom: 28px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 11px 18px; border: 1px solid #4a4a4a; border-radius: 10px; color: var(--baseTextContrast); background: #232323; box-shadow: 0 14px 36px rgba(0, 0, 0, .55); font-size: 14px; }
-
-@media (min-width: 761px) {
-  .back-button { display: none; }
-}
 
 @media (min-width: 761px) and (max-width: 1120px) {
   .page-path { display: none; }
@@ -275,14 +336,20 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   aside { width: 100%; height: 100%; padding: 12px 14px; border: 0; background: #111; }
   .list-header { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 16px; color: #f4f4f4; font-size: 28px; font-weight: 700; letter-spacing: -.8px; }
   .icon-new { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border-radius: 50%; font-size: 24px; font-weight: 400; }
-  .desktop-sidebar-actions, .section-label { display: none; }
+  .desktop-sidebar-actions { display: none; }
+  /* The list is the home screen now, so its sections have to be legible as
+     sections — three unlabelled runs of rows read as one list with duplicates. */
+  .section-label { padding: 15px 10px 6px; }
   .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 12px 14px; border-right-color: transparent; opacity: 1; pointer-events: auto; }
-  .sidebar-close, .sidebar-open { display: none; }
-  nav { margin: 0 -2px; overflow: auto; }
+  .sidebar-close { display: none; }
+  .sidebar-scroll { margin: 0 -2px; }
   .page-row { border-bottom: 1px solid #202020; border-radius: 0; }
   .page-link { min-height: 48px; padding: 12px 10px; border-radius: 0; font-size: 16px; }
+  /* No active-page highlight on mobile. The list is a place you navigate away
+     from, not a pane sitting beside the page it points at — by the time you can
+     see the row, that page isn't on screen for it to be "current" relative to. */
   .page-row.active { background: transparent; }
-  .page-menu-button { opacity: 1; }
+  .page-row.active .page-link { color: #aaa; }
   .sidebar-footer { padding: 14px 3px 0; }
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
@@ -300,7 +367,7 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .block-type-menu { z-index: 60; }
   .block-type-item { min-height: 44px; font-size: 15px; }
   .page-path { display: none; }
-  .back-button { color: #e1e1e1; }
+  .show-sidebar-button { color: #e1e1e1; }
   .header-actions { gap: 6px; }
   .header-button { color: #e4e4e4; font-size: 13px; }
   .header-button:first-child { font-size: 22px; }

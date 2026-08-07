@@ -155,6 +155,23 @@ describe('drainOutbox', () => {
     expect(await store.countOps()).toBe(0)
   })
 
+  it('stops after a pass that dequeues nothing instead of spinning on it', async () => {
+    const store = await openLocalStore()
+    const typing = note({ title: 'being typed', updatedAt: 10 })
+    await store.putNote(typing)
+    await store.enqueueNote(typing.id)
+
+    // Every push races an edit that re-stamps the op's revision, so the op can
+    // never leave the outbox. The drain has to hand the work back to the next
+    // flush rather than loop on it — one round trip, not one per keystroke.
+    const stubborn = { ...store, removeNoteOpIfRev: async () => false }
+    const { client, calls } = fakeClient({ notes: { noteId: typing.id } })
+    await drainOutbox(client, stubborn)
+
+    expect(calls.filter((call) => call.table === 'notes')).toHaveLength(2)
+    expect(await store.countOps()).toBe(1)
+  })
+
   it('drops metadata ops whose note no longer exists locally', async () => {
     const store = await openLocalStore()
     await store.enqueueNote('ghost')
