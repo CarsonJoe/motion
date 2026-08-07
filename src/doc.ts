@@ -2,7 +2,7 @@ import * as Y from 'yjs'
 import type { Row } from '@tallpond/sdk'
 import { fromBase64, patchYText, toBase64 } from './codec'
 import type { LocalStore, Note } from './local'
-import { getSyncState, isAuthError, noteChanged, tallpond, updatesTable } from './sync'
+import { getSyncState, isAuthError, noteChanged, subscribeSyncState, tallpond, updatesTable } from './sync'
 
 export const LOCAL_ORIGIN = Symbol('motion-local')
 export const REMOTE_ORIGIN = Symbol('motion-remote')
@@ -170,12 +170,20 @@ export async function openNoteDoc(options: {
   // Presence: ephemeral rows with a 30s lease, upserted on a heartbeat and on
   // selection changes, never queued while offline.
   if (note.shareId && online) {
-    const user = getSyncState().user
+    // One row per editing session, keyed on the session alone so the row stays
+    // addressable for upsert and delete no matter what we learn about the user
+    // later. The identity written INTO the row is read fresh on every publish:
+    // `establishSession` flips `connected` before the profile fetch it kicks
+    // off resolves, and the document opens on that flip, so this device
+    // routinely does not know who it is yet. Capturing the name here is what
+    // published "Collaborator" — and a random per-session `userId`, which also
+    // cost the user their stable presence colour — for the life of the page.
     const sessionId = crypto.randomUUID()
-    const userId = user?.id ?? sessionId
-    const presenceId = `${userId}:${sessionId}`
-    const displayName = user?.name ?? 'Collaborator'
-    const color = colorFor(userId)
+    const presenceId = sessionId
+    const identity = () => {
+      const user = getSyncState().user
+      return { userId: user?.id ?? sessionId, displayName: user?.name ?? 'Collaborator' }
+    }
     let selection: Selection | null = null
     let inFlight = false
     let queued = false
@@ -209,11 +217,12 @@ export async function openNoteDoc(options: {
       if (closed || !options.writable || !navigator.onLine) return
       if (inFlight) { queued = true; return }
       inFlight = true
+      const { userId, displayName } = identity()
       try {
         await tallpond!.resource(note.shareId).table('member_presence').upsert({
           presenceId, noteId: note.id, displayName,
           data: {
-            userId, color,
+            userId, color: colorFor(userId),
             anchorRel: relative(selection?.anchor ?? 0),
             focusRel: relative(selection?.focus ?? 0),
             active: Boolean(selection)
@@ -230,9 +239,21 @@ export async function openNoteDoc(options: {
     presenceSubscription = tallpond!.resource(note.shareId).table('member_presence').select().eq('noteId', note.id).live()
       .on('insert', receivePresence).on('update', receivePresence).on('error', () => {})
     void publishPresence()
+    // The profile normally lands a round trip after the document opens. Republish
+    // the moment it does, so collaborators see a name within the second rather
+    // than at the next heartbeat. Sync state changes on every pending-count tick,
+    // so only an actual change of identity is worth a write.
+    let publishedUserId = identity().userId
+    const unsubscribeIdentity = subscribeSyncState(() => {
+      const { userId } = identity()
+      if (userId === publishedUserId) return
+      publishedUserId = userId
+      void publishPresence()
+    })
     const heartbeat = window.setInterval(() => void publishPresence(), 10000)
     const expiry = window.setInterval(emitPresence, 5000)
     presenceCleanup = () => {
+      unsubscribeIdentity()
       window.clearInterval(heartbeat)
       window.clearInterval(expiry)
       if (options.writable && navigator.onLine) {

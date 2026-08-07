@@ -252,13 +252,34 @@ const settle = async () => {
 // that was, in the end, wrong.
 const QUIET_RETRIES = 1
 
+// A 401 that reaches us has already survived the SDK's own refresh-and-retry, so
+// it usually is a real expiry — but not always. A refresh that lost a race, or
+// one that failed against a gateway having a bad minute, arrives looking exactly
+// the same, and latching on it costs the user a full trip through the identity
+// provider for a session that was never actually dead. So ask the one question
+// that separates them before latching. Single-flighted: a burst of 401s from a
+// sync in flight is one verdict, not one probe each.
+let authCheck: Promise<void> | null = null
+function verifyThenLatch(error: unknown) {
+  authCheck ??= (async () => {
+    if (await confirmSignedOut()) setState({ phase: 'auth-required', connected: false, error: describeError(error) })
+    // Still signed in: the 401 was noise. Treat it as any other transient
+    // failure — quiet retry, and the outbox still holds the work.
+    else scheduleRetry(error)
+  })().catch(() => {}).finally(() => { authCheck = null })
+}
+
 function reportFailure(error: unknown) {
-  // An expired session is never transient — no amount of retrying fixes it, and
-  // it always needs the user.
   if (isAuthError(error)) {
-    setState({ phase: 'auth-required', connected: false, error: describeError(error) })
+    // A latch already in place is the answer; re-probing on every subsequent
+    // request would just hammer the gateway with the user already prompted.
+    if (state.phase !== 'auth-required') verifyThenLatch(error)
     return
   }
+  scheduleRetry(error)
+}
+
+function scheduleRetry(error: unknown) {
   if (!navigator.onLine) { setState({ phase: 'offline' }); return }
   // A retry already queued means this is the same outage reported a second time
   // by another request that was in flight when it hit — one blip, not a new

@@ -60,13 +60,56 @@ type LandingStatus = 'checking' | 'sign-in' | 'invited' | 'join' | 'request' | '
 type Landing = { note: string; resource: string | null; status: LandingStatus; name: string | null }
 const EMPTY_NOTES: Note[] = []
 
+// The stored document IS this Markdown string, so serialization has to be a
+// pinned, stable function of the content — never a library default that a
+// dependency bump can move under us. Any drift here is not cosmetic: the editor
+// re-exports the whole document, so a changed marker rewrites every line of
+// every page, which the CRDT has to merge as a genuine edit.
+//
+// `-` bullets and `_` rules are chosen to match what people type and paste, so
+// the stored text stays the Markdown a user would have written by hand. The two
+// markers stay distinct on purpose: `---` under a paragraph is a Setext heading,
+// not a rule.
+const MARKDOWN_OPTIONS = {
+  bullet: '-', bulletOrdered: '.', listItemIndent: 'one',
+  emphasis: '_', strong: '*', rule: '_',
+  fence: '`', fences: true, quote: '"',
+  incrementListMarker: true, resourceLink: false, setext: false
+} as const
+
 function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean }) {
   const editor = useRef<MDXEditorMethods>(null)
   const container = useRef<HTMLDivElement>(null)
   const current = useRef(markdown)
+  // Loading markdown INTO the editor must never come back out as an edit. The
+  // editor re-serializes whatever it is given and its output is not always the
+  // input byte for byte — bullet markers, escaping, and the blank-line markers
+  // this app inserts all get rewritten. Pushing that back into the CRDT makes
+  // each client restate text the other authored, and two clients doing it at
+  // once is resolved by Yjs the only way it can be: both insertions survive, so
+  // the body appears twice. A rewrite that spans a block boundary corrupts the
+  // structure instead — a leading list item comes back as escaped paragraph
+  // text. Nothing is lost by dropping these: the doc already holds the text the
+  // editor was handed, and the next real keystroke exports the whole document.
+  //
+  // MDXEditor mutes onChange for its own import, but persistentBlankLinesPlugin
+  // normalizes in a microtask right after it, once that mute has been lifted —
+  // so the hold has to outlive the task rather than the import call.
+  const applying = useRef(true)
+  const release = useRef<number | undefined>(undefined)
+  const holdApplying = () => {
+    applying.current = true
+    window.clearTimeout(release.current)
+    release.current = window.setTimeout(() => { applying.current = false }, 0)
+  }
+  useEffect(() => {
+    holdApplying()
+    return () => window.clearTimeout(release.current)
+  }, [])
   useEffect(() => {
     if (markdown === current.current) return
     current.current = markdown
+    holdApplying()
     const root = container.current?.querySelector<HTMLElement>('.motion-md-content')
     const selection = window.getSelection()
     const selected = root && selection?.anchorNode && selection.focusNode && root.contains(selection.anchorNode) && root.contains(selection.focusNode)
@@ -126,7 +169,7 @@ function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: {
       nextSelection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
     }))
   }, [markdown])
-  return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" onChange={(value, initial) => { current.current = value; if (!initial) onChange(value) }} plugins={[
+  return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value, initial) => { current.current = value; if (!initial && !applying.current) onChange(value) }} plugins={[
     headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
