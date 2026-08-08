@@ -46,10 +46,34 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // under our position:fixed body, so the subtraction stays correct.
     const layoutH = () => document.documentElement.clientHeight
 
+    // An invisible twin of the debug overlay below, and it is here for exactly
+    // that reason. The trigger menu (`[[` / `/`) provoked an iOS
+    // application-container pan on the first touch-scroll while it was open —
+    // and it never happened with the debug overlay up, on any browser, while it
+    // reproduced immediately the moment the overlay was gone. So the thing that
+    // suppresses the pan is the mere presence of a position:fixed,
+    // pointer-events:none child of <body>, spanning the top of the viewport,
+    // from the first keyboard reveal onward.
+    //
+    // The mechanism is NOT understood — it is presumably a compositing or
+    // overscroll side effect of that element. What is established is the
+    // dependency, so this ships it deliberately rather than leaving it as an
+    // accident of a debug flag. It faithfully mirrors the overlay's geometry
+    // (an empty div would collapse to zero height, and height may well be part
+    // of what matters); the properties that are actually load-bearing have not
+    // been bisected yet.
+    const panPin = document.createElement('div')
+    panPin.setAttribute('aria-hidden', 'true')
+    panPin.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:0;height:40vh;overflow:hidden;pointer-events:none;background:transparent'
+    document.body.appendChild(panPin)
+
     // Temporary on-screen instrumentation. Open the app with ?debug to see a
     // live log of the focus/scroll pipeline. Remove once the land-before-
     // keyboard behavior is nailed down.
-    const DEBUG = /[?&]debug/.test(location.search)
+    // `?debug` is unreachable once the app is installed — a PWA always launches
+    // at its fixed start_url — so the flag is also readable from storage, set by
+    // the seven-tap gesture on the sidebar title (see App).
+    const DEBUG = /[?&]debug/.test(location.search) || localStorage.getItem('motion-debug') === '1'
     let debugEl: HTMLElement | null = null
     const debug = (line: string) => {
       if (!DEBUG) return
@@ -712,6 +736,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     }
 
     return () => {
+      panPin.remove()
       window.removeEventListener('scroll', onAnyScroll, true)
       main.removeEventListener('touchstart', onTouchStart)
       main.removeEventListener('touchmove', onTouchMove)

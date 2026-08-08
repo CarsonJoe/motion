@@ -17,7 +17,18 @@ import { PAGE_LINK_SCHEME } from './links'
 // module singletons). Pills subscribe so a title edit anywhere repaints them.
 // ---------------------------------------------------------------------------
 
-export type PageOption = { id: string; title: string }
+export type PageOption = {
+  id: string
+  title: string
+  // What kind of document this is. Only pages exist today, but the picker keys
+  // the row's icon off this, so a new document type is a new icon rather than a
+  // text label bolted onto every row.
+  kind: 'page'
+  // The shortest location hint that tells this result apart from the other
+  // shown results sharing its title. Absent — the common case, since most
+  // titles are unique — so ordinary rows stay quiet.
+  context?: string
+}
 // A link target resolves to a live title, a known tombstone, or nothing this
 // viewer can see. "private" (absent from the store) is deliberately distinct
 // from "deleted" (present with a tombstone): a shared page can link to a page

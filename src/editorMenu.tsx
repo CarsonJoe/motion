@@ -9,7 +9,7 @@ import { $findMatchingParent } from '@lexical/utils'
 import { HIGHLIGHT, registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
 import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
 import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, rootEditor$, useCellValue, usePublisher } from '@mdxeditor/editor'
-import { $createPageLinkNode, $isPageLinkNode, usePageLinkServices } from './pageLink'
+import { $createPageLinkNode, $isPageLinkNode, usePageLinkServices, type PageOption } from './pageLink'
 
 // A single trigger-driven command menu, shared by `[[` page links and `/` slash
 // commands. The important property is that it is *stateful*: a session opens on
@@ -23,8 +23,14 @@ type MenuItem = {
   key: string
   label: string
   detail?: string
+  // Tooltip, for rows whose label is abbreviated to fit.
+  hint?: string
   keywords?: string
   icon: IconName
+  // Pinned items sit in a fixed action bar below the scrolling result list
+  // instead of competing with it for space. They must be listed last, so that
+  // an item's index — which is what the keyboard drives — stays contiguous.
+  pinned?: boolean
   // Runs after the engine has deleted the trigger text and put the caret where
   // it began. May insert nodes or publish a block command.
   run: (editor: LexicalEditor) => void
@@ -36,7 +42,7 @@ type Provider = {
   // offset of the trigger's first character within the anchor text node.
   match: (before: string) => { query: string; start: number } | null
   items: (query: string) => MenuItem[]
-  emptyLabel: string
+  emptyLabel: (query: string) => string
 }
 
 type Session = { providerId: string; anchorKey: string; anchorStart: number; query: string; left: number; top: number; bottom: number }
@@ -44,6 +50,9 @@ type Session = { providerId: string; anchorKey: string; anchorStart: number; que
 const PAGE_TRIGGER = /\[\[([^[\]\n]*)$/
 const SLASH_TRIGGER = /(?:^|\s)\/([^/\s]*)$/
 const isUrl = (value: string) => /^https?:\/\/\S+$/i.test(value)
+// A document's type is shown as its icon — the same glyph its link pill uses
+// once inserted. New document types add an entry here, not a row label.
+const DOC_ICONS: Record<PageOption['kind'], IconName> = { page: 'page' }
 
 const caretRect = () => {
   const selection = window.getSelection()
@@ -51,6 +60,46 @@ const caretRect = () => {
   const rect = selection.getRangeAt(0).getBoundingClientRect()
   if (!rect.width && !rect.height && !rect.top && !rect.left) return null
   return rect
+}
+
+// --- placement --------------------------------------------------------------
+// The menu never covers the line being typed: it takes whichever side of the
+// caret has more room and scrolls inside it. On mobile that room is small and
+// hard-won, so the band is measured rather than assumed — window.innerHeight is
+// useless here (in a standalone iOS PWA it shrinks when the keyboard opens,
+// while position:fixed stays anchored to the *layout* viewport, so a `bottom`
+// computed from it lands the menu over the caret). The visual viewport gives
+// the part not under the keyboard, and the floating mobile toolbar rides inside
+// that, so it is subtracted too.
+
+const MENU_GAP = 6
+const MENU_MARGIN = 8
+const MENU_MAX_HEIGHT = 320
+// One result plus the action bar. Below this the band is unusable and we would
+// rather overlap a little than render a sliver.
+const MENU_MIN_HEIGHT = 108
+
+function placeMenu(caret: { left: number; top: number; bottom: number }): React.CSSProperties {
+  const layoutWidth = document.documentElement.clientWidth
+  const layoutHeight = document.documentElement.clientHeight
+  const viewport = window.visualViewport
+  const viewTop = viewport ? viewport.offsetTop : 0
+  let viewBottom = viewport ? viewport.offsetTop + viewport.height : layoutHeight
+  const toolbar = document.querySelector('.editor-toolbar.kb-visible')
+  if (toolbar) {
+    const rect = toolbar.getBoundingClientRect()
+    if (rect.top > viewTop && rect.top < viewBottom) viewBottom = rect.top
+  }
+
+  const width = Math.min(320, layoutWidth - MENU_MARGIN * 2)
+  const left = Math.min(Math.max(MENU_MARGIN, caret.left), layoutWidth - width - MENU_MARGIN)
+  const above = caret.top - MENU_GAP - viewTop
+  const below = viewBottom - caret.bottom - MENU_GAP
+  const openUp = above >= below
+  const maxHeight = Math.max(MENU_MIN_HEIGHT, Math.min(MENU_MAX_HEIGHT, openUp ? above : below))
+  return openUp
+    ? { left, width, maxHeight, bottom: layoutHeight - caret.top + MENU_GAP }
+    : { left, width, maxHeight, top: caret.bottom + MENU_GAP }
 }
 
 const insertPageLink = (editor: LexicalEditor, id: string) =>
@@ -86,21 +135,25 @@ function EditorMenu() {
 
     const page: Provider = {
       id: 'page',
-      emptyLabel: 'Type a name to link or create a page',
+      emptyLabel: (query) => query.trim() ? 'No pages match' : 'Type a name to link or create a page',
       match: (before) => { const m = PAGE_TRIGGER.exec(before); return m ? { query: m[1], start: before.length - m[0].length } : null },
       items: (query) => {
         const q = query.trim()
+        // The document's own type carries the row: the icon is the same glyph
+        // the link pill shows once inserted, so no row needs to say "Page".
         const items: MenuItem[] = (services?.searchPages(query) ?? []).map((option) => ({
-          key: `p:${option.id}`, label: option.title || 'Untitled', detail: 'Page', icon: 'page',
+          key: `p:${option.id}`, label: option.title || 'Untitled', detail: option.context, hint: option.context, icon: DOC_ICONS[option.kind],
           run: (editor) => insertPageLink(editor, option.id)
         }))
         if (isUrl(q)) items.unshift({
           key: 'url', label: q, detail: 'External link', icon: 'link',
           run: (editor) => editor.update(() => { const link = $createLinkNode(q); link.append($createTextNode(q)); $insertNodes([link, $createTextNode(' ')]) })
         })
+        // Pinned so creating stays one click away even when the list is full of
+        // matches — a name already in use is a normal thing to want again.
         if (q) {
-          items.push({ key: 'new-sub', label: `New subpage “${q}”`, detail: 'Nested here', icon: 'plus', run: (editor) => { void services?.createPage(q, true).then((id) => { if (id) insertPageLink(editor, id) }) } })
-          items.push({ key: 'new-page', label: `New page “${q}”`, detail: 'Top level', icon: 'plus', run: (editor) => { void services?.createPage(q, false).then((id) => { if (id) insertPageLink(editor, id) }) } })
+          items.push({ key: 'new-sub', label: 'New subpage', hint: `Create “${q}” nested under this page`, icon: 'plus', pinned: true, run: (editor) => { void services?.createPage(q, true).then((id) => { if (id) insertPageLink(editor, id) }) } })
+          items.push({ key: 'new-page', label: 'New page', hint: `Create “${q}” at the top level`, icon: 'plus', pinned: true, run: (editor) => { void services?.createPage(q, false).then((id) => { if (id) insertPageLink(editor, id) }) } })
         }
         return items
       }
@@ -108,7 +161,7 @@ function EditorMenu() {
 
     const slash: Provider = {
       id: 'slash',
-      emptyLabel: 'No matching blocks',
+      emptyLabel: () => 'No matching blocks',
       match: (before) => { const m = SLASH_TRIGGER.exec(before); return m ? { query: m[1], start: before.length - m[1].length - 1 } : null },
       items: (query) => {
         const q = query.trim().toLowerCase()
@@ -125,8 +178,18 @@ function EditorMenu() {
   useEffect(() => { setHighlight(0) }, [session?.providerId, session?.query])
 
   // Keep the highlighted option scrolled into view during arrow-key navigation.
+  // Done by hand rather than with scrollIntoView: that walks *every* scrollable
+  // ancestor, and from inside a position:fixed portal the walk runs past the
+  // menu and reaches the document — which, with the mobile keyboard up, pans the
+  // whole app. This can only ever move the list.
   useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-index="${highlight}"]`)?.scrollIntoView({ block: 'nearest' })
+    const list = listRef.current
+    const option = list?.querySelector<HTMLElement>(`[data-index="${highlight}"]`)
+    if (!list || !option) return
+    const bounds = list.getBoundingClientRect()
+    const box = option.getBoundingClientRect()
+    if (box.top < bounds.top) list.scrollTop -= bounds.top - box.top
+    else if (box.bottom > bounds.bottom) list.scrollTop += box.bottom - bounds.bottom
   }, [highlight])
 
   // Latest values for the imperative command handlers, without re-registering.
@@ -293,6 +356,75 @@ function EditorMenu() {
     return () => window.removeEventListener('cut', onCut, true)
   }, [editor])
 
+  // Re-anchor while the menu is open. On mobile the ground moves under it: the
+  // keyboard opens (shrinking the visual viewport) and useMobileKeyboard then
+  // scrolls the caret's line up into the safe zone, both *after* the session
+  // opened. Typing deliberately does not re-anchor — the menu should stay put at
+  // the `[[` it belongs to.
+  const menuOpen = Boolean(session)
+  useEffect(() => {
+    if (!menuOpen) return
+    const reanchor = () => setSession((prev) => {
+      if (!prev) return prev
+      const rect = caretRect()
+      // No usable caret rect: still return a fresh object, so the placement is
+      // recomputed against the new viewport.
+      if (!rect) return { ...prev }
+      return { ...prev, left: rect.left, top: rect.top, bottom: rect.bottom }
+    })
+    const viewport = window.visualViewport
+    viewport?.addEventListener('resize', reanchor)
+    viewport?.addEventListener('scroll', reanchor)
+    // Capture: the editor's scroller is <main>, not the window.
+    window.addEventListener('scroll', reanchor, true)
+    return () => {
+      viewport?.removeEventListener('resize', reanchor)
+      viewport?.removeEventListener('scroll', reanchor)
+      window.removeEventListener('scroll', reanchor, true)
+    }
+  }, [menuOpen])
+
+  // A drag that starts *on the menu* must move nothing. The menu is portaled to
+  // <body>, outside the app's only scroller, so such a drag finds nothing
+  // scrollable in its chain and iOS pans the whole application container
+  // instead. Drags that start outside are deliberately left completely alone —
+  // the pointerdown has already dismissed the menu, so by the time they move,
+  // the app is in exactly the state it is in with no menu open and scrolls the
+  // way it always does.
+  //
+  // The lifetime still matters: dismissal happens on pointerdown, so a guard
+  // mounted only while the session is open would be torn down by the very
+  // gesture it guards. This stays mounted for the editor's life and commits to a
+  // decision once, at touchstart, from a ref. The one gesture let through is a
+  // real scroll of the result list, and only while that list actually overflows:
+  // an element with nothing to scroll chains to the document just the same,
+  // whatever overscroll-behavior claims.
+  const openRef = useRef(false)
+  openRef.current = menuOpen
+
+  useEffect(() => {
+    let swallow = false
+    const onStart = (event: TouchEvent) => {
+      const target = event.target
+      const onMenu = target instanceof Element && Boolean(target.closest('.editor-menu'))
+      if (!openRef.current || !onMenu) { swallow = false; return }
+      const list = listRef.current
+      swallow = !(list && list.scrollHeight > list.clientHeight + 1 && list.contains(target))
+    }
+    const onMove = (event: TouchEvent) => { if (swallow && event.cancelable) event.preventDefault() }
+    const onEnd = () => { swallow = false }
+    window.addEventListener('touchstart', onStart, { capture: true, passive: true })
+    window.addEventListener('touchmove', onMove, { capture: true, passive: false })
+    window.addEventListener('touchend', onEnd, true)
+    window.addEventListener('touchcancel', onEnd, true)
+    return () => {
+      window.removeEventListener('touchstart', onStart, true)
+      window.removeEventListener('touchmove', onMove, true)
+      window.removeEventListener('touchend', onEnd, true)
+      window.removeEventListener('touchcancel', onEnd, true)
+    }
+  }, [])
+
   // A click anywhere outside the menu dismisses it, leaving the trigger as prose.
   useEffect(() => {
     if (!session) return
@@ -302,32 +434,43 @@ function EditorMenu() {
   }, [session])
 
   if (!session) return null
-  const width = 300
-  const left = Math.min(session.left, window.innerWidth - width - 12)
-  const openUp = window.innerHeight - session.bottom < 300
-  const style: React.CSSProperties = openUp
-    ? { left, bottom: window.innerHeight - session.top + 6, width }
-    : { left, top: session.bottom + 6, width }
+  const style = placeMenu(session)
+  // Pinned items are always last, so splitting here preserves each item's index
+  // — the single source of truth for highlighting and completion.
+  const pinnedFrom = items.findIndex((item) => item.pinned)
+  const results = pinnedFrom === -1 ? items : items.slice(0, pinnedFrom)
+  const actions = pinnedFrom === -1 ? [] : items.slice(pinnedFrom)
+  const row = (item: MenuItem, index: number) => (
+    <button
+      key={item.key}
+      type="button"
+      role="option"
+      data-index={index}
+      title={item.hint}
+      aria-selected={index === highlight}
+      className={`editor-menu-item${index === highlight ? ' active' : ''}`}
+      onPointerEnter={(event) => { if (event.pointerType === 'mouse') setHighlight(index) }}
+      onClick={() => completeRef.current(index)}
+    >
+      <span className="editor-menu-icon">{ICONS[item.icon]}</span>
+      <span className="editor-menu-label">{item.label}</span>
+      {item.detail && <span className="editor-menu-detail">{item.detail}</span>}
+    </button>
+  )
   return createPortal(
-    <div ref={listRef} className="editor-menu" style={style} onMouseDown={(event) => event.preventDefault()} role="listbox">
-      {items.length === 0
-        ? <div className="editor-menu-empty">{provider?.emptyLabel}</div>
-        : items.map((item, index) => (
-          <button
-            key={item.key}
-            type="button"
-            role="option"
-            data-index={index}
-            aria-selected={index === highlight}
-            className={`editor-menu-item${index === highlight ? ' active' : ''}`}
-            onPointerEnter={(event) => { if (event.pointerType === 'mouse') setHighlight(index) }}
-            onClick={() => completeRef.current(index)}
-          >
-            <span className="editor-menu-icon">{ICONS[item.icon]}</span>
-            <span className="editor-menu-label">{item.label}</span>
-            {item.detail && <span className="editor-menu-detail">{item.detail}</span>}
-          </button>
-        ))}
+    <div className="editor-menu" style={style} onMouseDown={(event) => event.preventDefault()} role="listbox">
+      {/* Nothing matched but you can still create: the actions say that on their
+          own, so the list gets out of the way rather than narrating the void. */}
+      {(results.length > 0 || actions.length === 0) && (
+        <div ref={listRef} className="editor-menu-list">
+          {results.length === 0
+            ? <div className="editor-menu-empty">{provider?.emptyLabel(session.query)}</div>
+            : results.map((item, index) => row(item, index))}
+        </div>
+      )}
+      {actions.length > 0 && (
+        <div className="editor-menu-actions">{actions.map((item, offset) => row(item, pinnedFrom + offset))}</div>
+      )}
     </div>,
     document.body
   )
