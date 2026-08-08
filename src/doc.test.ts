@@ -59,6 +59,88 @@ describe('offline document durability', () => {
     expect(ops.some((op) => op.kind === 'update' && op.noteId === target.id)).toBe(true)
   })
 
+  // The app's ACTUAL navigation sequence. Every existing test above awaits
+  // `flushed()` before closing, but App's effect cleanup does not — it calls
+  // close() synchronously and reopens as soon as the user comes back. Reported
+  // repro: type into a blank page offline, go to the mobile sidebar, come back,
+  // and the text is gone.
+  it('survives a close/reopen that does NOT await the persist chain', async () => {
+    const store = await openLocalStore()
+    const target = note()
+
+    const first = await openNoteDoc({
+      note: target, store, connected: false, writable: true,
+      onText: () => {}, onPresence: () => {}, onTransport: () => {},
+      onError: (error) => { throw error }
+    })
+    first.setText('typed offline')
+    // No `await first.flushed()` here — that is the whole point.
+    first.close()
+
+    const texts: string[] = []
+    const second = await openNoteDoc({
+      note: target, store, connected: false, writable: true,
+      onText: (value) => texts.push(value),
+      onPresence: () => {}, onTransport: () => {},
+      onError: (error) => { throw error }
+    })
+    second.close()
+    expect(texts[0]).toBe('typed offline')
+  })
+
+  // The reopen now waits on the previous controller's writes, which means a
+  // FAILED write must not be able to wedge the page shut. Settled is enough.
+  it('still opens when a previous write rejected', async () => {
+    const store = await openLocalStore()
+    const target = note()
+    const failing = { ...store, putDocState: async () => { throw new Error('disk full') } }
+
+    const first = await openNoteDoc({
+      note: target, store: failing, connected: false, writable: true,
+      onText: () => {}, onPresence: () => {}, onTransport: () => {},
+      onError: () => { throw new Error('onError itself throws') }
+    })
+    first.setText('doomed')
+    first.close()
+
+    const texts: string[] = []
+    const second = await openNoteDoc({
+      note: target, store, connected: false, writable: true,
+      onText: (value) => texts.push(value),
+      onPresence: () => {}, onTransport: () => {},
+      onError: () => {}
+    })
+    second.close()
+    expect(texts).toHaveLength(1)
+  })
+
+  // The reopen waits on the previous controller's writes. A write that never
+  // settles (a blocked IndexedDB transaction) must not turn that wait into a
+  // permanently blank page — the wait is bounded and gives up.
+  it('still opens when a previous write never settles', async () => {
+    const store = await openLocalStore()
+    const target = note()
+    const wedged = { ...store, putDocState: () => new Promise<void>(() => {}) }
+
+    const first = await openNoteDoc({
+      note: target, store: wedged, connected: false, writable: true,
+      onText: () => {}, onPresence: () => {}, onTransport: () => {},
+      onError: () => {}
+    })
+    first.setText('never lands')
+    first.close()
+
+    const started = Date.now()
+    const second = await openNoteDoc({
+      note: target, store, connected: false, writable: true,
+      onText: () => {}, onPresence: () => {}, onTransport: () => {},
+      onError: () => {}
+    })
+    second.close()
+    // Opened at all, and by way of the deadline rather than a hung await.
+    expect(Date.now() - started).toBeLessThan(5000)
+  }, 10000)
+
   it('accumulates successive edits as mergeable updates in the outbox', async () => {
     const store = await openLocalStore()
     const target = note()

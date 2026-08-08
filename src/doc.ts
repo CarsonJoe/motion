@@ -52,6 +52,29 @@ async function fetchAllUpdates(shareId: string, noteId: string) {
   return rows
 }
 
+// How long a reopen will wait for the previous controller's writes. Long enough
+// that a healthy write (single-digit milliseconds) always wins the race, short
+// enough that a wedged one costs a stale read rather than an unusable page.
+const PERSIST_WAIT_MS = 2000
+
+// Resolves when `work` settles or the deadline passes, whichever comes first,
+// and never rejects. The timer is always cleared, so a fast write does not leave
+// one pending for the full deadline.
+function settleWithin(work: Promise<void> | undefined, ms: number) {
+  if (!work) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    void work.catch(() => {}).then(() => { clearTimeout(timer); resolve() })
+  })
+}
+
+// Outstanding local writes per note, keyed by note id and shared across every
+// controller ever opened for it. Persistence is fire-and-forget from the UI's
+// point of view — nothing awaits close() — so this map is the only thing that
+// can tell a reopening controller that the previous one still owes the database
+// an edit. Entries remove themselves once settled.
+const pendingWrites = new Map<string, Promise<void>>()
+
 export async function openNoteDoc(options: {
   note: Note
   store: LocalStore
@@ -67,6 +90,21 @@ export async function openNoteDoc(options: {
   const text = doc.getText('content')
   let closed = false
 
+  // Writes still in flight from a PREVIOUS controller for this same note have
+  // to land before we read, or reopening loses whatever they were carrying.
+  // Closing does not await them — App's effect cleanup is synchronous and
+  // cannot — so navigating away and straight back (the mobile sidebar, most
+  // obviously) used to race its own persistence and hydrate from the state
+  // before the edit. What came back was a blank page, and the next keystroke
+  // then persisted THAT over the good state, making the loss permanent.
+  // Bounded, and swallowed, deliberately. A previous controller's write may
+  // reject (its `onError` is free to throw) or — an IndexedDB transaction
+  // blocked by another tab is the realistic way — never settle at all. Neither
+  // may be allowed to stop the page OPENING: waiting forever here would leave a
+  // permanently blank document, which is a worse failure than the stale read
+  // this wait exists to prevent. Settled-or-timed-out is enough.
+  await settleWithin(pendingWrites.get(note.id), PERSIST_WAIT_MS)
+
   const saved = await store.getDocState(note.id)
   if (saved) Y.applyUpdate(doc, fromBase64(saved), REMOTE_ORIGIN)
 
@@ -81,20 +119,38 @@ export async function openNoteDoc(options: {
   // least what the outbox is about to send, so a crash between the two writes
   // loses nothing locally — hydration heals the server copy instead. State is
   // encoded synchronously at event time so a close can never drop the tail.
-  let persistChain = Promise.resolve()
+  //
+  // The chain is continued from `pendingWrites`, not started fresh, so it is
+  // serialized per NOTE rather than per controller. Two controllers for one
+  // note exist whenever the user reopens a page (and briefly whenever the doc
+  // effect re-runs on a connection change); giving each its own chain let their
+  // writes interleave and let a reopen read behind the one before it.
+  let persistChain = pendingWrites.get(note.id) ?? Promise.resolve()
+  const track = (next: Promise<void>) => {
+    persistChain = next
+    pendingWrites.set(note.id, next)
+    // Self-cleaning, so the map holds only genuinely outstanding work and a
+    // long-lived session does not accumulate an entry per note ever opened.
+    // `.catch` before `.finally` so a rejected chain cleans up without also
+    // surfacing as an unhandled rejection; the real error already went to
+    // `onError` at the point it happened.
+    void next.catch(() => {}).finally(() => { if (pendingWrites.get(note.id) === next) pendingWrites.delete(note.id) })
+    return next
+  }
   const persistState = () => {
-    const state = toBase64(Y.encodeStateAsUpdate(doc))
-    persistChain = persistChain.then(() => store.putDocState(note.id, state)).catch(options.onError)
-    return persistChain
+    // Encoded HERE, synchronously at event time — never inside the `then`,
+    // where the doc may already have been destroyed by a close.
+    const encoded = toBase64(Y.encodeStateAsUpdate(doc))
+    return track(persistChain.then(() => store.putDocState(note.id, encoded)).catch(options.onError))
   }
 
   const documentChanged = (update: Uint8Array, origin: unknown) => {
     if (origin !== LOCAL_ORIGIN) { void persistState(); return }
     const payload = toBase64(update)
-    persistChain = persistState().then(async () => {
+    track(persistState().then(async () => {
       await store.enqueueUpdate(note.id, note.shareId, payload)
       noteChanged()
-    }).catch(options.onError)
+    }).catch(options.onError))
   }
   doc.on('update', documentChanged)
 

@@ -11,7 +11,7 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     // Browsers check this registration on each app load. Do not force a reload
     // on controller changes: it can turn a worker update into a reload loop.
-    void navigator.serviceWorker.register('/sw.js?v=7', { updateViaCache: 'none' })
+    void navigator.serviceWorker.register('/sw.js?v=8', { updateViaCache: 'none' })
   })
 }
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>)
