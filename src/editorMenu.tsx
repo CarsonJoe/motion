@@ -9,7 +9,8 @@ import { $findMatchingParent } from '@lexical/utils'
 import { HIGHLIGHT, registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
 import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
 import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, rootEditor$, useCellValue, usePublisher } from '@mdxeditor/editor'
-import { $createPageLinkNode, $isPageLinkNode, usePageLinkServices, type PageOption } from './pageLink'
+import { $createPageLinkNode, $isPageLinkNode } from './pageLink'
+import { usePageLinkServices, type PageOption } from './pageLinkServices'
 
 // A single trigger-driven command menu, shared by `[[` page links and `/` slash
 // commands. The important property is that it is *stateful*: a session opens on

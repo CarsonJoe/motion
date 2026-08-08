@@ -1,7 +1,8 @@
-import { useSyncExternalStore, type ReactNode } from 'react'
+import { type ReactNode } from 'react'
 import { DecoratorNode, $getSelection, $isRangeSelection, type EditorConfig, type LexicalEditor, type LexicalNode, type NodeKey, type SerializedLexicalNode } from 'lexical'
 import { realmPlugin, addImportVisitor$, addLexicalNode$, addExportVisitor$, activeEditor$, ButtonWithTooltip, iconComponentFor$, useCellValue } from '@mdxeditor/editor'
 import { PAGE_LINK_SCHEME } from './links'
+import { getPageLinkServices, usePageLinkServices } from './pageLinkServices'
 
 // Internal page links are stored as ordinary markdown links with a `motion:`
 // scheme — `[Cached Title](motion:<id>)`. The scheme keeps them round-tripping
@@ -13,56 +14,14 @@ import { PAGE_LINK_SCHEME } from './links'
 // ---------------------------------------------------------------------------
 // Services bridge. The editor renders in its own Lexical realm, deep inside
 // MDXEditor; rather than thread React context through decorator portals, the
-// app publishes a small service object here (matching how sync/local expose
-// module singletons). Pills subscribe so a title edit anywhere repaints them.
+// app publishes a small service object (matching how sync/local expose module
+// singletons). Pills subscribe so a title edit anywhere repaints them. The
+// registry itself lives in ./pageLinkServices, which imports no editor code, so
+// App can publish services without pulling the editor into the entry bundle.
 // ---------------------------------------------------------------------------
 
-export type PageOption = {
-  id: string
-  title: string
-  // What kind of document this is. Only pages exist today, but the picker keys
-  // the row's icon off this, so a new document type is a new icon rather than a
-  // text label bolted onto every row.
-  kind: 'page'
-  // The shortest location hint that tells this result apart from the other
-  // shown results sharing its title. Absent — the common case, since most
-  // titles are unique — so ordinary rows stay quiet.
-  context?: string
-}
-// A link target resolves to a live title, a known tombstone, or nothing this
-// viewer can see. "private" (absent from the store) is deliberately distinct
-// from "deleted" (present with a tombstone): a shared page can link to a page
-// the author kept private, and calling that "deleted" would invite cleanup.
-export type PageRefState = { kind: 'ok'; title: string } | { kind: 'deleted' } | { kind: 'private' }
-export type PageLinkServices = {
-  resolveTitle: (id: string) => PageRefState
-  navigate: (id: string) => void
-  // The shareable href for a page, so link pills are real anchors that honor
-  // middle/ctrl-click (open in a new tab).
-  pageHref: (id: string) => string
-  // Candidate pages for the `[[` picker, already filtered and ranked.
-  searchPages: (query: string) => PageOption[]
-  // Creates a page and resolves to its id, or null when not possible (e.g. no
-  // write access). `parent` true nests it under the page being edited.
-  createPage: (title: string, parent: boolean) => Promise<string | null>
-}
-
-let services: PageLinkServices | null = null
-const serviceListeners = new Set<() => void>()
-
-export function setPageLinkServices(next: PageLinkServices | null) {
-  services = next
-  for (const listener of serviceListeners) listener()
-}
-
-export function getPageLinkServices() { return services }
-
-export function usePageLinkServices() {
-  return useSyncExternalStore(
-    (listener) => { serviceListeners.add(listener); return () => serviceListeners.delete(listener) },
-    () => services
-  )
-}
+export { getPageLinkServices, setPageLinkServices, usePageLinkServices } from './pageLinkServices'
+export type { PageLinkServices, PageOption, PageRefState } from './pageLinkServices'
 
 // ---------------------------------------------------------------------------
 // The Lexical node.
@@ -96,7 +55,7 @@ export class PageLinkNode extends DecoratorNode<ReactNode> {
   updateDOM() { return false }
 
   // Plain-text fallback (copy, accessibility trees) shows the live title.
-  getTextContent() { const state = services?.resolveTitle(this.__id); return state?.kind === 'ok' ? state.title : 'page' }
+  getTextContent() { const state = getPageLinkServices()?.resolveTitle(this.__id); return state?.kind === 'ok' ? state.title : 'page' }
 
   decorate(_editor: LexicalEditor, _config: EditorConfig): ReactNode {
     return <PageRef id={this.__id} nodeKey={this.getKey()} />
@@ -179,7 +138,7 @@ const LexicalPageLinkVisitor = {
     actions: { appendToParent: (parent: unknown, node: unknown) => unknown }
   }) => {
     const id = lexicalNode.getId()
-    const state = services?.resolveTitle(id)
+    const state = getPageLinkServices()?.resolveTitle(id)
     const title = state?.kind === 'ok' ? state.title : 'Untitled'
     actions.appendToParent(mdastParent, {
       type: 'link',

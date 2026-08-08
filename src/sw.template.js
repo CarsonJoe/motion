@@ -33,13 +33,31 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE)
     if (event.request.mode === 'navigate') {
-      try {
-        const response = await fetch(event.request)
-        if (response.ok) await cache.put('/index.html', response.clone())
-        return response
-      } catch {
-        return (await cache.match('/index.html')) || (await cache.match('/')) || new Response('Offline', { status: 503 })
+      // Cache-first, refreshed in the background. Network-first would be more
+      // obviously "correct", but it puts a round trip in front of every single
+      // launch — including an installed PWA opening on a slow or flaky
+      // connection, where the whole app sits blank waiting on an HTML file it
+      // already has. Serving the cached shell makes launch independent of the
+      // network, which is the point of installing it.
+      //
+      // The staleness this trades for is bounded and small: the document is a
+      // near-empty shell whose only real content is the hashed asset links, the
+      // refetch below updates it for the next launch, and a genuinely new build
+      // ships a new worker whose install fetches everything with cache:reload
+      // anyway. Worst case is one launch on the previous build.
+      const revalidate = fetch(event.request)
+        .then(async (response) => {
+          if (response.ok) await cache.put('/index.html', response.clone())
+          return response
+        })
+        .catch(() => null)
+      const cached = (await cache.match('/index.html')) || (await cache.match('/'))
+      if (cached) {
+        // Keep the worker alive for the refetch, which is now nobody's response.
+        event.waitUntil(revalidate)
+        return cached
       }
+      return (await revalidate) || new Response('Offline', { status: 503 })
     }
 
     const cached = await cache.match(event.request)

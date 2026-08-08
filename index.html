@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#111">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
@@ -26,7 +26,9 @@
     <title>Motion</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- The stylesheet is render-blocking but still a separate request; this is
+         the one frame before it lands, and without it that frame is white. -->
+    <div id="root" style="background:#111"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -1,0 +1,21 @@
+/* MDXEditor's own stylesheet, pulled into a cascade layer.
+ *
+ * It used to be imported from main.tsx immediately BEFORE styles.css, so our
+ * rules beat it purely by coming later in the file order. Splitting the editor
+ * into its own chunk broke that: its stylesheet now loads after the entry
+ * stylesheet, so for every same-specificity selector the vendor rule started
+ * winning — which is what flattened the document text (font size, line height,
+ * blockquote, code, table all come back at MDXEditor's defaults).
+ *
+ * A layer fixes it independent of load order: unlayered author styles always
+ * beat layered ones, so all of styles.css outranks everything in here no matter
+ * which stylesheet the browser happens to parse first. That is a stronger
+ * guarantee than the original import order, which was only ever correct by
+ * accident of both files being in one bundle.
+ *
+ * The one asymmetry to know about: for `!important` declarations layer order is
+ * REVERSED, so a vendor `!important` would outrank ours. MDXEditor ships four
+ * (cm-scroller padding, subscript vertical-align, and two opacity rules) and
+ * none touch a property we mark important, so nothing changes hands here.
+ */
+@import '@mdxeditor/editor/style.css' layer(vendor);

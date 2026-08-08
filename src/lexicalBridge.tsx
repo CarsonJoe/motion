@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { $getNearestNodeFromDOMNode, $getRoot, $isElementNode, $isTextNode, type LexicalEditor } from 'lexical'
 import { addComposerChild$, realmPlugin, rootEditor$, useCellValue } from '@mdxeditor/editor'
+import { registerEditorAdapter } from './editorAdapter'
 
 // Exposes the raw Lexical editor to the framework-agnostic mobile-keyboard
 // engine, and implements caret placement + focus THROUGH Lexical's API rather
@@ -91,6 +92,10 @@ export const lexicalAdapter = {
     return !!el && el.contains(document.activeElement)
   },
 }
+
+// Registered on import rather than on mount: this module only evaluates when
+// the editor chunk loads, and until then the engine sees the inert proxy.
+registerEditorAdapter(lexicalAdapter)
 
 export const lexicalBridgePlugin = realmPlugin({
   init(realm) { realm.pubIn({ [addComposerChild$]: LexicalBridge }) }

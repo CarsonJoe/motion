@@ -1,19 +1,60 @@
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
-import { BoldItalicUnderlineToggles, headingsPlugin, HighlightToggle, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
-import { BlockTypeMenu } from './blockTypeMenu'
 import { moveBlockedBy, openLocalStore, subtreeIds, type LocalStore, type Note } from './local'
 import { openNoteDoc, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
-import { persistentBlankLinesPlugin } from './blankLinesPlugin'
-import { InsertPageLink, pageLinkPlugin, setPageLinkServices, type PageOption } from './pageLink'
-import { editorMenuPlugin, thematicBreakRulePlugin } from './editorMenu'
-import { lexicalBridgePlugin } from './lexicalBridge'
+import { setPageLinkServices, type PageOption } from './pageLinkServices'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { useMobileKeyboard, toggleDebug } from './mobileKeyboard'
 import { acceptInvitation, approveRequest, connectInteractive, deleteNoteTree, denyRequest, dismissSyncError, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond, type AccessRequest } from './sync'
+
+// Lazily loaded, and prefetched as soon as the local store opens (see below) —
+// so in practice the chunk is warm before a page is ever opened, and the
+// fallback below is only ever seen on a genuinely cold, slow first load.
+//
+// The catch handles the one failure a split bundle can have that a single
+// bundle cannot. Asset filenames carry a content hash, so a deploy renames this
+// chunk; a tab that was already open when the new service worker activated is
+// now controlled by it, and the URL this import resolves to belongs to the
+// build that worker just evicted. The request misses the cache, misses on the
+// server too, and the import rejects — leaving the page body permanently blank,
+// because a rejected lazy import never retries itself.
+//
+// Only a fresh document can know the new filenames, so recovery is a reload.
+// Two guards keep that from becoming a loop: it happens at most once per tab
+// (the flag is cleared once an import succeeds, so a second deploy in a long
+// session can still recover), and never while offline, where a failure means
+// the precache is incomplete rather than stale and reloading would fix nothing.
+const CHUNK_RELOAD_FLAG = 'motion-chunk-reload'
+async function importMarkdownEditor() {
+  try {
+    const loaded = await import('./markdownEditor')
+    sessionStorage.removeItem(CHUNK_RELOAD_FLAG)
+    return loaded
+  } catch (error) {
+    if (!navigator.onLine || sessionStorage.getItem(CHUNK_RELOAD_FLAG)) throw error
+    sessionStorage.setItem(CHUNK_RELOAD_FLAG, '1')
+    location.reload()
+    // The page is going away; resolving would only render against a dead document.
+    return new Promise<never>(() => {})
+  }
+}
+const MarkdownEditor = lazy(importMarkdownEditor)
+
+
+// Run after the browser has finished the work that is actually on screen.
+// Returns a canceller so an effect can drop the callback on unmount.
+function whenIdle(work: () => void) {
+  const idle = window.requestIdleCallback
+  if (idle) {
+    const handle = idle(() => work(), { timeout: 2000 })
+    return () => window.cancelIdleCallback(handle)
+  }
+  const handle = window.setTimeout(work, 200)
+  return () => window.clearTimeout(handle)
+}
 
 const uid = () => crypto.randomUUID()
 
@@ -60,121 +101,6 @@ type SyncTone = 'gray' | 'red'
 type LandingStatus = 'checking' | 'sign-in' | 'invited' | 'join' | 'request' | 'requested' | 'unknown'
 type Landing = { note: string; resource: string | null; status: LandingStatus; name: string | null }
 const EMPTY_NOTES: Note[] = []
-
-// The stored document IS this Markdown string, so serialization has to be a
-// pinned, stable function of the content — never a library default that a
-// dependency bump can move under us. Any drift here is not cosmetic: the editor
-// re-exports the whole document, so a changed marker rewrites every line of
-// every page, which the CRDT has to merge as a genuine edit.
-//
-// `-` bullets and `_` rules are chosen to match what people type and paste, so
-// the stored text stays the Markdown a user would have written by hand. The two
-// markers stay distinct on purpose: `---` under a paragraph is a Setext heading,
-// not a rule.
-const MARKDOWN_OPTIONS = {
-  bullet: '-', bulletOrdered: '.', listItemIndent: 'one',
-  emphasis: '_', strong: '*', rule: '_',
-  fence: '`', fences: true, quote: '"',
-  incrementListMarker: true, resourceLink: false, setext: false
-} as const
-
-function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean }) {
-  const editor = useRef<MDXEditorMethods>(null)
-  const container = useRef<HTMLDivElement>(null)
-  const current = useRef(markdown)
-  // Loading markdown INTO the editor must never come back out as an edit. The
-  // editor re-serializes whatever it is given and its output is not always the
-  // input byte for byte — bullet markers, escaping, and the blank-line markers
-  // this app inserts all get rewritten. Pushing that back into the CRDT makes
-  // each client restate text the other authored, and two clients doing it at
-  // once is resolved by Yjs the only way it can be: both insertions survive, so
-  // the body appears twice. A rewrite that spans a block boundary corrupts the
-  // structure instead — a leading list item comes back as escaped paragraph
-  // text. Nothing is lost by dropping these: the doc already holds the text the
-  // editor was handed, and the next real keystroke exports the whole document.
-  //
-  // MDXEditor mutes onChange for its own import, but persistentBlankLinesPlugin
-  // normalizes in a microtask right after it, once that mute has been lifted —
-  // so the hold has to outlive the task rather than the import call.
-  const applying = useRef(true)
-  const release = useRef<number | undefined>(undefined)
-  const holdApplying = () => {
-    applying.current = true
-    window.clearTimeout(release.current)
-    release.current = window.setTimeout(() => { applying.current = false }, 0)
-  }
-  useEffect(() => {
-    holdApplying()
-    return () => window.clearTimeout(release.current)
-  }, [])
-  useEffect(() => {
-    if (markdown === current.current) return
-    current.current = markdown
-    holdApplying()
-    const root = container.current?.querySelector<HTMLElement>('.motion-md-content')
-    const selection = window.getSelection()
-    const selected = root && selection?.anchorNode && selection.focusNode && root.contains(selection.anchorNode) && root.contains(selection.focusNode)
-    const pathAt = (node: Node) => {
-      const path: number[] = []
-      let current: Node | null = node
-      while (current && current !== root) {
-        const parent: Node | null = current.parentNode
-        if (!parent) return null
-        path.unshift(Array.prototype.indexOf.call(parent.childNodes, current) as number)
-        current = parent
-      }
-      return current === root ? path : null
-    }
-    const offsetAt = (node: Node, offset: number) => {
-      const range = document.createRange(); range.selectNodeContents(root!); range.setEnd(node, offset); return range.toString().length
-    }
-    const saved = selected ? {
-      anchor: offsetAt(selection!.anchorNode!, selection!.anchorOffset),
-      focus: offsetAt(selection!.focusNode!, selection!.focusOffset),
-      anchorPath: pathAt(selection!.anchorNode!),
-      focusPath: pathAt(selection!.focusNode!),
-      anchorNodeOffset: selection!.anchorOffset,
-      focusNodeOffset: selection!.focusOffset
-    } : null
-    editor.current?.setMarkdown(markdown)
-    if (saved) window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      const nextRoot = container.current?.querySelector<HTMLElement>('.motion-md-content')
-      if (!nextRoot) return
-      // A remote edit must never pull the caret back into the document. If
-      // anything else has taken focus since the change — the share sheet's
-      // invite field, the title — leave the selection where the user put it.
-      const focused = document.activeElement
-      if (focused && focused !== document.body && !nextRoot.contains(focused)) return
-      const point = (targetOffset: number) => {
-        const walker = document.createTreeWalker(nextRoot, NodeFilter.SHOW_TEXT)
-        let remaining = targetOffset; let node: Node | null
-        while ((node = walker.nextNode())) { const size = node.textContent?.length ?? 0; if (remaining <= size) return { node, offset: remaining }; remaining -= size }
-        return { node: nextRoot, offset: nextRoot.childNodes.length }
-      }
-      const resolvePath = (path: number[] | null, nodeOffset: number, fallback: number) => {
-        let node: Node = nextRoot
-        if (path) {
-          for (const index of path) {
-            const child = node.childNodes[index]
-            if (!child) return point(fallback)
-            node = child
-          }
-          const maxOffset = node.nodeType === Node.TEXT_NODE ? (node.textContent?.length ?? 0) : node.childNodes.length
-          return { node, offset: Math.min(nodeOffset, maxOffset) }
-        }
-        return point(fallback)
-      }
-      const anchor = resolvePath(saved.anchorPath, saved.anchorNodeOffset, saved.anchor)
-      const focus = resolvePath(saved.focusPath, saved.focusNodeOffset, saved.focus)
-      const nextSelection = window.getSelection()
-      nextSelection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
-    }))
-  }, [markdown])
-  return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value, initial) => { current.current = value; if (!initial && !applying.current) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
-    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
-  ]} /></div>
-}
 
 function NotificationButton({ count, onClick }: { count: number; onClick: () => void }) {
   return <button className="notification-button" aria-label={count ? `${count} pending invitation${count === 1 ? '' : 's'}` : 'Notifications'} onClick={onClick}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>{count > 0 && <span>{count > 9 ? '9+' : count}</span>}</button>
@@ -646,11 +572,19 @@ export default function App() {
   const allNotes = useSyncExternalStore(subscribeNotes, getNotes)
   const notes = useMemo(() => allNotes.filter((note) => !note.deletedAt), [allNotes])
 
+  // Startup order matters here. Opening the store and painting what is already
+  // on this device is the only thing on the critical path; everything else —
+  // reaching the network, pulling down the editor chunk — is started after, and
+  // never awaited before the first render of real content.
   useEffect(() => {
     let cancelled = false
     void openLocalStore().then((opened) => {
       if (cancelled) { opened.close(); return }
       setStore(opened)
+      // Warm the editor chunk while the user is still reading the page list, so
+      // opening a page does not pay for the download. Idle so it cannot compete
+      // with the first paint of the shell.
+      whenIdle(() => { void importMarkdownEditor() })
       void startSync(opened)
     })
     return () => { cancelled = true }
@@ -864,7 +798,14 @@ export default function App() {
 
   // Seed the backlink index from every body already on this device, then keep
   // the open note's outgoing links current as its text changes (below).
-  useEffect(() => { if (store) void rebuildLinkIndex(store) }, [store])
+  // Backlinks are a secondary panel, and seeding them decodes every body this
+  // device holds — Yjs work that scales with the number of pages and would
+  // otherwise land in the same frames as the first paint. Deferred to idle: the
+  // index fills in a beat later and nothing before then reads it.
+  useEffect(() => {
+    if (!store) return
+    return whenIdle(() => { void rebuildLinkIndex(store) })
+  }, [store])
   useEffect(() => { if (collaborativeMarkdown) indexNote(collaborativeMarkdown.noteId, collaborativeMarkdown.value) }, [collaborativeMarkdown])
 
   const linksVersion = useSyncExternalStore(subscribeLinks, getLinksVersion)
@@ -1460,8 +1401,8 @@ export default function App() {
   }
   return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
     <aside><div className="list-header"><span onClick={countDebugTap}>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className="section-label">FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} previewParentId={null} dimmedIds={null} dragEnabled={false} note={note} depth={0} />)}</nav></>}<div className="section-label" data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
-    <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={focusEditorCanvas}>{activeNote && !landing ? <><header className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef}>{!isMobile && <div className={`page-path article-path ${sidebarOpen ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={sidebarOpen}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div>}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
-      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} />}
+    <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={focusEditorCanvas}>{activeNote && !landing ? <><header className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef}>{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
+      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
       {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
       </article></> : landing ? <section className="empty access-landing">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></svg></button>}<div className="empty-mark">M</div>{(() => {

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { lexicalAdapter } from './lexicalBridge'
+import { editorAdapter } from './editorAdapter'
 
 // Ported from the "Notes Lab" PWA experiment. It solves the two things mobile
 // browsers get wrong for a full-screen editor and that no amount of CSS fixes:
@@ -446,17 +446,17 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       if (clickRange && !content.contains(clickRange.startContainer)) clickRange = null
       // Capture scroll BEFORE placement/focus and restore after, so nothing slides.
       const savedScroll = main.scrollTop
-      if (lexicalAdapter.hasEditor()) {
+      if (editorAdapter.hasEditor()) {
         // Place the caret THROUGH Lexical so it becomes Lexical's OWN selection —
         // nothing reconciles over it (that fixed the empty-block restore). ORDER
         // matters for the pan: park the caret at the TOP first, so when we focus,
         // iOS's obscure-check sees a visible caret and doesn't pan. THEN place it
         // at the click (no new focus event, so no pan), and our correction below
         // scrolls it into the safe zone.
-        lexicalAdapter.placeCaretAtStart()
-        if (alreadyFocused) lexicalAdapter.blur()
-        lexicalAdapter.focus()
-        if (!clickRange || !lexicalAdapter.placeCaretAtRange(clickRange)) lexicalAdapter.placeCaretAtEnd()
+        editorAdapter.placeCaretAtStart()
+        if (alreadyFocused) editorAdapter.blur()
+        editorAdapter.focus()
+        if (!clickRange || !editorAdapter.placeCaretAtRange(clickRange)) editorAdapter.placeCaretAtEnd()
       } else {
         // DOM fallback (no Lexical present): resolve + set the caret directly.
         let range = e.clientY <= textBottom ? caretRangeFromPoint(e.clientX, e.clientY) : null
