@@ -362,6 +362,7 @@ function EditorMenu() {
   // opened. Typing deliberately does not re-anchor — the menu should stay put at
   // the `[[` it belongs to.
   const menuOpen = Boolean(session)
+
   useEffect(() => {
     if (!menuOpen) return
     const reanchor = () => setSession((prev) => {

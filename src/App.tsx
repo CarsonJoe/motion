@@ -12,7 +12,7 @@ import { lexicalBridgePlugin } from './lexicalBridge'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
-import { useMobileKeyboard } from './mobileKeyboard'
+import { useMobileKeyboard, toggleDebug } from './mobileKeyboard'
 import { acceptInvitation, approveRequest, connectInteractive, deleteNoteTree, denyRequest, dismissSyncError, fullSync, getResourceInfo, getSyncState, inviteByHandle, joinResource, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, requestAccess, saveNote, shareNoteTree, startSync, subscribeSyncState, tallpond, type AccessRequest } from './sync'
 
 const uid = () => crypto.randomUUID()
@@ -1224,20 +1224,17 @@ export default function App() {
   // covering the page the user just chose.
   const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
   const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setActiveId(id) }
-  // Seven taps on the sidebar title toggle the mobileKeyboard debug overlay.
-  // An installed PWA always launches at its fixed start_url, so `?debug` can't
-  // be reached from the home screen — this is the only way in. The reload is
-  // what applies it: the flag is read once, when the effect installs.
+  // Five taps on the sidebar title toggle the keyboard debug overlay. The
+  // reload is what applies it: the flag is read once, when the effect installs.
   const debugTaps = useRef({ count: 0, at: 0 })
   const countDebugTap = () => {
     const now = Date.now()
     const taps = debugTaps.current
     taps.count = now - taps.at < 3000 ? taps.count + 1 : 1
     taps.at = now
-    if (taps.count < 7) return
+    if (taps.count < 5) return
     taps.count = 0
-    if (localStorage.getItem('motion-debug') === '1') localStorage.removeItem('motion-debug')
-    else localStorage.setItem('motion-debug', '1')
+    toggleDebug()
     location.reload()
   }
 

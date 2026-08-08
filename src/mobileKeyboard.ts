@@ -20,6 +20,18 @@ import { lexicalAdapter } from './lexicalBridge'
 
 const CONTENT_SELECTOR = '.motion-md-content'
 
+// The on-screen debug overlay, toggled by five taps on the sidebar title. An
+// installed PWA always launches at its fixed start_url, so `?debug` can't be
+// reached from the home screen and the flag has to be persisted.
+const DEBUG_KEY = 'motion-debug'
+export const debugEnabled = () => localStorage.getItem(DEBUG_KEY) === '1'
+export function toggleDebug() {
+  const next = !debugEnabled()
+  if (next) localStorage.setItem(DEBUG_KEY, '1')
+  else localStorage.removeItem(DEBUG_KEY)
+  return next
+}
+
 type Options = {
   // The toolbar overlay node (App's `toolbarHost` — the MDXEditor toolbar host).
   toolbar: HTMLElement | null
@@ -46,25 +58,31 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // under our position:fixed body, so the subtraction stays correct.
     const layoutH = () => document.documentElement.clientHeight
 
-    // An invisible twin of the debug overlay below, and it is here for exactly
-    // that reason. The trigger menu (`[[` / `/`) provoked an iOS
-    // application-container pan on the first touch-scroll while it was open —
-    // and it never happened with the debug overlay up, on any browser, while it
-    // reproduced immediately the moment the overlay was gone. So the thing that
-    // suppresses the pan is the mere presence of a position:fixed,
-    // pointer-events:none child of <body>, spanning the top of the viewport,
-    // from the first keyboard reveal onward.
+    // The pan pin. Without it, opening the editor's `[[` / `/` menu while the
+    // keyboard is up made the next touch-scroll pan the whole application
+    // container instead of scrolling <main>.
     //
-    // The mechanism is NOT understood — it is presumably a compositing or
-    // overscroll side effect of that element. What is established is the
-    // dependency, so this ships it deliberately rather than leaving it as an
-    // accident of a debug flag. It faithfully mirrors the overlay's geometry
-    // (an empty div would collapse to zero height, and height may well be part
-    // of what matters); the properties that are actually load-bearing have not
-    // been bisected yet.
+    // The cause is the menu being *added to the DOM* while the keyboard is up:
+    // it is position:fixed, so mounting it hands WebKit a new
+    // viewport-constrained object and it rebuilds the scrolling tree mid
+    // gesture. A fixed layer that already exists when that happens absorbs it.
+    //
+    // Established by bisection on device, each property varied alone:
+    //   · must be position:fixed      (position:absolute reproduces the pan)
+    //   · must create a layer         (visibility:hidden reproduces it,
+    //                                  opacity:0 does not — so this is about
+    //                                  compositing, not visibility)
+    //   · must intersect the viewport (moved off-screen, it reproduces)
+    //   · must PRE-EXIST the menu     (an identical pin mounted at the same
+    //                                  moment as the menu reproduces it)
+    //   · size and DOM position are irrelevant — hence 1px, anywhere.
+    //
+    // The alternative fix is to stop adding a fixed layer at all: mount the
+    // menu permanently and toggle opacity. That is a much larger change to
+    // editorMenu for the same outcome, so this stays.
     const panPin = document.createElement('div')
     panPin.setAttribute('aria-hidden', 'true')
-    panPin.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:0;height:40vh;overflow:hidden;pointer-events:none;background:transparent'
+    panPin.style.cssText = 'position:fixed;top:0;left:0;right:0;height:1px;z-index:0;pointer-events:none;background:transparent'
     document.body.appendChild(panPin)
 
     // Temporary on-screen instrumentation. Open the app with ?debug to see a
@@ -73,7 +91,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // `?debug` is unreachable once the app is installed — a PWA always launches
     // at its fixed start_url — so the flag is also readable from storage, set by
     // the seven-tap gesture on the sidebar title (see App).
-    const DEBUG = /[?&]debug/.test(location.search) || localStorage.getItem('motion-debug') === '1'
+    const DEBUG = /[?&]debug/.test(location.search) || debugEnabled()
     let debugEl: HTMLElement | null = null
     const debug = (line: string) => {
       if (!DEBUG) return
