@@ -519,7 +519,7 @@ export const thematicBreakRulePlugin = realmPlugin({
 
 type IconName = 'page' | 'link' | 'plus' | 'text' | 'h1' | 'h2' | 'h3' | 'bullet' | 'number' | 'check' | 'quote' | 'divider' | 'table'
 const svg = (children: ReactNode) => <svg viewBox="0 0 24 24" aria-hidden="true">{children}</svg>
-const ICONS: Record<IconName, ReactNode> = {
+export const ICONS: Record<IconName, ReactNode> = {
   page: svg(<path d="M14 3v5h5M14 3H6v18h12V8z" />),
   link: svg(<path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" />),
   plus: svg(<path d="M12 5v14M5 12h14" />),

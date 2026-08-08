@@ -4,6 +4,7 @@ import { usePublisher, useCellValue } from '@mdxeditor/gurx'
 import { activePlugins$, allowedHeadingLevels$, convertSelectionToNode$, currentBlockType$, useTranslation } from '@mdxeditor/editor'
 import { $createHeadingNode, $createQuoteNode } from '@lexical/rich-text'
 import { $createParagraphNode } from 'lexical'
+import { ICONS } from './editorMenu'
 
 // A focus-preserving replacement for MDXEditor's <BlockTypeSelect />. That one
 // is a Radix Select: it portals its listbox out of the toolbar and pulls focus
@@ -13,7 +14,7 @@ import { $createParagraphNode } from 'lexical'
 // calls preventDefault on pointerdown, so the editor selection is never
 // blurred — the keyboard stays up and the menu simply floats above the toolbar.
 
-type Item = { label: string; value: string }
+type Item = { label: string; value: string; icon?: string }
 
 export function BlockTypeMenu() {
   const convertSelectionToNode = usePublisher(convertSelectionToNode$)
@@ -86,9 +87,9 @@ export function BlockTypeMenu() {
 
   if (!hasQuote && !hasHeadings) return null
 
-  const items: Item[] = [{ label: t('toolbar.blockTypes.paragraph', 'Paragraph'), value: 'paragraph' }]
-  if (hasQuote) items.push({ label: t('toolbar.blockTypes.quote', 'Quote'), value: 'quote' })
-  if (hasHeadings) items.push(...allowedHeadingLevels.map((n) => ({ label: t('toolbar.blockTypes.heading', 'Heading {{level}}', { level: n }), value: `h${n}` })))
+  const items: Item[] = [{ label: 'Text', value: 'paragraph', icon: 'text' }]
+  if (hasQuote) items.push({ label: 'Quote', value: 'quote', icon: 'quote' })
+  if (hasHeadings) items.push(...allowedHeadingLevels.map((n) => ({ label: `Heading ${n}`, value: `h${n}`, icon: `h${n}` })))
 
   const apply = (value: string) => {
     switch (value) {
@@ -99,7 +100,8 @@ export function BlockTypeMenu() {
     setOpen(false)
   }
 
-  const currentLabel = items.find((item) => item.value === currentBlockType)?.label ?? t('toolbar.blockTypeSelect.placeholder', 'Block type')
+  const currentItem = items.find((item) => item.value === currentBlockType)
+  const currentIcon = currentItem?.icon
 
   // preventDefault on pointerdown keeps the editor selection/focus — this is the
   // whole point of the component. click still fires afterwards.
@@ -116,7 +118,7 @@ export function BlockTypeMenu() {
       onPointerDown={keepFocus}
       onClick={() => setOpen((v) => !v)}
     >
-      <span className="block-type-trigger-label">{currentLabel}</span>
+      {currentIcon && <svg viewBox="0 0 24 24" className="block-type-trigger-icon" aria-hidden="true" stroke="currentColor" strokeWidth="1.5" fill="none">{ICONS[currentIcon as keyof typeof ICONS]}</svg>}
       <svg viewBox="0 0 24 24" aria-hidden="true" className="block-type-trigger-caret"><path d="m7 10 5 5 5-5" /></svg>
     </button>
     {open && createPortal(
@@ -135,7 +137,7 @@ export function BlockTypeMenu() {
           className={`block-type-item ${item.value === currentBlockType ? 'active' : ''}`}
           onPointerDown={keepFocus}
           onClick={() => apply(item.value)}
-        >{item.label}</button>)}
+        >{item.icon && <svg viewBox="0 0 24 24" className="block-type-item-icon" aria-hidden="true" stroke="currentColor" strokeWidth="1.5" fill="none">{ICONS[item.icon as keyof typeof ICONS]}</svg>}<span>{item.label}</span></button>)}
       </div>,
       document.body,
     )}

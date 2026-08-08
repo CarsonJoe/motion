@@ -7,6 +7,10 @@
      default to LIGHT without this, which is the white flash on back navigation.
      Our own backgrounds never get a chance to cover those frames. */
   color-scheme: dark;
+  /* Width of the editor's own scrollbar, kept here because the header has to
+     stop short of it — on mobile especially, where the scrollbar is an overlay
+     that would otherwise draw straight across the sticky header. */
+  --scrollbarWidth: 12px;
 }
 
 * { box-sizing: border-box; }
@@ -95,7 +99,7 @@ nav { overflow: visible; }
 .page-menu button svg { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 @media (hover: hover) { .page-menu button:hover { background: #383838; } }
 .page-menu .danger { color: #ee9999; }
-.sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; border-top: 1px solid #2a2a2a; color: #8e8e8e; font-size: 12px; }
+.sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; color: #8e8e8e; font-size: 12px; }
 .local-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #6f6f6f; }
 .connected-dot { background: #54c98f; }
 /* The only dot left. Informational states say their piece in muted text and
@@ -112,20 +116,41 @@ nav { overflow: visible; }
 .sync-error-dismiss { flex: none; margin-left: auto; padding: 0 2px; border: 0; color: inherit; background: none; font: inherit; font-size: 13px; line-height: 1.1; cursor: pointer; opacity: 0.65; }
 @media (hover: hover) { .sync-error-dismiss:hover { opacity: 1; } }
 
-main { min-width: 0; flex: 1; overflow: auto; overscroll-behavior-y: contain; background: #111; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; cursor: text; }
+/* The gutter is reserved whether or not the page is long enough to scroll, so
+   the header's right edge lands in the same place either way. */
+main { min-width: 0; flex: 1; overflow: auto; scrollbar-gutter: stable; overscroll-behavior-y: contain; background: #111; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; cursor: text; }
 .editor-header { cursor: default; }
 main::-webkit-scrollbar { width: 12px; }
 main::-webkit-scrollbar-track { background: transparent; }
 main::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
 main::-webkit-scrollbar-thumb:hover { background-color: #505050; }
-article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56px 60px; cursor: text; }
-.editor-header { position: sticky; top: 0; z-index: 5; height: 52px; color: #929292; background: #111; font-size: 12px; }
+/* The article is pulled up into the header band so its first element — the path —
+   sits level with the header controls rather than below them. That puts the path
+   entirely inside the header's own 44px, so turning the header backdrop on for
+   editing covers it outright; no extra fade below the header has to reach it. */
+article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0 56px 60px; cursor: text; }
+.article-path { height: 20px; margin-bottom: 100px; align-items: center; transition: opacity .18s ease, visibility 0s; }
+/* An open sidebar already says where you are, so the path steps aside for it. */
+.article-path.hidden { visibility: hidden; opacity: 0; pointer-events: none; transition: opacity .18s ease, visibility 0s linear .18s; }
+.editor-header { position: sticky; top: 0; z-index: 5; height: 44px; color: #929292; font-size: 12px; }
+/* The bar is painted by a pseudo-element rather than the header's own
+   background so it can stop short of the scrollbar. The scrollbar belongs to
+   `main` and always paints on top, so a full-bleed bar reads as the track
+   running behind the header; ending the bar a track-width early gives the
+   scrollbar its own lane. The header box itself stays full width, which keeps
+   the toolbar's centring maths lined up with the article below. */
+.editor-header::before { content: ''; position: absolute; inset: 0 var(--scrollbarWidth) 0 0; background: #111; opacity: 1; transition: opacity .18s ease; }
+/* At rest the header is just its controls floating over the page — no bar, so
+   the path below it reads as part of the document. The backdrop comes in with
+   the toolbar and only with the toolbar; scrolling does not summon it. */
+.editor-header.transparent::before { opacity: 0; }
+.editor-header.transparent::after { opacity: 0; }
 /* Content scrolls under the sticky header, so its bottom edge would cut a line of
    text in half. A short fade hanging below it softens that cut. The header and the
    text scrolling under it dissolves into the header instead of being sliced. It
    takes no layout height. */
-.editor-header::after { content: ''; position: absolute; top: 100%; right: 0; left: 0; height: 16px; background: linear-gradient(to bottom, #111111, #11111100); pointer-events: none; }
-.editor-header-row { position: relative; display: grid; width: 100%; height: 52px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
+.editor-header::after { content: ''; position: absolute; top: 100%; right: var(--scrollbarWidth); left: 0; height: 16px; background: linear-gradient(to bottom, #111111, #11111100); pointer-events: none; opacity: 1; transition: opacity .18s ease; }
+.editor-header-row { position: relative; display: grid; width: 100%; height: 44px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
 .header-left, .header-actions, .header-right { display: flex; min-width: 0; align-items: center; }
 .header-left { max-width: none; gap: 10px; }
 .header-right { grid-column: 3; justify-self: end; justify-content: flex-end; gap: 10px; }
@@ -133,15 +158,29 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 @media (hover: hover) { .notification-button:hover { color: #fff; background: #262626; } }
 .notification-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .notification-button span { position: absolute; top: 0; right: 0; display: grid; min-width: 15px; height: 15px; place-items: center; padding: 0 3px; border-radius: 8px; color: #111; background: #f0f0f0; font-size: 9px; font-weight: 800; }
-.page-path { display: flex; min-width: 0; max-width: min(240px, max(0px, calc((100vw - 1048px) / 4))); overflow: hidden; color: #909090; font-size: 12px; white-space: nowrap; }
+.header-title { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; max-width: calc(100% - 100px); color: #f1f1f1; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+.header-title.visible { opacity: 1; }
+/* The path lives in the article now, so it gets the full content column — the
+   old cap existed only to keep it out of the header's other controls. */
+.page-path { display: flex; min-width: 0; overflow: hidden; color: #909090; font-size: 12px; white-space: nowrap; }
 .page-path span { display: flex; min-width: 0; align-items: center; }
 .page-path i { padding: 0 5px; color: #555; font-style: normal; }
 .page-path button { width: 100%; min-width: 0; overflow: hidden; padding: 3px 0; border: 0; color: #8f8f8f; background: transparent; font: inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 @media (hover: hover) { .page-path button:hover { color: #eee; } }
-.breadcrumb-root { max-width: 32%; flex: 0 1 auto; }
-.breadcrumb-current { flex: 1 1 auto; }
-.breadcrumb-ellipsis { flex: none; color: #666; }
-.editor-toolbar { position: absolute; left: max(56px, calc((100% - 668px) / 2)); display: flex; height: 52px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
+/* Every ancestor gets a link. The path only has to give ground when the chain
+   is deep enough to run out of header, and then the ancestors give it first —
+   the page you are on is the one segment that must stay readable. */
+.breadcrumb-ancestor { flex: 0 4 auto; min-width: 2.5em; }
+.breadcrumb-current { flex: 0 1 auto; color: #d0d0d0; }
+.breadcrumb-current button { color: #d0d0d0; }
+.editor-toolbar { position: absolute; top: 0; left: max(56px, calc((100% - 780px) / 2 + 56px)); display: flex; height: 44px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
+/* Desktop: the toolbar is hidden in place rather than unmounted, because the
+   editor portals its toolbar into this host and losing it would tear the editor
+   down. It fades in over the path it covers. `visibility` is what keeps it out
+   of the tab order while gone, so its change waits out the fade on the way down
+   and fires immediately on the way back up. */
+.editor-toolbar { opacity: 1; transform: none; transition: opacity .18s ease, transform .18s ease, visibility 0s; }
+.editor-toolbar.hidden { visibility: hidden; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s; }
 .show-sidebar-button, .header-button { padding: 5px; border: 0; color: #aaa; background: transparent; font: inherit; cursor: pointer; }
 @media (hover: hover) {
   .show-sidebar-button:hover, .header-button:hover { color: #fff; }
@@ -235,7 +274,8 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 }
 [data-radix-popper-content-wrapper] { z-index: 40 !important; }
 .motion-md-toolbar { display: none !important; }
-.editor-toolbar .core-tools, .editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
+.editor-toolbar .core-tools { display: flex; align-items: center; gap: 4px; }
+.editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
 .editor-toolbar button { margin: 0 1px; border-radius: 5px !important; color: #a7a7a7 !important; }
 @media (hover: hover) { .editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; } }
 /* Active toggle (bold/italic/underline/highlight at the caret). Radix marks the
@@ -257,13 +297,14 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 
 /* Custom focus-preserving block-type menu (replaces the Radix <BlockTypeSelect />
    so opening it never blurs the editor / closes the mobile keyboard). */
-.block-type-trigger { display: inline-flex !important; align-items: center; gap: 1px; height: 30px; min-width: 82px; padding: 0 5px 0 9px !important; border: 0 !important; background: transparent !important; color: #c2c2c2 !important; font: inherit; font-size: 13px; cursor: pointer; appearance: none; -webkit-appearance: none; }
+.block-type-trigger { display: inline-flex !important; align-items: center; gap: 3px; height: 30px; min-width: 0; padding: 0 2px !important; border: 0 !important; background: transparent !important; color: #c2c2c2 !important; font: inherit; font-size: 13px; cursor: pointer; appearance: none; -webkit-appearance: none; }
 @media (hover: hover) { .block-type-trigger:hover { background: #292929 !important; color: #f1f1f1 !important; } }
 .block-type-trigger[aria-expanded='true'] { background: #232323 !important; color: #f1f1f1 !important; }
-.block-type-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.block-type-trigger-caret { width: 15px; height: 15px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
-.block-type-menu { z-index: 60; display: flex; flex-direction: column; gap: 2px; min-width: 172px; max-height: min(340px, 62vh); padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #3d3d3d; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
-.block-type-item { display: flex; align-items: center; min-height: 34px; padding: 7px 12px; border: 0; border-radius: 7px; background: transparent; color: #c9c9c9; font: inherit; font-size: 14px; text-align: left; white-space: nowrap; cursor: pointer; }
+.block-type-trigger-icon { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.block-type-trigger-caret { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.block-type-menu { z-index: 60; display: flex; flex-direction: column; gap: 2px; min-width: 80px; max-height: min(340px, 62vh); padding: 4px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #3d3d3d; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
+.block-type-item { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: #c9c9c9; font: inherit; font-size: 14px; text-align: left; white-space: nowrap; cursor: pointer; }
+.block-type-item-icon { width: 16px; height: 16px; flex: none; stroke-linecap: round; stroke-linejoin: round; }
 @media (hover: hover) { .block-type-item:hover { background: #303030; color: #f1f1f1; } }
 .block-type-item.active { background: #2b2b2b; color: #fff; }
 .motion-md-content { min-height: 430px; padding: 0; border: 0; outline: 0; color: #e4e4e4; font-family: inherit; font-size: 18px; line-height: 1.72; }
@@ -335,10 +376,6 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 /* Transient status toast */
 .flash-toast { position: fixed; left: 50%; bottom: 28px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 11px 18px; border: 1px solid #4a4a4a; border-radius: 10px; color: var(--baseTextContrast); background: #232323; box-shadow: 0 14px 36px rgba(0, 0, 0, .55); font-size: 14px; }
 
-@media (min-width: 761px) and (max-width: 1120px) {
-  .page-path { display: none; }
-}
-
 @media (max-width: 760px) {
   /* Lock the page so ONLY <main> can scroll. Without this, iOS scrolls the
      whole window up when the keyboard opens over a contenteditable and leaves
@@ -369,16 +406,20 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .sidebar-footer { padding: 14px 3px 0; }
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
-  article { min-height: 100%; padding: 38px 20px 60px; }
-  .editor-header { height: 52px; }
-  .editor-header-row { height: 52px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: 52px; margin: 0; padding: 0 12px; }
+  article { min-height: 100%; padding: 16px 20px 60px; }
+  .editor-header { height: 36px; }
+  /* The path is desktop-only, so nothing has to hide under the header here. */
+  article { margin-top: 0; }
+  .editor-header-row { height: 36px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: 36px; margin: 0; padding: 0 12px; }
   .header-left { grid-row: 1; grid-column: 1; max-width: none; }
   .header-right { grid-row: 1; grid-column: 3; justify-self: end; }
   /* The formatting toolbar leaves the header grid and becomes a floating
      overlay riding just above the software keyboard. Its transform (and the
      kb-visible class) are driven by useMobileKeyboard / mobileKeyboard.ts;
      CSS only supplies the look and the off-screen default. */
-  .editor-toolbar { position: fixed; top: -10px; left: 10px; right: 10px; z-index: 50; height: auto; margin: 0; padding: 8px; gap: 4px; background: rgba(28, 28, 28, .86); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; box-shadow: 0 -8px 28px rgba(0, 0, 0, .32); overflow-x: auto; scrollbar-width: none; touch-action: pan-x; transform: translateY(-9999px); opacity: 0; transition: opacity .28s ease-out; }
+  .editor-toolbar { position: fixed; top: -10px; left: 10px; right: 10px; z-index: 50; height: auto; margin: 0; padding: 8px; gap: 0; background: rgba(28, 28, 28, .86); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; box-shadow: 0 -8px 28px rgba(0, 0, 0, .32); overflow-x: visible; scrollbar-width: none; touch-action: pan-x; transform: translateY(-9999px); opacity: 0; transition: opacity .28s ease-out; justify-content: space-around; width: auto; left: 10px; right: 10px; }
+  .editor-toolbar .core-tools { justify-content: space-around; gap: 8px; }
+  .editor-toolbar .extra-tools { justify-content: space-around; gap: 8px; }
   .editor-toolbar::-webkit-scrollbar { display: none; }
   .block-type-menu { z-index: 60; }
   .block-type-item { min-height: 44px; font-size: 15px; }
@@ -387,7 +428,11 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   .header-actions { gap: 6px; }
   .header-button { color: #e4e4e4; font-size: 13px; }
   .header-button:first-child { font-size: 22px; }
-  .header-status { font-size: 11px; }
+  /* The scrolled title is centered across the whole row, so a long status can
+     land on top of it. The title is the thing that may be covered — the status
+     carries a pill of the header's own colour so whichever wins, it stays
+     legible instead of the two blending into each other. */
+  .header-status { position: relative; z-index: 1; padding: 3px 8px; border-radius: 999px; background: #111; font-size: 11px; }
   .title { margin-top: 0; margin-bottom: 22px; font-size: 32px; letter-spacing: -1px; }
   .editor-toolbar .extra-tools { display: none; }
   /* padding-bottom is set dynamically by mobileKeyboard.ts while typing
