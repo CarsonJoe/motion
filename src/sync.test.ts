@@ -172,6 +172,42 @@ describe('drainOutbox', () => {
     expect(await store.countOps()).toBe(1)
   })
 
+  // Regression: a 403 used to fall through to removeOps, so a stale cached role
+  // silently destroyed the user's writing. The edit exists nowhere else — the
+  // server has never seen it — so it has to survive a rejection.
+  it('keeps a permanently rejected content update queued instead of discarding it', async () => {
+    const store = await openLocalStore()
+    await store.enqueueUpdate('n1', 'share-1', encodedInsert('precious'))
+
+    const rejecting = {
+      table: () => { throw new Error('private table not expected') },
+      resource: () => ({
+        table: () => {
+          const query: Record<string, unknown> = {
+            select: () => query, insert: () => query, eq: () => query,
+            then: (_: unknown, reject: (error: unknown) => unknown) =>
+              Promise.reject(Object.assign(new Error('Forbidden'), { status: 403 })).catch(reject)
+          }
+          return query
+        }
+      })
+    } as unknown as TallpondClient
+
+    await drainOutbox(rejecting, store)
+
+    expect(await store.countOps()).toBe(1)
+    const [remaining] = await store.listOps()
+    expect(remaining.kind).toBe('update')
+  })
+
+  it('still clears a content update the gateway accepts', async () => {
+    const store = await openLocalStore()
+    await store.enqueueUpdate('n1', 'share-1', encodedInsert('sent'))
+    const { client } = fakeClient()
+    await drainOutbox(client, store)
+    expect(await store.countOps()).toBe(0)
+  })
+
   it('drops metadata ops whose note no longer exists locally', async () => {
     const store = await openLocalStore()
     await store.enqueueNote('ghost')

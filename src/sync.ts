@@ -151,9 +151,13 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore) {
   // revision keeps moving — a title being typed — can never be dequeued, and
   // looping until it is would cost a gateway round trip per keystroke. A pass
   // that removes nothing hands the work back to the next flush instead.
+  // Set when a content update came back permanently rejected. Those ops stay in
+  // the outbox, so the user has to be told: otherwise the app reads as fully
+  // synced while some of their writing is stuck and going nowhere.
+  let rejected = false
   while (true) {
     const ops = await store.listOps()
-    if (!ops.length) return
+    if (!ops.length) break
     let progress = false
 
     const updates = new Map<string, UpdateOp[]>()
@@ -172,6 +176,17 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore) {
         })
       } catch (error) {
         if (!isPermanentRejection(error)) throw error
+        // A rejected content update is the user's writing, and it exists
+        // nowhere else the server can see. This used to fall through to the
+        // removeOps below and silently drop it — a 403 from a stale cached role
+        // was enough to lose an edit with nothing shown to the user.
+        //
+        // Keep it queued instead. It is left for a later flush (a role really
+        // can come back — an owner re-granting write access), and it does not
+        // spin: the op stays, `progress` is not set for it, so a pass that
+        // achieves nothing else ends the loop rather than retrying in place.
+        rejected = true
+        continue
       }
       await store.removeOps(group.map((op) => op.id))
       progress = true
@@ -188,7 +203,11 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore) {
       }
     }
 
-    if (!progress) return
+    if (!progress) break
+  }
+
+  if (rejected) {
+    setState({ error: 'Some edits could not be synced — you may no longer have edit access. They are still saved on this device.' })
   }
 }
 
@@ -327,6 +346,25 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
     .on('error', onError))
 }
 
+// Does the server agree this user has lost access to a resource? Only a
+// definitive answer counts, because the caller deletes data on `true`:
+//
+//   • the resource loads and reports no membership → ended
+//   • 403/404 — revoked, or the resource itself is gone → ended
+//   • anything else, including every network failure → NOT ended
+//
+// `getResourceInfo` cannot be reused here: it collapses every error to null,
+// which would make an offline blip look exactly like revocation.
+async function membershipEnded(resourceId: string) {
+  if (!tallpond) return false
+  try {
+    const info = await tallpond.resource(resourceId).get()
+    return !info?.currentMember
+  } catch (error) {
+    return isPermanentRejection(error)
+  }
+}
+
 export async function fullSync() {
   fullSyncPromise ??= (async () => {
     try {
@@ -356,12 +394,28 @@ export async function fullSync() {
         })) await local.applyRemoteNote(rowToNote(row, resource.id))
       }
 
-      // A share that has dropped out of the list is one this user is no longer
-      // a member of — it was deleted, or access was revoked, on another
-      // device. Without this the notes linger locally forever, editable
-      // against a cached role and invisible to everyone else.
+      // A share that has dropped out of the list may be one this user is no
+      // longer a member of — deleted, or access revoked, on another device.
+      // Without pruning, its notes linger locally forever, editable against a
+      // cached role and invisible to everyone else.
+      //
+      // But absence from that list is NOT proof, and this is the only path in
+      // the app that destroys local data irrecoverably: `removeShare` hard
+      // deletes the notes, their bodies, AND any unsent outbox rows. Unlike the
+      // two cursor loops above, `resource.list()` takes no cursor and returns a
+      // bare array (`browse()` is a different, discovery endpoint — not a
+      // paginated form of this one), so a truncated or transiently empty
+      // response is indistinguishable from genuine revocation. Trusting it cost
+      // whole pages.
+      //
+      // So absence only nominates a candidate; the server has to confirm each
+      // one individually before anything is deleted. Anything inconclusive — a
+      // network failure, an unexpected status — keeps the notes. Lingering
+      // notes are a visible annoyance the next sync can still fix; deleted ones
+      // are gone.
       for (const shareId of sharesBefore) {
         if (resources.some((resource) => resource.id === shareId)) continue
+        if (!(await membershipEnded(shareId))) continue
         localStorage.removeItem(`${ROLE_KEY}${shareId}`)
         delete roles[shareId]
         await local.removeShare(shareId)
