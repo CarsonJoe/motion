@@ -611,12 +611,18 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      meaning. */
   .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   .drawer-dragging .drawer-grip, .no-slide .drawer-grip { transition: none; }
-  /* Above the grip, so it is not a place to start a drag, and fading out in
-     step with one — by the time the page is back, the control that dismisses
-     it should be gone. */
-  .drawer-close { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 14px; z-index: 47; display: grid; width: 40px; height: 40px; place-items: center; padding: 10px; border: 0; border-radius: 50%; color: #f1f1f1; background: rgba(38, 38, 38, .92); cursor: pointer; box-shadow: 0 4px 14px rgba(0, 0, 0, .45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); opacity: calc(1 - var(--drawer-progress, 0)); }
-  .drawer-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-  .drawer-dragging .drawer-close { transition: none; }
+  /* Not a floating control — the page's own back button, showing an X. It sits
+     exactly where that button sits (the header's 12px inset, centred in the
+     36px row) and rides the page, so when the drawer closes the two land on the
+     same spot at the same size and it reads as one control changing its mind.
+     The layer exists to carry the transform: a percentage translate on the
+     30px button would resolve against the button, not the screen. */
+  .drawer-close-layer { position: absolute; inset: 0; z-index: 47; pointer-events: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  .mobile-drawer .drawer-close-layer { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); }
+  .drawer-dragging .drawer-close-layer, .no-slide .drawer-close-layer { transition: none; }
+  .drawer-close { position: absolute; left: 12px; top: 3px; pointer-events: auto; color: #e1e1e1; }
+  /* The real one stands down while its stand-in is up, or both are on screen. */
+  .mobile-drawer .show-sidebar-button:not(.drawer-close) { opacity: 0; }
   /* An absolutely positioned child is laid out against the padding box, so the
      list's padding does not move it — the button has to step aside itself. */
   .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek)); }
