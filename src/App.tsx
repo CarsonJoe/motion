@@ -550,6 +550,9 @@ const DRAWER_PEEK_RATIO = 0.25
 // The extra distance the page travels past the edge so its shadow clears too.
 // Matches the 34px in the exit transform in styles.css.
 const DRAWER_EXIT_MARGIN = 34
+// A swipe starting inside this band belongs to the browser's own back gesture,
+// which lives at the same edge and cannot be turned off. Ours starts further in.
+const DRAWER_EDGE_GUARD = 24
 
 const PAGE_RESULT_LIMIT = 10
 const editedOn = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -754,6 +757,77 @@ export default function App() {
     window.setTimeout(() => { clearPendingNavigation(); leaveToList(false) }, MOBILE_SLIDE_MS)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaveToList])
+  // Where a gesture lets go: 1 is the page covering the list, 0 is the drawer
+  // open. Shared by both gestures so they land the same way.
+  //
+  // The property is never cleared here. Clearing it and changing the state
+  // together left a frame where the drawer rules still applied with no progress
+  // set — reading as fully open — and the class swap then animated back down
+  // from there, which is the flicker. The closed drawer ignores the property
+  // entirely, so leaving it at 1 is inert; opening resets it.
+  const settleDrawer = useCallback((target: number) => {
+    const shell = shellRef.current
+    if (!shell) return
+    shell.style.setProperty('--drawer-progress', String(target))
+    if (target !== 1) return
+    // Held past the arrival, because a press ends in a burst of emulated events
+    // that a live editor would accept as a caret placement.
+    setDrawerSettling(true)
+    window.setTimeout(() => setMenuOpen(false), MOBILE_SLIDE_MS)
+    window.setTimeout(() => setDrawerSettling(false), MOBILE_SLIDE_MS + 260)
+  }, [])
+
+  // Swiping right across the page pulls the list out from under it — the way in
+  // that matches the way out. Nothing happens until the movement is clearly
+  // sideways: until then it could still be a scroll, and claiming it early is
+  // how a gesture starts eating the ones around it.
+  const swipeOpenDrawer = (event: React.PointerEvent) => {
+    const shell = shellRef.current
+    if (!shell || !isMobile || mobileView !== 'editor' || !activeNote) return
+    if (event.pointerType === 'mouse' || event.clientX < DRAWER_EDGE_GUARD) return
+    const startX = event.clientX
+    const startY = event.clientY
+    const travel = Math.max(1, window.innerWidth * (1 - DRAWER_PEEK_RATIO))
+    let engaged = false
+    let progress = 1
+    const stop = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+    const onMove = (move: PointerEvent) => {
+      const dx = move.clientX - startX
+      const dy = move.clientY - startY
+      if (!engaged) {
+        // Vertical, or heading the wrong way: this gesture is not ours.
+        if (Math.abs(dy) > Math.abs(dx) || dx < -8) { stop(); return }
+        if (dx < 16 || dx < Math.abs(dy) * 1.6) return
+        engaged = true
+        // Set before the class flips. At 1 the drawer transform equals the
+        // page's resting one, so opening the drawer here moves nothing — the
+        // finger does all of it from this point.
+        shell.style.setProperty('--drawer-progress', '1')
+        shell.style.setProperty('--drawer-exit', '0')
+        setDrawerDragging(true)
+        setMenuOpen(true)
+      }
+      progress = Math.min(1, Math.max(0, 1 - dx / travel))
+      shell.style.setProperty('--drawer-progress', String(progress))
+    }
+    // Cancel is treated as a release rather than a snap back: by the time we are
+    // engaged the intent was unambiguous, and iOS raises one simply because
+    // <main> stops taking pointer events the moment the drawer opens.
+    const onUp = () => {
+      stop()
+      if (!engaged) return
+      setDrawerDragging(false)
+      settleDrawer(progress < 0.72 ? 0 : 1)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+  }
+
   // Dragging the strip of page left of its resting place pulls the page back
   // over the list. Progress is written straight to the DOM as a custom property
   // rather than through state: this runs on every pointer move, and re-rendering
@@ -775,20 +849,6 @@ export default function App() {
     let progress = 0
     let exit = 0
     let moved = false
-    // The property is never cleared here. Clearing it and changing the state
-    // together left a frame where the drawer rules still applied with no
-    // progress set — reading as fully open — and the class swap then animated
-    // back down from there, which is the flicker. The closed drawer ignores the
-    // property entirely, so leaving it at 1 is inert; opening resets it.
-    const settle = (target: number) => {
-      shell.style.setProperty('--drawer-progress', String(target))
-      if (target !== 1) return
-      // Held past the arrival, because a press ends in a burst of emulated
-      // events that a live editor would accept as a caret placement.
-      setDrawerSettling(true)
-      window.setTimeout(() => setMenuOpen(false), MOBILE_SLIDE_MS)
-      window.setTimeout(() => setDrawerSettling(false), MOBILE_SLIDE_MS + 260)
-    }
     const onMove = (move: PointerEvent) => {
       const travelled = startX - move.clientX
       if (Math.abs(travelled) > 4) moved = true
@@ -806,7 +866,7 @@ export default function App() {
       if (exit > 0.3) { closePage(); return }
       shell.style.setProperty('--drawer-exit', '0')
       // A tap on the strip means the same thing as dragging it all the way back.
-      settle(!moved || progress > 0.28 ? 1 : 0)
+      settleDrawer(!moved || progress > 0.28 ? 1 : 0)
     }
     setDrawerDragging(true)
     window.addEventListener('pointermove', onMove)
@@ -1943,7 +2003,7 @@ export default function App() {
         it. Inert until the drawer opens. */}
     {isMobile && <div className="drawer-close-layer"><button className="show-sidebar-button drawer-close" aria-label="Close page" tabIndex={mobileView === 'drawer' ? 0 : -1} aria-hidden={mobileView !== 'drawer'} onClick={closePage}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>}
     {isMobile && (mobileView === 'drawer' || drawerSettling) && <div className="drawer-grip" role="button" tabIndex={0} aria-label="Back to your page" onPointerDown={dragDrawer} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMenuOpen(false) } }} />}
-    <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={focusEditorCanvas}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{activeNote && !landing ? <><header className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
+    <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={focusEditorCanvas} onPointerDown={swipeOpenDrawer}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{activeNote && !landing ? <><header className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
       {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
