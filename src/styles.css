@@ -595,7 +595,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      .mobile-editor ones exactly, so when the drag ends and the class changes
      underneath, nothing moves. The drag writes the property straight onto the
      shell; without it the declared values apply and the panes animate. */
-  .mobile-drawer main, .mobile-drawer .drawer-grip { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); }
+  /* Two opposing pulls on one axis. --drawer-progress runs 0→1 leftwards, the
+     page coming back over the list; --drawer-exit runs 0→1 rightwards, the page
+     leaving altogether. Only one is ever non-zero. At exit 1 this equals
+     `.mobile-list main` exactly, so the page can be handed over to that state
+     without moving. */
+  .mobile-drawer main, .mobile-drawer .drawer-grip, .mobile-drawer .drawer-close-layer { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)) + (var(--drawer-peek) + 34px) * var(--drawer-exit, 0))); }
   .mobile-drawer main { pointer-events: none; }
   .mobile-drawer aside { transform: translateX(calc(-22% * var(--drawer-progress, 0))); }
   /* The list has to end where the page begins, or the strip covers its right
@@ -618,7 +623,6 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      The layer exists to carry the transform: a percentage translate on the
      30px button would resolve against the button, not the screen. */
   .drawer-close-layer { position: absolute; inset: 0; z-index: 47; pointer-events: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
-  .mobile-drawer .drawer-close-layer { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); }
   /* Leaves with the page. Without this the layer fell back to its resting
      transform and struck out for the left edge while the page it belongs to
      slid off the right. Matches .mobile-list main exactly. */

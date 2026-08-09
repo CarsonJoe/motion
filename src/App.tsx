@@ -547,6 +547,9 @@ const MOBILE_SLIDE_MS = 280
 // The fraction of the page the drawer leaves showing. Matches --drawer-peek,
 // which is the same number written as a percentage.
 const DRAWER_PEEK_RATIO = 0.25
+// The extra distance the page travels past the edge so its shadow clears too.
+// Matches the 34px in the exit transform in styles.css.
+const DRAWER_EXIT_MARGIN = 34
 
 const PAGE_RESULT_LIMIT = 10
 const editedOn = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -738,6 +741,19 @@ export default function App() {
   // Arriving at a page — by tap, by link, by back gesture — is the drawer's cue
   // to get out of the way. One place, so no caller has to remember.
   useEffect(() => { setMenuOpen(false) }, [activeId])
+  // Runs the page the rest of the way off the screen before letting go of it.
+  // Handing straight to leaveToList would jump: from an open drawer the page is
+  // already three quarters gone, so the state change alone is a flick of the
+  // last quarter and reads as the page vanishing. Driving --drawer-exit to 1
+  // first walks it out along the same path a rightward drag uses, and lands on
+  // exactly the transform `.mobile-list main` holds, so the handover is still.
+  const closePage = useCallback(() => {
+    const shell = shellRef.current
+    if (!shell) { clearPendingNavigation(); leaveToList(true); return }
+    shell.style.setProperty('--drawer-exit', '1')
+    window.setTimeout(() => { clearPendingNavigation(); leaveToList(false) }, MOBILE_SLIDE_MS)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaveToList])
   // Dragging the strip of page left of its resting place pulls the page back
   // over the list. Progress is written straight to the DOM as a custom property
   // rather than through state: this runs on every pointer move, and re-rendering
@@ -752,8 +768,12 @@ export default function App() {
     // caret there. Tapping the strip means "bring the page back", nothing else.
     event.preventDefault()
     const startX = event.clientX
-    const travel = Math.max(1, window.innerWidth * (1 - DRAWER_PEEK_RATIO))
+    // Leftwards the page has the width of the list to cross; rightwards only the
+    // strip it occupies, plus the margin that hides its shadow.
+    const travelBack = Math.max(1, window.innerWidth * (1 - DRAWER_PEEK_RATIO))
+    const travelOut = Math.max(1, window.innerWidth * DRAWER_PEEK_RATIO + DRAWER_EXIT_MARGIN)
     let progress = 0
+    let exit = 0
     let moved = false
     // The property is never cleared here. Clearing it and changing the state
     // together left a frame where the drawer rules still applied with no
@@ -772,15 +792,20 @@ export default function App() {
     const onMove = (move: PointerEvent) => {
       const travelled = startX - move.clientX
       if (Math.abs(travelled) > 4) moved = true
-      progress = Math.min(1, Math.max(0, travelled / travel))
+      progress = travelled > 0 ? Math.min(1, travelled / travelBack) : 0
+      exit = travelled < 0 ? Math.min(1, -travelled / travelOut) : 0
       shell.style.setProperty('--drawer-progress', String(progress))
+      shell.style.setProperty('--drawer-exit', String(exit))
     }
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
       setDrawerDragging(false)
-      // A tap on the strip means the same thing as dragging it all the way.
+      // Pushed the page far enough off that it is leaving.
+      if (exit > 0.3) { closePage(); return }
+      shell.style.setProperty('--drawer-exit', '0')
+      // A tap on the strip means the same thing as dragging it all the way back.
       settle(!moved || progress > 0.28 ? 1 : 0)
     }
     setDrawerDragging(true)
@@ -1693,9 +1718,10 @@ export default function App() {
     // Nothing to peek at behind an interstitial, so that case is still a
     // navigation back to the plain list.
     if (!activeNote) { clearPendingNavigation(); leaveToList(true); return }
-    // Back to a closed drawer before it opens: a previous drag leaves the
-    // property at 1, which would hold it shut.
+    // Back to a closed drawer before it opens: a previous gesture leaves these
+    // at 1, which would hold it shut or park the page off screen.
     shellRef.current?.style.removeProperty('--drawer-progress')
+    shellRef.current?.style.removeProperty('--drawer-exit')
     setMenuOpen(true)
   }
   const copyPageLink = async () => {
@@ -1912,7 +1938,7 @@ export default function App() {
         element cannot transition in from not existing, so mounting it on open
         put it at its final place instantly while the page slid out from behind
         it. Inert until the drawer opens. */}
-    {isMobile && <div className="drawer-close-layer"><button className="show-sidebar-button drawer-close" aria-label="Close page" tabIndex={mobileView === 'drawer' ? 0 : -1} aria-hidden={mobileView !== 'drawer'} onClick={() => { clearPendingNavigation(); leaveToList(true) }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>}
+    {isMobile && <div className="drawer-close-layer"><button className="show-sidebar-button drawer-close" aria-label="Close page" tabIndex={mobileView === 'drawer' ? 0 : -1} aria-hidden={mobileView !== 'drawer'} onClick={closePage}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>}
     {isMobile && (mobileView === 'drawer' || drawerSettling) && <div className="drawer-grip" role="button" tabIndex={0} aria-label="Back to your page" onPointerDown={dragDrawer} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMenuOpen(false) } }} />}
     <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={focusEditorCanvas}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{activeNote && !landing ? <><header className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
