@@ -703,21 +703,24 @@ export default function App() {
   const [exitingToList, setExitingToList] = useState(false)
   const [noSlide, setNoSlide] = useState(false)
   const exitTimer = useRef(0)
+  const noSlideTimer = useRef(0)
+  // Held for a window rather than a frame or two, and applied to *both*
+  // directions of a gesture. Going back clears the note during the route event
+  // itself, but coming forward only sets it once the resolver effect has run and
+  // found the page — a render or more later, and later still if the store is
+  // waking up. Anything shorter lets the forward half animate on its own.
+  const suppressSlide = useCallback(() => {
+    setNoSlide(true)
+    window.clearTimeout(noSlideTimer.current)
+    noSlideTimer.current = window.setTimeout(() => setNoSlide(false), MOBILE_SLIDE_MS + 80)
+  }, [])
   const leaveToList = useCallback((animate: boolean) => {
     window.clearTimeout(exitTimer.current)
-    if (!animate) {
-      setNoSlide(true)
-      setExitingToList(false)
-      setActiveId(null)
-      // Two frames: one for React to paint the new position, one for the browser
-      // to accept it as the resting state before transitions are allowed back.
-      requestAnimationFrame(() => requestAnimationFrame(() => setNoSlide(false)))
-      return
-    }
+    if (!animate) { setExitingToList(false); setActiveId(null); return }
     setExitingToList(true)
     exitTimer.current = window.setTimeout(() => { setActiveId(null); setExitingToList(false) }, MOBILE_SLIDE_MS)
   }, [])
-  useEffect(() => () => window.clearTimeout(exitTimer.current), [])
+  useEffect(() => () => { window.clearTimeout(exitTimer.current); window.clearTimeout(noSlideTimer.current) }, [])
   // Opening a page mid-exit cancels the exit, or its timer would clear the note
   // that was just opened.
   useEffect(() => { if (activeId) { window.clearTimeout(exitTimer.current); setExitingToList(false) } }, [activeId])
@@ -1103,10 +1106,12 @@ export default function App() {
     // screen under a `#/` URL. On mobile this is the whole back gesture: `#/`
     // is the list. Safe to do here because only real navigation — back/forward,
     // an opened link — emits these events; our own pushState mirror does not.
-    // Unanimated: this only fires for real navigation, and the browser is
-    // already running its own transition for the back/forward gesture.
+    // Both directions, before either is acted on: this only fires for real
+    // navigation, where the browser is already running its own transition and a
+    // second one on top of it is the stutter.
+    suppressSlide()
     if (!route.noteId) leaveToList(false)
-  }), [leaveToList])
+  }), [leaveToList, suppressSlide])
 
   // URL -> active page. Resolves once the store is up, and again as pages arrive
   // so a deep link opens the moment its page syncs. Consumed on success so an
