@@ -105,8 +105,11 @@ nav { overflow: visible; }
    moves while the line follows it. The dot marks the indent it will land at. */
 .drop-line { position: absolute; right: 6px; bottom: -1px; height: 2px; border-radius: 2px; background: #4c8ef7; pointer-events: none; }
 .drop-line::before { position: absolute; top: -2px; left: -3px; width: 6px; height: 6px; border-radius: 50%; background: #4c8ef7; content: ''; }
-.pages-nav { position: relative; }
-.pages-nav > .drop-line { top: -3px; bottom: auto; }
+.pages-nav, .favorites-nav { position: relative; }
+/* A list with no parent row to hang the line off draws it against its own top
+   edge. Favouriting is a move like any other — the row leaves one list and
+   arrives at the top of the other — so it gets the same line saying where. */
+.pages-nav > .drop-line, .favorites-nav > .drop-line { top: -3px; bottom: auto; }
 .page-tree-item { position: relative; }
 .page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
 .page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
