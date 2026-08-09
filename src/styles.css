@@ -70,6 +70,9 @@ nav { overflow: visible; }
 .page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
 .page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
 .page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sits in the row exactly where `.page-link` was, so renaming does not reflow
+   the tree around it. */
+.page-rename-input { width: 100%; min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid #4a7dd0; border-radius: 6px; color: #fff; background: #2a2a2a; font: inherit; font-size: 14px; outline: none; }
 .page-toggle, .page-toggle-spacer { width: 22px; height: 28px; flex: none; }
 .page-toggle { display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: #777; background: transparent; cursor: pointer; }
 @media (hover: hover) { .page-toggle:hover { color: #eee; background: #303030; } }
@@ -124,6 +127,19 @@ main::-webkit-scrollbar { width: 12px; }
 main::-webkit-scrollbar-track { background: transparent; }
 main::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
 main::-webkit-scrollbar-thumb:hover { background-color: #505050; }
+/* Sticky rather than fixed so the fades track the scroller's own box without
+   anyone having to measure the sidebar. They take no layout height — the bar
+   itself is a pseudo-element hanging out of a zero-height box — and stop short
+   of the scrollbar for the same reason the header bar does. Below the header
+   (z 5) so its controls stay legible over the top fade. */
+.scroll-fade { position: sticky; z-index: 4; height: 0; pointer-events: none; }
+.scroll-fade::before { content: ''; position: absolute; right: var(--scrollbarWidth); left: 0; height: 72px; opacity: 0; transition: opacity .2s ease; }
+.scroll-fade.visible::before { opacity: 1; }
+.scroll-fade-top { top: 0; }
+.scroll-fade-top::before { top: 0; background: linear-gradient(to bottom, #111111, #11111100); }
+.scroll-fade-bottom { bottom: 0; }
+.scroll-fade-bottom::before { bottom: 0; background: linear-gradient(to top, #111111, #11111100); }
+
 /* The article is pulled up into the header band so its first element — the path —
    sits level with the header controls rather than below them. That puts the path
    entirely inside the header's own 44px, so turning the header backdrop on for
@@ -230,6 +246,94 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .invite-row .new { padding: 6px 12px; font-size: 12px; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .member-list span { padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
+
+.adopt-modal { width: min(420px, 100%); gap: 14px; }
+.adopt-body { margin: -5px 0 0; color: #aaa; line-height: 1.45; }
+.adopt-note { margin: -6px 0 0; color: #888; font-size: 12px; line-height: 1.45; }
+
+/* The way into the page list. Reads as a row you can open, not as one of the
+   decision buttons below it. */
+.adopt-see-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 11px 13px; border: 1px solid #333; border-radius: 8px; color: #c5c5c5; background: #151515; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.adopt-see-pages svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #7d7d7d; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (hover: hover) { .adopt-see-pages:hover { border-color: #454545; color: #f1f1f1; } }
+
+.adopt-list { display: grid; max-height: min(48vh, 300px); margin: -4px 0 0; padding: 7px 0; overflow-y: auto; gap: 1px; border-radius: 8px; background: #151515; list-style: none; -webkit-overflow-scrolling: touch; }
+.adopt-list li { overflow: hidden; padding: 6px 13px; color: #d2d2d2; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.adopt-list .adopt-more { color: #7d7d7d; font-style: italic; }
+
+.adopt-actions { display: flex; align-items: center; gap: 8px; }
+.adopt-spacer { flex: 1; }
+.adopt-actions button { padding: 9px 14px; border: 1px solid #3a3a3a; border-radius: 7px; color: #c5c5c5; background: #242424; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.adopt-actions .new { border-color: transparent; font-weight: 600; }
+.adopt-actions button:disabled { color: #666; cursor: not-allowed; }
+/* Destructive, and deliberately the quietest thing in the dialog. */
+.adopt-discard-link { border-color: transparent !important; color: #7d7d7d !important; background: none !important; padding-left: 0 !important; }
+.adopt-discard { border-color: #6a2f2f !important; color: #e88 !important; background: #2b1c1c !important; }
+@media (hover: hover) {
+  .adopt-actions button:not(:disabled):hover { color: #fff; }
+  .adopt-discard-link:not(:disabled):hover { color: #e88 !important; }
+}
+
+/* Phones: a bottom sheet rather than a floating card. The actions sit within
+   thumb reach instead of centred halfway up the screen, and the primary action
+   goes full width on its own row so the three choices never crowd into a line
+   of tiny targets. */
+@media (max-width: 560px) {
+  .adopt-backdrop { place-items: end stretch; padding: 0; }
+  .adopt-modal { width: 100%; gap: 13px; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 16px 16px 0 0; }
+  .adopt-modal header { align-items: center; }
+  .adopt-list { max-height: 42vh; }
+  .adopt-actions { flex-wrap: wrap; }
+  /* With the primary action on its own row the spacer has nothing left to push
+     apart, and left in place it wraps to a row of its own. */
+  .adopt-spacer { display: none; }
+  .adopt-actions .new { order: -1; width: 100%; padding: 12px 14px; text-align: center; }
+  .adopt-actions button { flex: 1; padding: 11px 12px; text-align: center; }
+  .adopt-discard-link { flex: 0 1 auto !important; padding-left: 2px !important; }
+  .adopt-see-pages { padding: 13px; }
+}
+
+/* Recently deleted. Collapsed by default and quiet by design: it is a safety
+   net, not a place anyone means to spend time. */
+.trash-section { margin-top: auto; padding: 10px 8px 0; }
+.trash-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 4px; border: 0; border-radius: 6px; color: #8e8e8e; background: none; font: inherit; font-size: 12px; cursor: pointer; }
+.trash-toggle svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .14s ease; }
+.trash-toggle svg.open { transform: rotate(90deg); }
+.trash-count { margin-left: auto; color: #6b6b6b; font-variant-numeric: tabular-nums; }
+@media (hover: hover) { .trash-toggle:hover { color: #ddd; background: #1d1d1d; } }
+.trash-list { display: grid; max-height: 210px; margin-top: 2px; overflow-y: auto; gap: 1px; }
+.trash-item { display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+.trash-item.active { background: #242424; }
+.trash-open { display: grid; min-width: 0; flex: 1; padding: 6px 6px 6px 22px; border: 0; border-radius: 6px; gap: 1px; background: none; font: inherit; text-align: left; cursor: pointer; }
+.trash-title { overflow: hidden; color: #b4b4b4; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.trash-when { color: #6b6b6b; font-size: 11px; }
+.trash-restore { flex: none; padding: 4px 8px; border: 0; border-radius: 5px; color: #9a9a9a; background: none; font: inherit; font-size: 11px; cursor: pointer; }
+.trash-restore:disabled { color: #555; cursor: not-allowed; }
+@media (hover: hover) {
+  .trash-item:hover { background: #1d1d1d; }
+  .trash-restore:not(:disabled):hover { color: #fff; background: #333; }
+}
+
+/* The standing reminder on an open trashed page — the one surface that says why
+   typing does nothing. */
+.trash-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #4a3f2a; border-radius: 9px; background: #241f16; }
+.trash-banner-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.trash-banner strong { color: #e8dcc2; font-size: 13px; font-weight: 600; }
+.trash-banner span { color: #a99b7e; font-size: 12px; }
+.trash-banner .new { flex: none; padding: 7px 13px; font-size: 12px; }
+@media (max-width: 560px) {
+  .trash-banner { flex-direction: column; align-items: stretch; gap: 10px; }
+  .trash-banner .new { width: 100%; }
+}
+
+.sidebar-account { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 13px 8px 0; color: #8e8e8e; font-size: 12px; }
+.sidebar-account + .sidebar-footer { margin-top: 0; padding-top: 7px; }
+/* Only the first of the three stacked footers claims the leftover space. */
+.trash-section + .sidebar-account, .trash-section + .sidebar-footer { margin-top: 0; padding-top: 9px; }
+.account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-signout { margin-left: auto; padding: 0; border: 0; color: #aaa; background: none; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.account-signout:disabled { color: #555; cursor: not-allowed; }
+@media (hover: hover) { .account-signout:not(:disabled):hover { color: #fff; } }
 
 .notification-center { position: absolute; top: 62px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
 .notification-empty { margin: 0; padding: 14px; color: #888; font-size: 12px; text-align: center; }
@@ -406,6 +510,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .sidebar-footer { padding: 14px 3px 0; }
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
+  /* No gutter is reserved for a scrollbar here, so the fades run edge to edge. */
+  .scroll-fade::before { right: 0; height: 56px; }
   article { min-height: 100%; padding: 16px 20px 60px; }
   .editor-header { height: 36px; }
   /* The path is desktop-only, so nothing has to hide under the header here. */

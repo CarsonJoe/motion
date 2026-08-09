@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { drainOutbox, saveNote } = await import('./sync')
+const { deleteNoteTree, drainOutbox, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -95,6 +95,147 @@ describe('saveNote', () => {
     await saveNote(store, { ...live, title: 'edited', updatedAt: 40 })
 
     expect(store.getNote(id)?.deletedAt).toBe(30)
+  })
+})
+
+describe('deleteNoteTree', () => {
+  // Regression: the delete used to destroy every body in the subtree, so the
+  // soft delete was reversible in the metadata and irreversible in fact. Any
+  // trash or archive has to be able to hand the contents back.
+  it('keeps every body in the subtree so the delete can be undone', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root', title: 'Trip' }))
+    await store.putNote(note({ id: 'child', title: 'Packing', parentId: 'root' }))
+    // Held as values: each call to `encodedInsert` mints a fresh Yjs client id,
+    // so two encodings of the same text are not byte-identical.
+    const rootBody = encodedInsert('itinerary')
+    const childBody = encodedInsert('socks')
+    await store.putDocState('root', rootBody)
+    await store.putDocState('child', childBody)
+
+    await deleteNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBeGreaterThan(0)
+    expect(store.getNote('child')?.deletedAt).toBeGreaterThan(0)
+    expect(await store.getDocState('root')).toBe(rootBody)
+    expect(await store.getDocState('child')).toBe(childBody)
+  })
+
+  // The shared timestamp is what identifies one deletion as a single undoable
+  // operation, and what keeps an earlier, separate deletion out of it.
+  it('stamps the subtree with one timestamp and leaves earlier deletions alone', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root' }))
+    await store.putNote(note({ id: 'kept', parentId: 'root' }))
+    await store.putNote(note({ id: 'gone-already', parentId: 'root', deletedAt: 5, updatedAt: 5 }))
+
+    await deleteNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBe(store.getNote('kept')?.deletedAt)
+    expect(store.getNote('gone-already')?.deletedAt).toBe(5)
+  })
+})
+
+describe('trashRoots', () => {
+  it('lists the top of each deletion, not every page it took with it', () => {
+    const at = 1000
+    const notes = [
+      note({ id: 'root', deletedAt: at, updatedAt: at }),
+      note({ id: 'child', parentId: 'root', deletedAt: at, updatedAt: at }),
+      note({ id: 'alive' }),
+      note({ id: 'separate', deletedAt: 500, updatedAt: 500 })
+    ]
+    expect(trashRoots(notes).map((n) => n.id)).toEqual(['root', 'separate'])
+  })
+
+  // A page deleted on its own is its own root even if its parent is also in the
+  // trash, because the two were separate decisions.
+  it('treats a page deleted separately from its parent as its own entry', () => {
+    const notes = [
+      note({ id: 'parent', deletedAt: 900, updatedAt: 900 }),
+      note({ id: 'child', parentId: 'parent', deletedAt: 400, updatedAt: 400 })
+    ]
+    expect(trashRoots(notes).map((n) => n.id)).toEqual(['parent', 'child'])
+  })
+})
+
+describe('restoreNoteTree', () => {
+  it('brings back everything removed by the same deletion', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root', title: 'Trip' }))
+    await store.putNote(note({ id: 'child', parentId: 'root' }))
+    await deleteNoteTree(store, 'root')
+
+    await restoreNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBe(0)
+    expect(store.getNote('child')?.deletedAt).toBe(0)
+    expect(store.getNote('child')?.parentId).toBe('root')
+  })
+
+  it('leaves a page deleted earlier in the trash', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root' }))
+    await store.putNote(note({ id: 'earlier', parentId: 'root', deletedAt: 5, updatedAt: 5 }))
+    await deleteNoteTree(store, 'root')
+
+    await restoreNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBe(0)
+    expect(store.getNote('earlier')?.deletedAt).toBe(5)
+  })
+
+  // The tree renders by walking parentId from the root, so a restored page
+  // still pointing at a deleted parent would be invisible and unreachable.
+  it('re-homes a restored page whose parent is still deleted', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'parent' }))
+    await store.putNote(note({ id: 'child', parentId: 'parent' }))
+    // Two separate deletions: the child first, then the parent.
+    await deleteNoteTree(store, 'child')
+    await deleteNoteTree(store, 'parent')
+
+    await restoreNoteTree(store, 'child')
+
+    expect(store.getNote('child')?.deletedAt).toBe(0)
+    expect(store.getNote('child')?.parentId).toBe('')
+    expect(store.getNote('parent')?.deletedAt).toBeGreaterThan(0)
+  })
+
+  it('keeps a parent that is alive', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'parent' }))
+    await store.putNote(note({ id: 'child', parentId: 'parent' }))
+    await deleteNoteTree(store, 'child')
+
+    await restoreNoteTree(store, 'child')
+
+    expect(store.getNote('child')?.parentId).toBe('parent')
+  })
+
+  it('queues the restore for push and keeps the body', async () => {
+    const store = await openLocalStore()
+    const body = encodedInsert('itinerary')
+    await store.putNote(note({ id: 'root' }))
+    await store.putDocState('root', body)
+    await deleteNoteTree(store, 'root')
+    await store.removeOps((await store.listOps()).map((op) => op.id))
+
+    await restoreNoteTree(store, 'root')
+
+    expect((await store.listOps()).some((op) => op.noteId === 'root')).toBe(true)
+    expect(await store.getDocState('root')).toBe(body)
+  })
+
+  it('does nothing for a page that is not deleted', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'alive', updatedAt: 7 }))
+    await restoreNoteTree(store, 'alive')
+    expect(store.getNote('alive')?.updatedAt).toBe(7)
+  })
+
+  it('uses a retention window long enough to outlast a device being away', () => {
+    expect(TRASH_RETENTION_MS).toBe(30 * 24 * 60 * 60 * 1000)
   })
 })
 

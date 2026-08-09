@@ -1,6 +1,6 @@
 import { createClient, type InvitationInfo, type MemberInfo, type ResourceInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
 import { mergeBase64Updates } from './codec'
-import { subtreeIds, type LocalStore, type Note, type NoteOp, type UpdateOp } from './local'
+import { adoptScope, ANON_SCOPE, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
 
 // Tallpond injects gateway config on its hosted origin; local Vite development
 // supplies the same two values through .env.local. Developer credentials never
@@ -27,6 +27,9 @@ export type SyncState = {
   // shareId -> role, refreshed on every full sync and cached for offline UI.
   roles: Record<string, string>
   pending: number
+  // Set when signing in found work in the anonymous scope. Purely a question
+  // for the user: nothing is moved or dropped until they answer it.
+  adoptable: ScopeSurvey | null
   // A whole-tree pull is running: startup, reconnect, or an explicit retry.
   // Tracked separately because `phase: 'syncing'` cannot carry this — `settle`
   // also uses it to mean "the outbox still has work", which is true through
@@ -34,14 +37,33 @@ export type SyncState = {
   fullSyncing: boolean
 }
 
+// The last identity this device scoped to. It is what lets a cold boot open the
+// right database before the network has said anything — without it an offline
+// start would show a signed-in user the empty anonymous scope and read as data
+// loss. Presentation only, exactly like CONNECTED_KEY below: it names a local
+// database, it is never evidence of a live session.
+const USER_KEY = 'motion-user'
+const storedScope = () => localStorage.getItem(USER_KEY) || ANON_SCOPE
+export const initialScope = storedScope
+
+// Roles are cached per identity for offline UI. An unscoped key would hand the
+// next user this one's roles, which is the same leak as an unscoped database.
 const ROLE_KEY = 'motion-role:'
-const storedRoles = () => {
+const rolePrefix = (scope: string) => `${ROLE_KEY}${scope}:`
+const storedRoles = (scope: string) => {
+  const prefix = rolePrefix(scope)
   const roles: Record<string, string> = {}
   for (let index = 0; index < localStorage.length; index += 1) {
     const key = localStorage.key(index)
-    if (key?.startsWith(ROLE_KEY)) roles[key.slice(ROLE_KEY.length)] = localStorage.getItem(key) ?? ''
+    if (key?.startsWith(prefix)) roles[key.slice(prefix.length)] = localStorage.getItem(key) ?? ''
   }
   return roles
+}
+const clearStoredRoles = (scope: string) => {
+  const prefix = rolePrefix(scope)
+  for (const key of Object.keys(localStorage).filter((candidate) => candidate.startsWith(prefix))) {
+    localStorage.removeItem(key)
+  }
 }
 
 // "This device has signed in before" — presentation only. It decides whether a
@@ -73,7 +95,7 @@ const restoreRoute = () => {
   if (hash) window.dispatchEvent(new Event('hashchange'))
 }
 
-let state: SyncState = { phase: 'local', connected: false, error: null, user: null, roles: storedRoles(), pending: 0, fullSyncing: false }
+let state: SyncState = { phase: 'local', connected: false, error: null, user: null, roles: storedRoles(storedScope()), pending: 0, fullSyncing: false, adoptable: null }
 const listeners = new Set<() => void>()
 const setState = (patch: Partial<SyncState>) => {
   state = { ...state, ...patch }
@@ -231,6 +253,10 @@ async function pushNoteRow(client: TallpondClient, store: LocalStore, op: NoteOp
 // ---------------------------------------------------------------------------
 
 let local: LocalStore | null = null
+// How App is told the store underneath it has been replaced by a scope swap.
+let onScopeChange: ((store: LocalStore) => void) | null = null
+const currentScope = () => local?.scope ?? storedScope()
+const roleKey = (shareId: string) => `${rolePrefix(currentScope())}${shareId}`
 let liveSubscriptions: Array<{ close: () => void }> = []
 let applyChain = Promise.resolve()
 let flushing = false
@@ -386,7 +412,7 @@ export async function fullSync() {
       for (const resource of resources) {
         if (resource.currentMember?.role) {
           roles[resource.id] = resource.currentMember.role
-          localStorage.setItem(`${ROLE_KEY}${resource.id}`, resource.currentMember.role)
+          localStorage.setItem(roleKey(resource.id), resource.currentMember.role)
         }
         for (const row of await selectAll((cursor) => {
           const query = tallpond.resource(resource.id).table('member_notes').select()
@@ -416,13 +442,16 @@ export async function fullSync() {
       for (const shareId of sharesBefore) {
         if (resources.some((resource) => resource.id === shareId)) continue
         if (!(await membershipEnded(shareId))) continue
-        localStorage.removeItem(`${ROLE_KEY}${shareId}`)
+        localStorage.removeItem(roleKey(shareId))
         delete roles[shareId]
         await local.removeShare(shareId)
       }
       setState({ roles })
       subscribeLive(tallpond, resources.map((resource) => resource.id))
       await drainOutbox(tallpond, local)
+      // After the drain, so a delete queued on this device reaches the server
+      // before the purge decides whether that page's window has passed.
+      await purgeExpired(tallpond, local)
       await settle()
     } catch (error) {
       reportFailure(error)
@@ -461,12 +490,43 @@ async function establishSession() {
     }
     return false
   }
+  // The identity is now on the critical path rather than a background nicety:
+  // every local database is scoped by it, so a session we cannot name is a
+  // session we cannot safely sync. Failing here is strictly better than
+  // proceeding — syncing under an unknown identity is what writes one user's
+  // notes into another's scope.
+  const user: User | null = await tallpond.auth.getUser()
+  if (!user) return false
   rememberLogin()
-  setState({ connected: true })
-  void tallpond.auth.getUser().then((user: User | null) => {
-    if (user) setState({ user: { id: user.id, name: user.profile.displayName || user.profile.handle || 'You' } })
-  }).catch(() => {})
+  setState({ connected: true, user: { id: user.id, name: user.profile.displayName || user.profile.handle || 'You' } })
+  await applyScope(user.id)
   return true
+}
+
+// Repoints every local read and write at this identity's database. Called after
+// the session is confirmed and before the first sync touches anything: a
+// `fullSync` run against the previous scope would pull the account's notes into
+// it and push its notes up as this user, which is the leak this exists to close.
+async function applyScope(userId: string) {
+  localStorage.setItem(USER_KEY, userId)
+  if (!local || local.scope === userId) return
+  const previous = local
+  const scoped = await openLocalStore(userId)
+  local = scoped
+  previous.close()
+  onScopeChange?.(scoped)
+  setState({ roles: storedRoles(userId) })
+  await refreshPending()
+
+  // Whatever the previous scope held is now untouched by the running app, so
+  // asking about it is safe and answering it is never urgent.
+  if (previous.scope !== ANON_SCOPE) return
+  // A scope holding nothing but tombstones is not worth a dialog — there is no
+  // page for the user to recognise — but it is still worth adopting silently so
+  // those deletes reach the server.
+  const survey = await surveyScope(ANON_SCOPE)
+  if (survey.notes) setState({ adoptable: survey })
+  else if (survey.deleted || survey.pending) await adoptAnonymousWork()
 }
 
 // The one re-entry point for automatic recovery: a session that was never
@@ -493,9 +553,10 @@ async function resume() {
   await fullSync()
 }
 
-export async function startSync(store: LocalStore) {
+export async function startSync(store: LocalStore, scopeChanged: (store: LocalStore) => void) {
   if (local) return
   local = store
+  onScopeChange = scopeChanged
   await refreshPending()
   window.addEventListener('online', () => {
     if (state.connected || rememberedLogin()) void resume()
@@ -518,6 +579,71 @@ export async function connectInteractive() {
   } catch (error) { reportFailure(error); throw error }
   stashRoute()
   await tallpond.auth.signIn()
+}
+
+// ---------------------------------------------------------------------------
+// Anonymous work, and leaving.
+// ---------------------------------------------------------------------------
+
+// Move the anonymous scope's pages into this account and push them. The prompt
+// that leads here is the only place the choice is offered, and the alternative
+// keeps the data rather than deleting it, so neither answer loses work.
+export async function adoptAnonymousWork() {
+  if (!local || local.scope === ANON_SCOPE) return
+  try {
+    await adoptScope(ANON_SCOPE, local, mergeBase64Updates)
+    setState({ adoptable: null })
+    await refreshPending()
+    scheduleFlush()
+  } catch (error) {
+    setState({ error: `Could not merge the work saved on this device: ${describeError(error)}` })
+  }
+}
+
+// "Not now" leaves the anonymous scope exactly where it is: the question comes
+// back on the next sign-in, which is a mild annoyance and strictly better than
+// a one-click discard of the only copy of something.
+export const declineAnonymousWork = () => setState({ adoptable: null })
+
+// The explicit discard, reachable only after the user has been told what it
+// contains. Separate from `decline` on purpose — one of these is destructive.
+export async function discardAnonymousWork() {
+  await dropScope(ANON_SCOPE)
+  setState({ adoptable: null })
+}
+
+// Signing out is refused while the outbox still holds work. It would be
+// possible to drain first, but the honest failure — "this device still has
+// changes that have not reached the server" — is one the user can act on,
+// where a sign-out that quietly dropped them is not recoverable.
+export async function signOut() {
+  if (!tallpond) return
+  if (state.pending > 0) {
+    throw new Error(`${state.pending === 1 ? 'One change has' : `${state.pending} changes have`} not synced yet. Wait for syncing to finish, then sign out.`)
+  }
+  const scope = currentScope()
+  try { await tallpond.auth.signOut() } catch { /* the local half still has to happen */ }
+
+  for (const subscription of liveSubscriptions) subscription.close()
+  liveSubscriptions = []
+  if (retryTimer !== null) { window.clearTimeout(retryTimer); retryTimer = null }
+  if (flushTimer !== null) { window.clearTimeout(flushTimer); flushTimer = null }
+
+  clearStoredRoles(scope)
+  localStorage.removeItem(USER_KEY)
+  localStorage.removeItem(CONNECTED_KEY)
+
+  // The signed-in scope's database is left on disk untouched. Signing back in
+  // re-opens it with everything still there, which is what makes signing out
+  // reversible instead of a local wipe. It is not readable by the next user:
+  // its name is the previous user's id and nothing but their sign-in reaches it.
+  const previous = local
+  const anonymous = await openLocalStore(ANON_SCOPE)
+  local = anonymous
+  previous?.close()
+  onScopeChange?.(anonymous)
+
+  setState({ phase: 'local', connected: false, error: null, user: null, roles: {}, pending: 0, fullSyncing: false, adoptable: null })
 }
 
 // Local mutation entry point: App persists the note + op, then calls this to
@@ -544,6 +670,18 @@ export async function saveNote(store: LocalStore, note: Note) {
   noteChanged()
 }
 
+// A soft delete, and nothing more. The body is deliberately left on disk: this
+// used to call `deleteDocState` here and in `applyRemoteNote`, which made the
+// delete irreversible in fact even though `deletedAt` is reversible in
+// principle — restoring a page returned its title and an empty document. The
+// bodies are what a trash or archive would have to give back, so they stay
+// until something genuinely destroys the page.
+//
+// The whole subtree is stamped with one identical `deletedAt`, which is also
+// the natural key for the deletion as a single undoable operation. Already-
+// deleted notes are excluded from the subtree walk, so a child deleted earlier
+// keeps its own timestamp and stays a separate deletion rather than being
+// folded into this one.
 export async function deleteNoteTree(store: LocalStore, rootId: string) {
   const notes = store.getSnapshot()
   const ids = subtreeIds(notes.filter((note) => !note.deletedAt), rootId)
@@ -551,10 +689,90 @@ export async function deleteNoteTree(store: LocalStore, rootId: string) {
   for (const note of notes) {
     if (!ids.has(note.id)) continue
     await store.putNote({ ...note, deletedAt, updatedAt: deletedAt })
-    await store.deleteDocState(note.id)
     await store.enqueueNote(note.id)
   }
   noteChanged()
+}
+
+// How long a deleted page stays recoverable. Long on purpose: a purge is the
+// only irreversible act in the app, and the window is also what makes the purge
+// safe to run at all. A device that was offline through the purge still has the
+// page alive and would re-push it, so the window has to comfortably outlast any
+// plausible absence — see `purgeExpired`.
+export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
+
+export const purgeDueAt = (note: Note) => note.deletedAt + TRASH_RETENTION_MS
+
+// The notes to show in Recently deleted: the top of each deletion, not every
+// page it took with it. A note is a root of its deletion if its parent was not
+// removed by the same operation — `deleteNoteTree` stamps one timestamp across
+// the whole subtree, so that comparison is all it takes to reassemble which
+// pages went together.
+export function trashRoots(notes: Note[]) {
+  const byId = new Map(notes.map((note) => [note.id, note]))
+  return notes
+    .filter((note) => note.deletedAt && byId.get(note.parentId)?.deletedAt !== note.deletedAt)
+    .sort((a, b) => b.deletedAt - a.deletedAt)
+}
+
+// Everything removed by the same deletion as `rootId`.
+function deletionGroup(notes: Note[], root: Note) {
+  const ids = new Set([root.id])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const note of notes) {
+      if (ids.has(note.id) || note.deletedAt !== root.deletedAt) continue
+      if (ids.has(note.parentId)) { ids.add(note.id); changed = true }
+    }
+  }
+  return ids
+}
+
+// Undoes one deletion, restoring the pages that went together.
+//
+// The reparenting is not a nicety. The tree renders by walking `parentId` from
+// the root, so a page whose parent is still deleted is not shown anywhere —
+// not under its parent, not at the top level, nowhere — and there is no way to
+// drag it back. Anything whose parent did not come back with it is re-homed to
+// the root instead, which is visible and fixable; leaving it attached to a
+// deleted parent would be neither.
+export async function restoreNoteTree(store: LocalStore, rootId: string) {
+  const notes = store.getSnapshot()
+  const root = notes.find((note) => note.id === rootId)
+  if (!root?.deletedAt) return
+  const ids = deletionGroup(notes, root)
+  const alive = (id: string) => Boolean(id) && !ids.has(id) && notes.some((note) => note.id === id && !note.deletedAt)
+  const updatedAt = Date.now()
+  for (const note of notes) {
+    if (!ids.has(note.id)) continue
+    const parentId = ids.has(note.parentId) || alive(note.parentId) ? note.parentId : ''
+    await store.putNote({ ...note, parentId, deletedAt: 0, updatedAt })
+    await store.enqueueNote(note.id)
+  }
+  noteChanged()
+}
+
+// Drops pages whose retention window has passed, locally and on the server.
+//
+// Only ever called from a connected full sync, and only removes a note locally
+// once the server has confirmed the delete. Purging locally while the row still
+// existed remotely would just pull it back on the next sync, and purging while
+// offline would do exactly that. A failure — most likely a reader or writer
+// hitting the `admin` requirement on a shared page — leaves the note in place
+// for whichever device does have the rights.
+async function purgeExpired(client: TallpondClient, store: LocalStore) {
+  const cutoff = Date.now() - TRASH_RETENTION_MS
+  for (const note of store.getSnapshot()) {
+    if (!note.deletedAt || note.deletedAt > cutoff) continue
+    try {
+      // Bodies first: a note row removed while its updates survived would leave
+      // rows keyed to a note nothing can ever reach again.
+      await updatesTable(client, note.shareId).delete().eq('noteId', note.id)
+      await notesTable(client, note.shareId).delete().eq('noteId', note.id)
+    } catch { continue }
+    await store.removeNote(note.id)
+  }
 }
 
 // Sharing is an online operation: it creates the resource, copies the subtree
@@ -587,7 +805,7 @@ export async function shareNoteTree(store: LocalStore, root: Note) {
     await tallpond.table('notes').update({ deletedAt, clientUpdatedAt: deletedAt }).eq('noteId', note.id)
   }
   const roles = { ...state.roles, [resource.id]: 'owner' }
-  localStorage.setItem(`${ROLE_KEY}${resource.id}`, 'owner')
+  localStorage.setItem(roleKey(resource.id), 'owner')
   setState({ roles })
   subscribeLiveForCurrentShares(store)
   return resource.id
@@ -603,7 +821,7 @@ export async function leaveShare(store: LocalStore, shareId: string) {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to leave this shared page.')
   await tallpond.resource(shareId).members.leave()
-  localStorage.removeItem(`${ROLE_KEY}${shareId}`)
+  localStorage.removeItem(roleKey(shareId))
   const roles = { ...state.roles }
   delete roles[shareId]
   setState({ roles })

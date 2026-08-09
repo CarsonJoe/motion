@@ -75,6 +75,20 @@ function settleWithin(work: Promise<void> | undefined, ms: number) {
 // an edit. Entries remove themselves once settled.
 const pendingWrites = new Map<string, Promise<void>>()
 
+// Reads a note's text without opening a controller, so the sidebar can export a
+// page the user isn't currently looking at. Waits on the same pending writes as
+// openNoteDoc: a download taken right after an edit must not miss its tail.
+export async function readNoteText(store: LocalStore, noteId: string): Promise<string> {
+  await settleWithin(pendingWrites.get(noteId), PERSIST_WAIT_MS)
+  const saved = await store.getDocState(noteId)
+  if (!saved) return ''
+  const doc = new Y.Doc()
+  Y.applyUpdate(doc, fromBase64(saved), REMOTE_ORIGIN)
+  const text = doc.getText('content').toString()
+  doc.destroy()
+  return text
+}
+
 export async function openNoteDoc(options: {
   note: Note
   store: LocalStore
