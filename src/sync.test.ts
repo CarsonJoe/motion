@@ -1,0 +1,360 @@
+import { beforeEach, describe, expect, it } from 'vitest'
+import { IDBFactory } from 'fake-indexeddb'
+import * as Y from 'yjs'
+
+const localValues = new Map<string, string>()
+Object.defineProperty(globalThis, 'localStorage', {
+  value: {
+    get length() { return localValues.size },
+    key: (index: number) => [...localValues.keys()][index] ?? null,
+    getItem: (key: string) => localValues.get(key) ?? null,
+    setItem: (key: string, value: string) => localValues.set(key, value),
+    removeItem: (key: string) => localValues.delete(key)
+  },
+  configurable: true
+})
+Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
+
+const { openLocalStore } = await import('./local')
+const { deleteNoteTree, drainOutbox, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { fromBase64, toBase64 } = await import('./codec')
+import type { Note } from './local'
+import type { TallpondClient } from './sync'
+
+type Recorded = { scope: string; table: string; op: string; values?: Record<string, unknown>; filters: Array<[string, string, unknown]> }
+
+// A minimal stand-in for the SDK query builder: fluent, thenable, and
+// scripted per-table with the rows the gateway would return.
+function fakeClient(existingByTable: Record<string, Record<string, unknown> | null> = {}, updateHits: Record<string, Array<Record<string, unknown>>> = {}) {
+  const calls: Recorded[] = []
+  const makeQuery = (scope: string, table: string) => {
+    const record: Recorded = { scope, table, op: 'select', filters: [] }
+    const query: Record<string, unknown> = {
+      select: () => query,
+      insert: (values: Record<string, unknown>) => { record.op = 'insert'; record.values = values; return query },
+      update: (values: Record<string, unknown>) => { record.op = 'update'; record.values = values; return query },
+      delete: () => { record.op = 'delete'; return query },
+      eq: (column: string, value: unknown) => { record.filters.push([column, 'eq', value]); return query },
+      lte: (column: string, value: unknown) => { record.filters.push([column, 'lte', value]); return query },
+      in: (column: string, value: unknown) => { record.filters.push([column, 'in', value]); return query },
+      maybeSingle: () => { calls.push(record); return Promise.resolve(existingByTable[table] ?? null) },
+      then: (resolve: (rows: unknown[]) => unknown) => {
+        calls.push(record)
+        return Promise.resolve(record.op === 'update' ? updateHits[table] ?? [] : []).then(resolve)
+      }
+    }
+    return query
+  }
+  const client = {
+    table: (name: string) => makeQuery('private', name),
+    resource: (id: string) => ({ table: (name: string) => makeQuery(id, name) })
+  } as unknown as TallpondClient
+  return { client, calls }
+}
+
+const note = (patch: Partial<Note>): Note => ({
+  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', deletedAt: 0, updatedAt: 0, ...patch
+})
+
+beforeEach(() => {
+  globalThis.indexedDB = new IDBFactory()
+})
+
+const encodedInsert = (value: string) => {
+  const doc = new Y.Doc()
+  doc.getText('content').insert(0, value)
+  return toBase64(Y.encodeStateAsUpdate(doc))
+}
+
+describe('saveNote', () => {
+  it('never lets a stale caller snapshot revert the note scope or a delete', async () => {
+    const store = await openLocalStore()
+    const id = crypto.randomUUID()
+    const shareId = crypto.randomUUID()
+    const beforeSharing = note({ id, title: 'draft', updatedAt: 10 })
+    await store.putNote(beforeSharing)
+    // The note is shared (and could equally have been deleted) after the UI
+    // captured `beforeSharing` for a title edit.
+    await store.putNote({ ...beforeSharing, shareId })
+
+    await saveNote(store, { ...beforeSharing, title: 'renamed', updatedAt: 20 })
+
+    const current = store.getNote(id)
+    expect(current?.title).toBe('renamed')
+    expect(current?.shareId).toBe(shareId)
+    expect(current?.deletedAt).toBe(0)
+  })
+
+  it('keeps a note deleted when a queued edit lands afterwards', async () => {
+    const store = await openLocalStore()
+    const id = crypto.randomUUID()
+    const live = note({ id, title: 'doomed', updatedAt: 10 })
+    await store.putNote(live)
+    await store.putNote({ ...live, deletedAt: 30, updatedAt: 30 })
+
+    await saveNote(store, { ...live, title: 'edited', updatedAt: 40 })
+
+    expect(store.getNote(id)?.deletedAt).toBe(30)
+  })
+})
+
+describe('deleteNoteTree', () => {
+  // Regression: the delete used to destroy every body in the subtree, so the
+  // soft delete was reversible in the metadata and irreversible in fact. Any
+  // trash or archive has to be able to hand the contents back.
+  it('keeps every body in the subtree so the delete can be undone', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root', title: 'Trip' }))
+    await store.putNote(note({ id: 'child', title: 'Packing', parentId: 'root' }))
+    // Held as values: each call to `encodedInsert` mints a fresh Yjs client id,
+    // so two encodings of the same text are not byte-identical.
+    const rootBody = encodedInsert('itinerary')
+    const childBody = encodedInsert('socks')
+    await store.putDocState('root', rootBody)
+    await store.putDocState('child', childBody)
+
+    await deleteNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBeGreaterThan(0)
+    expect(store.getNote('child')?.deletedAt).toBeGreaterThan(0)
+    expect(await store.getDocState('root')).toBe(rootBody)
+    expect(await store.getDocState('child')).toBe(childBody)
+  })
+
+  // The shared timestamp is what identifies one deletion as a single undoable
+  // operation, and what keeps an earlier, separate deletion out of it.
+  it('stamps the subtree with one timestamp and leaves earlier deletions alone', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root' }))
+    await store.putNote(note({ id: 'kept', parentId: 'root' }))
+    await store.putNote(note({ id: 'gone-already', parentId: 'root', deletedAt: 5, updatedAt: 5 }))
+
+    await deleteNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBe(store.getNote('kept')?.deletedAt)
+    expect(store.getNote('gone-already')?.deletedAt).toBe(5)
+  })
+})
+
+describe('trashRoots', () => {
+  it('lists the top of each deletion, not every page it took with it', () => {
+    const at = 1000
+    const notes = [
+      note({ id: 'root', deletedAt: at, updatedAt: at }),
+      note({ id: 'child', parentId: 'root', deletedAt: at, updatedAt: at }),
+      note({ id: 'alive' }),
+      note({ id: 'separate', deletedAt: 500, updatedAt: 500 })
+    ]
+    expect(trashRoots(notes).map((n) => n.id)).toEqual(['root', 'separate'])
+  })
+
+  // A page deleted on its own is its own root even if its parent is also in the
+  // trash, because the two were separate decisions.
+  it('treats a page deleted separately from its parent as its own entry', () => {
+    const notes = [
+      note({ id: 'parent', deletedAt: 900, updatedAt: 900 }),
+      note({ id: 'child', parentId: 'parent', deletedAt: 400, updatedAt: 400 })
+    ]
+    expect(trashRoots(notes).map((n) => n.id)).toEqual(['parent', 'child'])
+  })
+})
+
+describe('restoreNoteTree', () => {
+  it('brings back everything removed by the same deletion', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root', title: 'Trip' }))
+    await store.putNote(note({ id: 'child', parentId: 'root' }))
+    await deleteNoteTree(store, 'root')
+
+    await restoreNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBe(0)
+    expect(store.getNote('child')?.deletedAt).toBe(0)
+    expect(store.getNote('child')?.parentId).toBe('root')
+  })
+
+  it('leaves a page deleted earlier in the trash', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'root' }))
+    await store.putNote(note({ id: 'earlier', parentId: 'root', deletedAt: 5, updatedAt: 5 }))
+    await deleteNoteTree(store, 'root')
+
+    await restoreNoteTree(store, 'root')
+
+    expect(store.getNote('root')?.deletedAt).toBe(0)
+    expect(store.getNote('earlier')?.deletedAt).toBe(5)
+  })
+
+  // The tree renders by walking parentId from the root, so a restored page
+  // still pointing at a deleted parent would be invisible and unreachable.
+  it('re-homes a restored page whose parent is still deleted', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'parent' }))
+    await store.putNote(note({ id: 'child', parentId: 'parent' }))
+    // Two separate deletions: the child first, then the parent.
+    await deleteNoteTree(store, 'child')
+    await deleteNoteTree(store, 'parent')
+
+    await restoreNoteTree(store, 'child')
+
+    expect(store.getNote('child')?.deletedAt).toBe(0)
+    expect(store.getNote('child')?.parentId).toBe('')
+    expect(store.getNote('parent')?.deletedAt).toBeGreaterThan(0)
+  })
+
+  it('keeps a parent that is alive', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'parent' }))
+    await store.putNote(note({ id: 'child', parentId: 'parent' }))
+    await deleteNoteTree(store, 'child')
+
+    await restoreNoteTree(store, 'child')
+
+    expect(store.getNote('child')?.parentId).toBe('parent')
+  })
+
+  it('queues the restore for push and keeps the body', async () => {
+    const store = await openLocalStore()
+    const body = encodedInsert('itinerary')
+    await store.putNote(note({ id: 'root' }))
+    await store.putDocState('root', body)
+    await deleteNoteTree(store, 'root')
+    await store.removeOps((await store.listOps()).map((op) => op.id))
+
+    await restoreNoteTree(store, 'root')
+
+    expect((await store.listOps()).some((op) => op.noteId === 'root')).toBe(true)
+    expect(await store.getDocState('root')).toBe(body)
+  })
+
+  it('does nothing for a page that is not deleted', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'alive', updatedAt: 7 }))
+    await restoreNoteTree(store, 'alive')
+    expect(store.getNote('alive')?.updatedAt).toBe(7)
+  })
+
+  it('uses a retention window long enough to outlast a device being away', () => {
+    expect(TRASH_RETENTION_MS).toBe(30 * 24 * 60 * 60 * 1000)
+  })
+})
+
+describe('drainOutbox', () => {
+  it('merges content updates per note into one insert against the right scope', async () => {
+    const store = await openLocalStore()
+    await store.enqueueUpdate('n1', '', encodedInsert('hello'))
+    await store.enqueueUpdate('n1', '', encodedInsert('world'))
+    await store.enqueueUpdate('n2', 'share-1', encodedInsert('shared'))
+
+    const { client, calls } = fakeClient()
+    await drainOutbox(client, store)
+
+    const inserts = calls.filter((call) => call.op === 'insert')
+    expect(inserts).toHaveLength(2)
+    const privateInsert = inserts.find((call) => call.table === 'note_updates')!
+    expect(privateInsert.scope).toBe('private')
+    expect(privateInsert.values?.noteId).toBe('n1')
+    const merged = new Y.Doc()
+    Y.applyUpdate(merged, fromBase64(String(privateInsert.values?.payload)))
+    const textValue = merged.getText('content').toString()
+    expect(textValue).toContain('hello')
+    expect(textValue).toContain('world')
+
+    const sharedInsert = inserts.find((call) => call.table === 'member_note_updates')!
+    expect(sharedInsert.scope).toBe('share-1')
+    expect(await store.countOps()).toBe(0)
+  })
+
+  it('pushes metadata with an LWW guard and inserts only when the row is absent', async () => {
+    const store = await openLocalStore()
+    const fresh = note({ title: 'brand new', updatedAt: 50 })
+    await store.putNote(fresh)
+    await store.enqueueNote(fresh.id)
+
+    const { client, calls } = fakeClient({ notes: null })
+    await drainOutbox(client, store)
+
+    const update = calls.find((call) => call.op === 'update' && call.table === 'notes')!
+    expect(update.filters).toContainEqual(['noteId', 'eq', fresh.id])
+    expect(update.filters).toContainEqual(['clientUpdatedAt', 'lte', 50])
+    const insert = calls.find((call) => call.op === 'insert' && call.table === 'notes')!
+    expect(insert.values).toMatchObject({ noteId: fresh.id, title: 'brand new', clientUpdatedAt: 50 })
+    expect(await store.countOps()).toBe(0)
+  })
+
+  it('never inserts when a newer remote row already exists', async () => {
+    const store = await openLocalStore()
+    const stale = note({ title: 'stale', updatedAt: 10 })
+    await store.putNote(stale)
+    await store.enqueueNote(stale.id)
+
+    // update() misses the LWW guard; the row exists — so no insert happens.
+    const { client, calls } = fakeClient({ notes: { noteId: stale.id } })
+    await drainOutbox(client, store)
+
+    expect(calls.some((call) => call.op === 'insert' && call.table === 'notes')).toBe(false)
+    expect(await store.countOps()).toBe(0)
+  })
+
+  it('stops after a pass that dequeues nothing instead of spinning on it', async () => {
+    const store = await openLocalStore()
+    const typing = note({ title: 'being typed', updatedAt: 10 })
+    await store.putNote(typing)
+    await store.enqueueNote(typing.id)
+
+    // Every push races an edit that re-stamps the op's revision, so the op can
+    // never leave the outbox. The drain has to hand the work back to the next
+    // flush rather than loop on it — one round trip, not one per keystroke.
+    const stubborn = { ...store, removeNoteOpIfRev: async () => false }
+    const { client, calls } = fakeClient({ notes: { noteId: typing.id } })
+    await drainOutbox(client, stubborn)
+
+    expect(calls.filter((call) => call.table === 'notes')).toHaveLength(2)
+    expect(await store.countOps()).toBe(1)
+  })
+
+  // Regression: a 403 used to fall through to removeOps, so a stale cached role
+  // silently destroyed the user's writing. The edit exists nowhere else — the
+  // server has never seen it — so it has to survive a rejection.
+  it('keeps a permanently rejected content update queued instead of discarding it', async () => {
+    const store = await openLocalStore()
+    await store.enqueueUpdate('n1', 'share-1', encodedInsert('precious'))
+
+    const rejecting = {
+      table: () => { throw new Error('private table not expected') },
+      resource: () => ({
+        table: () => {
+          const query: Record<string, unknown> = {
+            select: () => query, insert: () => query, eq: () => query,
+            then: (_: unknown, reject: (error: unknown) => unknown) =>
+              Promise.reject(Object.assign(new Error('Forbidden'), { status: 403 })).catch(reject)
+          }
+          return query
+        }
+      })
+    } as unknown as TallpondClient
+
+    await drainOutbox(rejecting, store)
+
+    expect(await store.countOps()).toBe(1)
+    const [remaining] = await store.listOps()
+    expect(remaining.kind).toBe('update')
+  })
+
+  it('still clears a content update the gateway accepts', async () => {
+    const store = await openLocalStore()
+    await store.enqueueUpdate('n1', 'share-1', encodedInsert('sent'))
+    const { client } = fakeClient()
+    await drainOutbox(client, store)
+    expect(await store.countOps()).toBe(0)
+  })
+
+  it('drops metadata ops whose note no longer exists locally', async () => {
+    const store = await openLocalStore()
+    await store.enqueueNote('ghost')
+    const { client, calls } = fakeClient()
+    await drainOutbox(client, store)
+    expect(calls).toHaveLength(0)
+    expect(await store.countOps()).toBe(0)
+  })
+})

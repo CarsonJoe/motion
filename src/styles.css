@@ -2,102 +2,262 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: #f1f1f1;
   background: #111;
+  /* Surfaces the UA paints itself — the base canvas exposed mid-transition
+     during a swipe-back, rubber-band overscroll, scrollbars, form controls —
+     default to LIGHT without this, which is the white flash on back navigation.
+     Our own backgrounds never get a chance to cover those frames. */
+  color-scheme: dark;
+  /* Width of the editor's own scrollbar, kept here because the header has to
+     stop short of it — on mobile especially, where the scrollbar is an overlay
+     that would otherwise draw straight across the sticky header. */
+  --scrollbarWidth: 12px;
 }
 
 * { box-sizing: border-box; }
-html, body, #root { height: 100%; overflow: hidden; }
+/* Every layer that could be the topmost painted thing for a frame carries the
+   background, so no reflow can expose something lighter underneath. */
+html, body, #root { height: 100%; overflow: hidden; background: #111; }
 html, body { overscroll-behavior: none; }
 body { margin: 0; background: #111; }
+/* No safe-area padding: iOS owns the status bar (see the status-bar-style meta),
+   so the viewport we are handed already starts below it. The bottom inset is
+   reserved by the notes list alone (see the mobile block) rather than here —
+   an article should run to the edge of the screen. */
 .app-shell { display: flex; height: 100vh; height: 100dvh; overflow: hidden; background: #111; }
 .sidebar-collapsed aside { width: 0; flex-basis: 0; padding-right: 0; padding-left: 0; border-right-color: transparent; opacity: 0; pointer-events: none; }
 
 aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display: flex; flex-direction: column; overflow: hidden; padding: 16px 10px; background: #161616; border-right: 1px solid #2a2a2a; transition: width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), padding .24s ease, border-color .24s ease, opacity .16s ease; }
-.list-header { display: none; }
-.list-header-actions { display: flex; align-items: center; gap: 8px; }
 .new { border: 0; border-radius: 7px; padding: 10px 12px; color: #171717; background: #f0f0f0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-.new:hover { background: #fff; }
-.desktop-sidebar-actions { display: flex; align-items: center; gap: 6px; margin-bottom: 24px; }
-.desktop-new { min-width: 0; flex: 1; text-align: left; }
-.sidebar-close, .sidebar-open { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
-.sidebar-close:hover, .sidebar-open:hover { color: #fff; background: #292929; }
-.sidebar-close svg, .sidebar-open svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.icon-new { display: none; }
+/* Every :hover in this file is gated behind `(hover: hover)`. On touch, a tap
+   leaves :hover latched on the element until you tap somewhere else, so an
+   ungated hover reads as a stuck selection. Anything that must show state after
+   a tap uses a class or :focus-visible instead. */
+@media (hover: hover) { .new:hover { background: #fff; } }
+
+/* --- sidebar zone 1: a row of icons ---------------------------------------
+   Three fixed zones, one scroller. The icon row sits above the tree and never
+   moves; the tree takes the rest; the sync line closes it. Search is an icon
+   rather than a field — a text input that opens a different surface when you
+   touch it is a button wearing the wrong costume. The account is not shown at
+   all; it lives inside settings, along with Recently deleted. */
+.sidebar-top { display: flex; align-items: center; gap: 2px; margin-bottom: 10px; }
+.sidebar-top-actions { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
+.sidebar-icon, .sidebar-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 6px; border: 0; border-radius: 7px; color: #999; background: transparent; cursor: pointer; }
+@media (hover: hover) { .sidebar-icon:hover, .sidebar-close:hover { color: #fff; background: #292929; } }
+.sidebar-icon[aria-expanded="true"] { color: #fff; background: #292929; }
+.sidebar-icon svg, .sidebar-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+
+/* --- the one action: a new page at the top level ---------------------------
+   A labelled row here, sitting between the icons and the tree where the lists
+   it creates into begin. The phone turns the same element into a circle pinned
+   bottom-right (see the mobile block) — there, thumb reach beats a label. */
+.new-page-action { display: flex; width: 100%; align-items: center; gap: 9px; height: 36px; margin-bottom: 14px; padding: 0 11px; border: 0; border-radius: 8px; color: #171717; background: #f0f0f0; font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; transition: background .12s ease; }
+.new-page-action svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; }
+@media (hover: hover) { .new-page-action:hover { background: #fff; } }
+.sidebar-collapsed .new-page-action { opacity: 0; pointer-events: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
-nav { overflow: auto; padding-bottom: 8px; }
+/* Both section headings are the same drop target — the top level — so both
+   light up together. The drop line for a top-level drop lands at the top of
+   .pages-nav, which can be far below the finger (or off screen entirely when
+   FAVORITES is long), so the heading under the pointer has to say so itself. */
+   A rule under the heading rather than a filled box: the two labels carry
+   different top padding (PAGES gets 18px as a later sibling), so a box would
+   render at two different heights — and the line sits exactly at the edge the
+   page will land on. */
+.section-label.drop-target { color: #cddffa; box-shadow: inset 0 -2px 0 #4c8ef7; }
+/* The list is for navigating and dragging, not reading — a drag that paints a
+   text selection behind it looks broken, and on touch the long-press that
+   starts a drag is also what raises the selection handles and the iOS callout. */
+aside { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* FAVORITES and PAGES scroll together as one list — separate scrollers made the
+   sidebar read as two panes and stranded the bottom of PAGES. */
+.sidebar-scroll { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+.sidebar-scroll .section-label:not(:first-child) { padding-top: 18px; }
+nav { overflow: visible; }
+.sidebar-scroll::-webkit-scrollbar { width: 10px; }
+.sidebar-scroll::-webkit-scrollbar-track { background: transparent; }
+.sidebar-scroll::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
+.sidebar-scroll::-webkit-scrollbar-thumb:hover { background-color: #505050; }
+/* Blank space under the last row is the drop target for "move to top level", so
+   the tree claims the rest of the sidebar rather than ending at its last row. */
+.pages-nav { min-height: 96px; flex: 1 0 auto; }
+.section-label, .favorites-nav { flex: none; }
+.page-row.dragging { opacity: .35; }
+/* Sits below its parent row and takes no space, so nothing under the pointer
+   moves while the line follows it. The dot marks the indent it will land at. */
+.drop-line { position: absolute; right: 6px; bottom: -1px; height: 2px; border-radius: 2px; background: #4c8ef7; pointer-events: none; }
+.drop-line::before { position: absolute; top: -2px; left: -3px; width: 6px; height: 6px; border-radius: 50%; background: #4c8ef7; content: ''; }
+.pages-nav, .favorites-nav { position: relative; }
+/* A list with no parent row to hang the line off draws it against its own top
+   edge. Favouriting is a move like any other — the row leaves one list and
+   arrives at the top of the other — so it gets the same line saying where. */
+.pages-nav > .drop-line, .favorites-nav > .drop-line { top: -3px; bottom: auto; }
 .page-tree-item { position: relative; }
-.page-row { display: flex; align-items: center; border-radius: 6px; }
-.page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
+.page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sits in the row exactly where `.page-link` was, so renaming does not reflow
+   the tree around it. */
+.page-rename-input { width: 100%; min-width: 0; flex: 1; padding: 7px 8px; border: 1px solid #4a7dd0; border-radius: 6px; color: #fff; background: #2a2a2a; font: inherit; font-size: 14px; outline: none; }
 .page-toggle, .page-toggle-spacer { width: 22px; height: 28px; flex: none; }
 .page-toggle { display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: #777; background: transparent; cursor: pointer; }
-.page-toggle:hover { color: #eee; background: #303030; }
+@media (hover: hover) { .page-toggle:hover { color: #eee; background: #303030; } }
 .page-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.page-row:hover { background: #222; }
-.page-row:hover .page-link { color: #f2f2f2; }
+@media (hover: hover) {
+  .page-row:hover { background: #222; }
+  .page-row:hover .page-link { color: #f2f2f2; }
+}
 .page-row.active { background: #292929; }
 .page-row.active .page-link { color: #fff; }
 .page-menu-button { width: 28px; height: 28px; flex: none; margin-right: 4px; padding: 0; border: 0; border-radius: 5px; color: #777; background: transparent; font-size: 14px; line-height: 1; cursor: pointer; opacity: 0; }
-.page-row:hover .page-menu-button, .page-menu-button:focus { opacity: 1; }
-.page-menu-button:hover { color: #eee; background: #303030; }
-.page-menu { position: absolute; z-index: 8; top: 36px; right: 2px; display: grid; width: 145px; padding: 5px; border-radius: 7px; background: #292929; box-shadow: 0 8px 20px rgba(0, 0, 0, .3); }
-.page-menu button { padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-.page-menu button:hover { background: #383838; }
+/* Revealing this on hover alone would strand it on any touch device — including
+   iPad, which reports `hover: none` at a desktop width and so never matched the
+   mobile breakpoint that used to un-hide it. Without a pointer, show it always. */
+@media (hover: none) { .page-menu-button { opacity: 1; } }
+/* :focus-visible, not :focus — a tap focuses the button and plain :focus would
+   keep it revealed after the menu closes. */
+.page-menu-button:focus-visible, .page-menu-button.menu-open { opacity: 1; }
+.page-menu-button.menu-open { color: #eee; background: #303030; }
+@media (hover: hover) {
+  .page-row:hover .page-menu-button { opacity: 1; }
+  .page-menu-button:hover { color: #eee; background: #303030; }
+}
+.page-menu { z-index: 30; display: grid; width: 170px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: page-menu-in .12s ease; }
+@keyframes page-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.page-menu button { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.page-menu button svg { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+@media (hover: hover) { .page-menu button:hover { background: #383838; } }
 .page-menu .danger { color: #ee9999; }
-.sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; border-top: 1px solid #2a2a2a; color: #8e8e8e; font-size: 12px; }
+.sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; color: #8e8e8e; font-size: 12px; }
 .local-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #6f6f6f; }
 .connected-dot { background: #54c98f; }
-.sync-dot-gray { background: #6f6f6f; }
-.sync-dot-green { background: #54c98f; }
-.sync-dot-amber { background: #d6a24b; }
+/* The only dot left. Informational states say their piece in muted text and
+   need no mark beside it; red is the one tone worth catching an eye that was
+   not looking. */
 .sync-dot-red { background: #e27777; }
 .sync-button { margin-left: auto; padding: 0; border: 0; color: #aaa; background: none; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.sync-button:hover { color: #fff; }
+/* In the footer the action is pushed to the far edge; in the header it sits
+   directly after the label it belongs to. */
+.header-status .sync-button { margin-left: 0; font-size: inherit; }
+@media (hover: hover) { .sync-button:hover { color: #fff; } }
 .sync-button:disabled { color: #555; cursor: not-allowed; }
-.sync-error { width: 100%; color: #e99191; font-size: 11px; line-height: 1.35; }
+.sync-error { display: flex; align-items: flex-start; gap: 6px; width: 100%; color: #e99191; font-size: 11px; line-height: 1.35; }
+.sync-error-dismiss { flex: none; margin-left: auto; padding: 0 2px; border: 0; color: inherit; background: none; font: inherit; font-size: 13px; line-height: 1.1; cursor: pointer; opacity: 0.65; }
+@media (hover: hover) { .sync-error-dismiss:hover { opacity: 1; } }
 
-main { min-width: 0; flex: 1; overflow: auto; overscroll-behavior-y: contain; background: #111; }
-article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56px 60px; }
-.editor-header { position: sticky; top: 0; z-index: 5; height: 52px; color: #929292; background: #111; font-size: 12px; }
-.editor-header-row { position: relative; display: grid; width: 100%; height: 52px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
+/* The gutter is reserved whether or not the page is long enough to scroll, so
+   the header's right edge lands in the same place either way. */
+main { min-width: 0; flex: 1; overflow: auto; scrollbar-gutter: stable; overscroll-behavior-y: contain; background: #111; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; cursor: text; }
+.editor-header { cursor: default; }
+main::-webkit-scrollbar { width: 12px; }
+main::-webkit-scrollbar-track { background: transparent; }
+main::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #3a3a3a; }
+main::-webkit-scrollbar-thumb:hover { background-color: #505050; }
+/* Sticky rather than fixed so the fades track the scroller's own box without
+   anyone having to measure the sidebar. They take no layout height — the bar
+   itself is a pseudo-element hanging out of a zero-height box — and stop short
+   of the scrollbar for the same reason the header bar does. Below the header
+   (z 5) so its controls stay legible over the top fade. */
+.scroll-fade { position: sticky; z-index: 4; height: 0; pointer-events: none; }
+.scroll-fade::before { content: ''; position: absolute; right: var(--scrollbarWidth); left: 0; height: 72px; opacity: 0; transition: opacity .2s ease; }
+.scroll-fade.visible::before { opacity: 1; }
+.scroll-fade-top { top: 0; }
+.scroll-fade-top::before { top: 0; background: linear-gradient(to bottom, #111111, #11111100); }
+.scroll-fade-bottom { bottom: 0; }
+.scroll-fade-bottom::before { bottom: 0; background: linear-gradient(to top, #111111, #11111100); }
+
+/* The article is pulled up into the header band so its first element — the path —
+   sits level with the header controls rather than below them. That puts the path
+   entirely inside the header's own 44px, so turning the header backdrop on for
+   editing covers it outright; no extra fade below the header has to reach it. */
+article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0 56px 60px; cursor: text; }
+.article-path { height: 20px; margin-bottom: 100px; align-items: center; transition: opacity .18s ease, visibility 0s; }
+/* An open sidebar already says where you are, so the path steps aside for it. */
+.article-path.hidden { visibility: hidden; opacity: 0; pointer-events: none; transition: opacity .18s ease, visibility 0s linear .18s; }
+.editor-header { position: sticky; top: 0; z-index: 5; height: 44px; color: #929292; font-size: 12px; }
+/* The bar is painted by a pseudo-element rather than the header's own
+   background so it can stop short of the scrollbar. The scrollbar belongs to
+   `main` and always paints on top, so a full-bleed bar reads as the track
+   running behind the header; ending the bar a track-width early gives the
+   scrollbar its own lane. The header box itself stays full width, which keeps
+   the toolbar's centring maths lined up with the article below. */
+.editor-header::before { content: ''; position: absolute; inset: 0 var(--scrollbarWidth) 0 0; background: #111; opacity: 1; transition: opacity .18s ease; }
+/* At rest the header is just its controls floating over the page — no bar, so
+   the path below it reads as part of the document. The backdrop comes in with
+   the toolbar and only with the toolbar; scrolling does not summon it. */
+.editor-header.transparent::before { opacity: 0; }
+.editor-header.transparent::after { opacity: 0; }
+/* Content scrolls under the sticky header, so its bottom edge would cut a line of
+   text in half. A short fade hanging below it softens that cut. The header and the
+   text scrolling under it dissolves into the header instead of being sliced. It
+   takes no layout height. */
+.editor-header::after { content: ''; position: absolute; top: 100%; right: var(--scrollbarWidth); left: 0; height: 16px; background: linear-gradient(to bottom, #111111, #11111100); pointer-events: none; opacity: 1; transition: opacity .18s ease; }
+.editor-header-row { position: relative; display: grid; width: 100%; height: 44px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
 .header-left, .header-actions, .header-right { display: flex; min-width: 0; align-items: center; }
 .header-left { max-width: none; gap: 10px; }
 .header-right { grid-column: 3; justify-self: end; justify-content: flex-end; gap: 10px; }
 .notification-button { position: relative; display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #aaa; background: transparent; cursor: pointer; }
-.notification-button:hover { color: #fff; background: #262626; }
+@media (hover: hover) { .notification-button:hover { color: #fff; background: #262626; } }
 .notification-button svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .notification-button span { position: absolute; top: 0; right: 0; display: grid; min-width: 15px; height: 15px; place-items: center; padding: 0 3px; border-radius: 8px; color: #111; background: #f0f0f0; font-size: 9px; font-weight: 800; }
-.page-path { display: flex; min-width: 0; max-width: min(240px, max(0px, calc((100vw - 1048px) / 4))); overflow: hidden; color: #909090; font-size: 12px; white-space: nowrap; }
+.header-title { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: center; max-width: calc(100% - 100px); color: #f1f1f1; font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+.header-title.visible { opacity: 1; }
+/* The path lives in the article now, so it gets the full content column — the
+   old cap existed only to keep it out of the header's other controls. */
+.page-path { display: flex; min-width: 0; overflow: hidden; color: #909090; font-size: 12px; white-space: nowrap; }
 .page-path span { display: flex; min-width: 0; align-items: center; }
 .page-path i { padding: 0 5px; color: #555; font-style: normal; }
 .page-path button { width: 100%; min-width: 0; overflow: hidden; padding: 3px 0; border: 0; color: #8f8f8f; background: transparent; font: inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-.page-path button:hover { color: #eee; }
-.breadcrumb-root { max-width: 32%; flex: 0 1 auto; }
-.breadcrumb-current { flex: 1 1 auto; }
-.breadcrumb-ellipsis { flex: none; color: #666; }
-.editor-toolbar { position: absolute; left: max(56px, calc((100% - 668px) / 2)); display: flex; height: 52px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
-.back-button, .header-button { padding: 5px; border: 0; color: #aaa; background: transparent; font: inherit; cursor: pointer; }
-.back-button:hover, .header-button:hover { color: #fff; }
-.back-button { visibility: visible; width: 30px; height: 30px; flex: none; padding: 5px; }
-.back-button svg, .share-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.share-button { display: grid; width: 32px; height: 32px; place-items: center; padding: 5px; }
+@media (hover: hover) { .page-path button:hover { color: #eee; } }
+/* Every ancestor gets a link. The path only has to give ground when the chain
+   is deep enough to run out of header, and then the ancestors give it first —
+   the page you are on is the one segment that must stay readable. */
+.breadcrumb-ancestor { flex: 0 4 auto; min-width: 2.5em; }
+.breadcrumb-current { flex: 0 1 auto; color: #d0d0d0; }
+.breadcrumb-current button { color: #d0d0d0; }
+.editor-toolbar { position: absolute; top: 0; left: max(56px, calc((100% - 780px) / 2 + 56px)); display: flex; height: 44px; align-items: center; gap: 8px; overflow-x: auto; white-space: nowrap; }
+/* Desktop: the toolbar is hidden in place rather than unmounted, because the
+   editor portals its toolbar into this host and losing it would tear the editor
+   down. It fades in over the path it covers. `visibility` is what keeps it out
+   of the tab order while gone, so its change waits out the fade on the way down
+   and fires immediately on the way back up. */
+.editor-toolbar { opacity: 1; transform: none; transition: opacity .18s ease, transform .18s ease, visibility 0s; }
+.editor-toolbar.hidden { visibility: hidden; opacity: 0; pointer-events: none; transform: translateY(-3px); transition: opacity .18s ease, transform .18s ease, visibility 0s linear .18s; }
+.show-sidebar-button, .header-button { padding: 5px; border: 0; color: #aaa; background: transparent; font: inherit; cursor: pointer; }
+@media (hover: hover) {
+  .show-sidebar-button:hover, .header-button:hover { color: #fff; }
+  .show-sidebar-button:hover { background: #292929; }
+}
+/* One control, one icon, one meaning — "show me the sidebar". What that does
+   differs by breakpoint (navigate to the list on mobile, where the sidebar is a
+   screen; toggle the pane on desktop) but the intent doesn't, so it reads as the
+   same button. Rendered only when the sidebar isn't already beside the content. */
+.show-sidebar-button { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border-radius: 6px; }
+.show-sidebar-button svg, .share-button svg, .page-options-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.share-button, .page-options-button { display: grid; width: 32px; height: 32px; place-items: center; padding: 5px; }
 .header-status, .header-actions { display: flex; align-items: center; }
-.header-status { gap: 6px; }
+/* Muted to the same weight as the sidebar footer: status in the header is
+   something to glance at, never something competing with the page title. */
+.header-status { gap: 6px; color: #8e8e8e; font-size: 12px; }
 .header-actions { gap: 10px; }
 .header-button:disabled { opacity: .4; cursor: not-allowed; }
-.title { width: 100%; margin: 0 0 28px; border: 0; outline: 0; color: #f5f5f5; background: transparent; font-family: inherit; font-size: 42px; font-weight: 700; line-height: 1.16; letter-spacing: -1.5px; }
+.title { display: block; box-sizing: border-box; width: 100%; margin: 0 0 28px; padding: 0; border: 0; outline: 0; resize: none; overflow: hidden; color: #f5f5f5; background: transparent; font-family: inherit; font-size: 42px; font-weight: 700; line-height: 1.16; letter-spacing: -1.5px; white-space: pre-wrap; overflow-wrap: break-word; }
 .title::placeholder { color: #505050; }
 .empty { position: relative; display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 24px; text-align: center; }
 .empty-sidebar-open { position: absolute; top: 16px; left: 16px; }
 .empty-mark { display: grid; width: 48px; height: 48px; place-items: center; margin-bottom: 18px; border-radius: 14px; color: #161616; background: #eee; font-size: 22px; font-weight: 800; }
 .empty h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -.7px; }
 .empty p { margin: 0 0 23px; color: #888; font-size: 15px; }
-.recent-pages { display: grid; width: min(100%, 440px); gap: 6px; margin: 0 0 20px; text-align: left; }
-.recent-page { display: flex; min-width: 0; align-items: center; gap: 10px; padding: 12px 13px; border: 1px solid #292929; border-radius: 8px; color: #d4d4d4; background: #171717; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background .16s ease, border-color .16s ease, transform .16s ease; }
-.recent-page:hover { border-color: #414141; background: #202020; transform: translateY(-1px); }
-.recent-page > span:nth-child(2) { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recent-page-icon { color: #8d8d8d; font-size: 14px; }
-.recent-page svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #777; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 
 .share-modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); }
+.confirm-modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); }
+.confirm-modal { display: grid; width: min(360px, 100%); gap: 10px; padding: 18px; border: 1px solid #3a3a3a; border-radius: 12px; color: #aaa; background: #1b1b1b; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); font-size: 13px; }
+.confirm-modal strong { color: #f4f4f4; font-size: 15px; }
+.confirm-modal p { margin: 0; line-height: 1.5; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+.confirm-actions button { border: 1px solid #3a3a3a; border-radius: 7px; padding: 8px 14px; color: #ddd; background: transparent; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.confirm-delete { border-color: transparent; color: #fff; background: #b3382f; }
+@media (hover: hover) { .confirm-cancel:hover { border-color: #555; color: #fff; } .confirm-delete:hover { background: #c9443a; } }
 .share-modal { display: grid; width: min(460px, 100%); gap: 16px; padding: 18px; border: 1px solid #3a3a3a; border-radius: 12px; color: #aaa; background: #1b1b1b; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); font-size: 13px; }
 .share-modal header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
 .share-modal header div { display: grid; gap: 4px; }
@@ -105,15 +265,154 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .share-modal header span { color: #888; font-size: 12px; }
 .share-modal p { margin: -5px 0 0; color: #aaa; line-height: 1.45; }
 .modal-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: #b5b5b5; background: #292929; font: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
-.modal-close:hover { color: #fff; background: #353535; }
+@media (hover: hover) { .modal-close:hover { color: #fff; background: #353535; } }
 .invite-row { display: flex; gap: 7px; }
-.invite-row input, .invite-row select { min-width: 0; padding: 8px; border: 1px solid #3a3a3a; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
+.invite-row input, .invite-row select { min-width: 0; padding: 8px; border: none; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
 .invite-row input { flex: 1; }
-.invite-row .new { padding: 8px 10px; font-size: 12px; }
+.invite-row .new { padding: 6px 12px; font-size: 12px; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .member-list span { padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
 
-.notification-center { position: absolute; top: 62px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
+.adopt-modal { width: min(420px, 100%); gap: 14px; }
+.adopt-body { margin: -5px 0 0; color: #aaa; line-height: 1.45; }
+.adopt-note { margin: -6px 0 0; color: #888; font-size: 12px; line-height: 1.45; }
+
+/* The way into the page list. Reads as a row you can open, not as one of the
+   decision buttons below it. */
+.adopt-see-pages { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 11px 13px; border: 1px solid #333; border-radius: 8px; color: #c5c5c5; background: #151515; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.adopt-see-pages svg { width: 15px; height: 15px; flex: none; fill: none; stroke: #7d7d7d; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+@media (hover: hover) { .adopt-see-pages:hover { border-color: #454545; color: #f1f1f1; } }
+
+.adopt-list { display: grid; max-height: min(48vh, 300px); margin: -4px 0 0; padding: 7px 0; overflow-y: auto; gap: 1px; border-radius: 8px; background: #151515; list-style: none; -webkit-overflow-scrolling: touch; }
+.adopt-list li { overflow: hidden; padding: 6px 13px; color: #d2d2d2; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.adopt-list .adopt-more { color: #7d7d7d; font-style: italic; }
+
+.adopt-actions { display: flex; align-items: center; gap: 8px; }
+.adopt-spacer { flex: 1; }
+.adopt-actions button { padding: 9px 14px; border: 1px solid #3a3a3a; border-radius: 7px; color: #c5c5c5; background: #242424; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.adopt-actions .new { border-color: transparent; font-weight: 600; }
+.adopt-actions button:disabled { color: #666; cursor: not-allowed; }
+/* Destructive, and deliberately the quietest thing in the dialog. */
+.adopt-discard-link { border-color: transparent !important; color: #7d7d7d !important; background: none !important; padding-left: 0 !important; }
+.adopt-discard { border-color: #6a2f2f !important; color: #e88 !important; background: #2b1c1c !important; }
+@media (hover: hover) {
+  .adopt-actions button:not(:disabled):hover { color: #fff; }
+  .adopt-discard-link:not(:disabled):hover { color: #e88 !important; }
+}
+
+/* Phones: a bottom sheet rather than a floating card. The actions sit within
+   thumb reach instead of centred halfway up the screen, and the primary action
+   goes full width on its own row so the three choices never crowd into a line
+   of tiny targets. */
+@media (max-width: 560px) {
+  .adopt-backdrop { place-items: end stretch; padding: 0; }
+  .adopt-modal { width: 100%; gap: 13px; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 16px 16px 0 0; }
+  .adopt-modal header { align-items: center; }
+  .adopt-list { max-height: 42vh; }
+  .adopt-actions { flex-wrap: wrap; }
+  /* With the primary action on its own row the spacer has nothing left to push
+     apart, and left in place it wraps to a row of its own. */
+  .adopt-spacer { display: none; }
+  .adopt-actions .new { order: -1; width: 100%; padding: 12px 14px; text-align: center; }
+  .adopt-actions button { flex: 1; padding: 11px 12px; text-align: center; }
+  .adopt-discard-link { flex: 0 1 auto !important; padding-left: 2px !important; }
+  .adopt-see-pages { padding: 13px; }
+}
+
+/* Recently deleted. Collapsed by default and quiet by design: it is a safety
+   net, not a place anyone means to spend time. */
+/* Recently deleted is a destination reached from the identity menu, not a
+   section of the tree. It covers the sidebar rather than opening a dialog over
+   the whole app: it is scoped to the list, and on a phone the sidebar *is* the
+   screen, so a full-width panel is the same gesture in both layouts. */
+.trash-view { position: absolute; inset: 0; z-index: 25; display: flex; flex-direction: column; padding: 16px 10px calc(12px + env(safe-area-inset-bottom)); background: #161616; animation: trash-view-in .16s ease; }
+@keyframes trash-view-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.trash-view-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px 8px; }
+.trash-view-head strong { flex: 1; color: #f1f1f1; font-size: 15px; font-weight: 600; }
+.trash-view-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 6px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
+@media (hover: hover) { .trash-view-close:hover { color: #fff; background: #292929; } }
+.trash-view-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.trash-view-empty { margin: 4px 8px; color: #7c7c7c; font-size: 13px; line-height: 1.5; }
+.trash-list { display: grid; min-height: 0; flex: 1; margin-top: 2px; overflow-y: auto; gap: 2px; }
+.trash-item { display: flex; align-items: center; gap: 4px; border-radius: 7px; }
+.trash-item.active { background: #242424; }
+.trash-open { display: grid; min-width: 0; flex: 1; padding: 9px 8px 9px 10px; border: 0; border-radius: 7px; gap: 2px; background: none; font: inherit; text-align: left; cursor: pointer; }
+.trash-title { overflow: hidden; color: #cfcfcf; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.trash-when { color: #6b6b6b; font-size: 11.5px; }
+.trash-restore { flex: none; margin-right: 6px; padding: 6px 11px; border: 1px solid #333; border-radius: 6px; color: #b6b6b6; background: none; font: inherit; font-size: 12px; cursor: pointer; }
+.trash-restore:disabled { color: #555; cursor: not-allowed; }
+@media (hover: hover) {
+  .trash-item:hover { background: #1d1d1d; }
+  .trash-restore:not(:disabled):hover { color: #fff; background: #333; }
+}
+
+/* The standing reminder on an open trashed page — the one surface that says why
+   typing does nothing. */
+.trash-banner { display: flex; align-items: center; gap: 12px; margin: 0 0 18px; padding: 12px 14px; border: 1px solid #4a3f2a; border-radius: 9px; background: #241f16; }
+.trash-banner-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.trash-banner strong { color: #e8dcc2; font-size: 13px; font-weight: 600; }
+.trash-banner span { color: #a99b7e; font-size: 12px; }
+.trash-banner .new { flex: none; padding: 7px 13px; font-size: 12px; }
+@media (max-width: 560px) {
+  .trash-banner { flex-direction: column; align-items: stretch; gap: 10px; }
+  .trash-banner .new { width: 100%; }
+}
+
+/* --- identity menu --------------------------------------------------------
+   `.page-menu` supplies the chrome; only the header row and the count badge are
+   its own. The scrim is what makes a tap anywhere else close it — the row menus
+   get that from their own outside-click handling. */
+.identity-menu { width: 232px; }
+.identity-menu-head { padding: 6px 9px 8px; border-bottom: 1px solid #363636; margin-bottom: 5px; overflow: hidden; color: #8b8b8b; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.identity-menu button { font-size: 13px; padding: 9px 9px; }
+.identity-menu button:disabled { color: #666; cursor: not-allowed; }
+.identity-menu-count { margin-left: auto; color: #7d7d7d; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.menu-scrim { position: fixed; inset: 0; z-index: 29; }
+
+/* --- search ---------------------------------------------------------------
+   A palette on desktop, a full screen on mobile. Both are the same markup: the
+   panel just grows to fill the viewport at the narrow breakpoint. */
+/* flex-start, or the palette stretches to the full height of the overlay and
+   two results sit in a mostly empty box. */
+.search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 20px 20px; background: rgba(0, 0, 0, .5); animation: search-fade .12s ease; }
+@keyframes search-fade { from { opacity: 0; } to { opacity: 1; } }
+/* The bar is last in the DOM because that is the phone order — results above,
+   field at the bottom riding the keyboard. `column-reverse` lifts it back to
+   the top here, where a palette's field belongs; the mobile block drops the
+   reverse and takes the DOM order as written. */
+.search-panel { display: flex; width: 100%; max-width: 560px; max-height: 62vh; flex-direction: column-reverse; overflow: hidden; border: 1px solid #333; border-radius: 13px; background: #1c1c1c; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); animation: search-rise .14s cubic-bezier(.22, 1, .36, 1); }
+@keyframes search-rise { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.search-bar { display: flex; align-items: center; gap: 8px; flex: none; padding: 12px 14px; border-bottom: 1px solid #2c2c2c; }
+.search-field { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; }
+.search-field > svg { width: 18px; height: 18px; flex: none; color: #7d7d7d; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.search-field input { min-width: 0; flex: 1; padding: 0; border: 0; color: #f1f1f1; background: transparent; font: inherit; font-size: 16px; outline: none; }
+.search-field input::placeholder { color: #6e6e6e; }
+.search-field input::-webkit-search-cancel-button { display: none; }
+.search-clear { display: grid; width: 22px; height: 22px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #6a6a6a; background: transparent; cursor: pointer; }
+.search-clear svg { width: 100%; height: 100%; stroke-width: 2; stroke-linecap: round; }
+@media (hover: hover) { .search-clear:hover { color: #8d8d8d; } }
+/* Outside the field, not in it: it dismisses the whole surface, where the
+   inner one only empties the text. */
+.search-close { display: none; }
+/* Shrink-to-fit here so the palette is as tall as its results; the phone
+   layout below claims the whole screen instead. */
+.search-results { min-height: 0; flex: 0 1 auto; overflow-y: auto; padding: 6px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+.search-results.is-empty { display: grid; place-items: center; }
+.search-section { padding: 8px 10px 6px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
+.search-empty { display: grid; justify-items: center; gap: 14px; padding: 30px 14px; color: #7c7c7c; text-align: center; }
+.search-empty svg { width: 34px; height: 34px; color: #6a6a6a; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.search-empty p { margin: 0; font-size: 15px; }
+.search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.search-result-icon { width: 16px; height: 16px; flex: none; color: #6e6e6e; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.search-result-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.search-result-title { overflow: hidden; color: #ededed; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.search-result-path { overflow: hidden; color: #6f6f6f; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .search-result:hover { background: #272727; } }
+.search-result:focus-visible { background: #272727; outline: none; }
+
+/* Hangs below the fixed icon row, so it starts where the tree starts rather than
+   covering the button that opened it. */
+.notification-center { position: absolute; top: 60px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
 .notification-empty { margin: 0; padding: 14px; color: #888; font-size: 12px; text-align: center; }
 .invitation-list { display: grid; }
 .invitation-item { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 9px 9px 9px 12px; }
@@ -122,16 +421,18 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
 .invitation-item strong { color: #e9e9e9; font-size: 12px; font-weight: 600; }
 .invitation-actions { display: flex; flex: none; gap: 4px; }
 .invitation-actions button { height: 27px; padding: 0 7px; border: 0; border-radius: 5px; color: #bbb; background: #333; font: inherit; font-size: 11px; cursor: pointer; }
-.invitation-actions button:hover { color: #fff; background: #353535; }
+@media (hover: hover) { .invitation-actions button:hover { color: #fff; background: #353535; } }
 .invitation-actions .accept { color: #111; background: #eee; font-weight: 650; }
-.invitation-actions .accept:hover { background: #fff; }
+@media (hover: hover) { .invitation-actions .accept:hover { background: #fff; } }
 .invitation-actions button:disabled { opacity: .5; cursor: wait; }
 .presence-list { display: flex; flex-direction: row-reverse; }
 .presence-list span { display: grid; width: 24px; height: 24px; place-items: center; margin-left: -5px; border: 2px solid #111; border-radius: 50%; color: #111; font-size: 10px; font-weight: 800; }
 .remote-cursor { position: absolute; z-index: 2; width: 2px; pointer-events: auto; }
 .remote-cursor::after { position: absolute; inset: -5px; content: ""; }
 .remote-cursor > span { position: absolute; bottom: 100%; left: 0; padding: 2px 5px; border-radius: 4px 4px 4px 0; color: #111; font-size: 10px; font-weight: 700; line-height: 1.3; white-space: nowrap; opacity: 0; transform: translateY(2px); transition: opacity .12s ease, transform .12s ease; }
-.remote-cursor:hover > span { opacity: 1; transform: translateY(0); }
+/* The collaborator name tag. On touch there is no hover to leave, so tapping
+   near a caret would strand the label on screen. */
+@media (hover: hover) { .remote-cursor:hover > span { opacity: 1; transform: translateY(0); } }
 
 .mdxeditor {
   --basePageBg: #111;
@@ -152,65 +453,366 @@ article { position: relative; max-width: 780px; margin: 0 auto; padding: 48px 56
   background: transparent !important;
   overflow: visible !important;
 }
-.mdxeditor [data-radix-popper-content-wrapper] { z-index: 10 !important; }
+[data-radix-popper-content-wrapper] { z-index: 40 !important; }
 .motion-md-toolbar { display: none !important; }
-.editor-toolbar .core-tools, .editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
+.editor-toolbar .core-tools { display: flex; align-items: center; gap: 4px; }
+.editor-toolbar .extra-tools { display: flex; align-items: center; gap: 4px; }
 .editor-toolbar button { margin: 0 1px; border-radius: 5px !important; color: #a7a7a7 !important; }
-.editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; }
+@media (hover: hover) { .editor-toolbar button:hover { color: #f1f1f1 !important; background: #292929 !important; } }
+/* Active toggle (bold/italic/underline/highlight at the caret). Radix marks the
+   pressed ToggleItem with data-state="on"; our flat button color above hides it. */
+.editor-toolbar button[data-state='on'] { color: #fff !important; background: #343434 !important; }
+@media (hover: hover) { .editor-toolbar button[data-state='on']:hover { background: #3c3c3c !important; } }
+
+/* MDXEditor tooltip — sit above the sticky editor header (z-index 5). */
+[class*="_popupContainer_"], [class*="_tooltipContent_"] { z-index: 40 !important; }
+
+/* Block-type dropdown — force our dark palette (defaults render light). */
+[class*="_selectTrigger_"] { border: 0 !important; padding-left: 10px !important; background-color: transparent !important; color: #c2c2c2 !important; }
+@media (hover: hover) { [class*="_selectTrigger_"]:hover { background-color: #292929 !important; } }
+[class*="_selectTrigger_"][data-state='open'] { background-color: #232323 !important; }
+[class*="_selectContainer_"], [class*="_toolbarButtonDropdownContainer_"] { overflow: hidden; border: 1px solid #383838 !important; border-radius: 8px !important; background-color: #232323 !important; box-shadow: 0 14px 34px rgba(0, 0, 0, .55); }
+[class*="_selectItem_"] { color: #c9c9c9 !important; font-size: 13px; }
+[class*="_selectItem_"][data-highlighted] { background-color: #303030 !important; color: #f1f1f1 !important; }
+[class*="_selectItem_"][data-state='checked'] { background-color: #2b2b2b !important; color: #fff !important; }
+
+/* Custom focus-preserving block-type menu (replaces the Radix <BlockTypeSelect />
+   so opening it never blurs the editor / closes the mobile keyboard). */
+.block-type-trigger { display: inline-flex !important; align-items: center; gap: 3px; height: 30px; min-width: 0; padding: 0 2px !important; border: 0 !important; background: transparent !important; color: #c2c2c2 !important; font: inherit; font-size: 13px; cursor: pointer; appearance: none; -webkit-appearance: none; }
+@media (hover: hover) { .block-type-trigger:hover { background: #292929 !important; color: #f1f1f1 !important; } }
+.block-type-trigger[aria-expanded='true'] { background: #232323 !important; color: #f1f1f1 !important; }
+.block-type-trigger-icon { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.block-type-trigger-caret { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
+.block-type-menu { z-index: 60; display: flex; flex-direction: column; gap: 2px; min-width: 80px; max-height: min(340px, 62vh); padding: 4px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #3d3d3d; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
+.block-type-item { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: #c9c9c9; font: inherit; font-size: 14px; text-align: left; white-space: nowrap; cursor: pointer; }
+.block-type-item-icon { width: 16px; height: 16px; flex: none; stroke-linecap: round; stroke-linejoin: round; }
+@media (hover: hover) { .block-type-item:hover { background: #303030; color: #f1f1f1; } }
+.block-type-item.active { background: #2b2b2b; color: #fff; }
 .motion-md-content { min-height: 430px; padding: 0; border: 0; outline: 0; color: #e4e4e4; font-family: inherit; font-size: 18px; line-height: 1.72; }
 .motion-md-content h1, .motion-md-content h2, .motion-md-content h3 { color: #f4f4f4; line-height: 1.25; }
 .motion-md-content a { color: #c5c2ff; }
 .motion-md-content blockquote { margin-left: 0; padding-left: 15px; border-left: 3px solid #aaa; color: #bababa; }
 .motion-md-content code { padding: 2px 4px; border-radius: 4px; background: #252525; }
+.motion-md-content mark { color: #00011c; background: #66adff; }
 .motion-md-content pre { padding: 12px; border: 1px solid #2d2d2d; border-radius: 8px; background: #191919; }
 .motion-md-content table { border-collapse: collapse; }
 .motion-md-content td, .motion-md-content th { padding: 6px; border: 1px solid #3a3a3a; }
 .mdxeditor [role="toolbar"] { background: #111 !important; }
 
-@media (min-width: 761px) {
-  .back-button { display: none; }
-}
+/* Internal page links (pills) */
+.page-ref-host { display: inline; }
+.page-ref { display: inline-flex; align-items: baseline; gap: 3px; margin: 0 1px; padding: 1px 6px 1px 4px; border-radius: 5px; color: #c5c2ff; background: rgba(122, 118, 255, .12); box-decoration-break: clone; -webkit-box-decoration-break: clone; font-weight: 500; text-decoration: none; cursor: pointer; user-select: none; }
+@media (hover: hover) { .page-ref:hover { background: rgba(122, 118, 255, .2); } }
+.page-ref:focus-visible { outline: 2px solid #7a76ff; outline-offset: 1px; }
+.page-ref-icon { width: 13px; height: 13px; align-self: center; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .7; }
+.page-ref-missing { color: #8a8a8a; background: #242424; cursor: default; text-decoration: line-through; }
+.page-ref-private { color: #9a97c0; background: rgba(124, 120, 255, .08); cursor: default; }
 
-@media (min-width: 761px) and (max-width: 1120px) {
-  .page-path { display: none; }
-}
+/* Universal trigger menu ([[ links and / commands) */
+/* touch-action pairs with the touchmove guard in editorMenu: the menu itself
+   never pans anything, the result list scrolls only itself. */
+.editor-menu { position: fixed; z-index: 40; display: flex; flex-direction: column; overflow: hidden; touch-action: none; border: 1px solid #4a4a4a; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); }
+/* The outer box carries the measured height budget (see placeMenu); the list
+   takes what is left after the pinned actions and scrolls within it. */
+.editor-menu-list { flex: 1 1 auto; min-height: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
+.editor-menu-list::-webkit-scrollbar { width: 10px; }
+.editor-menu-list::-webkit-scrollbar-track { background: transparent; }
+.editor-menu-list::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #4a4a4a; }
+.editor-menu-list::-webkit-scrollbar-thumb:hover { background-color: #5f5f5f; }
+.editor-menu-empty { padding: 9px 11px; color: var(--baseSolid); font-size: 13px; }
+.editor-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.editor-menu-item .editor-menu-icon { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border: 1px solid var(--baseLine); border-radius: 6px; background: var(--baseBgSubtle); }
+.editor-menu-item svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
+.editor-menu-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The location hint yields to the title: it truncates from its own end rather
+   than squeezing the name the user is actually reading. */
+.editor-menu-detail { flex: 0 1 auto; min-width: 0; max-width: 52%; overflow: hidden; color: var(--baseSolid); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* Pinned create actions, held below the scrolling results so they stay reachable
+   however many pages match. */
+.editor-menu-actions { display: flex; flex-shrink: 0; gap: 6px; padding: 6px; border-top: 1px solid #333; background: #1f1f1f; }
+.editor-menu-actions .editor-menu-item { flex: 1 1 0; width: auto; gap: 8px; min-width: 0; padding: 6px 8px; font-size: 13px; }
+.editor-menu-actions .editor-menu-icon { width: 22px; height: 22px; }
+.editor-menu-item.active { background: #333; color: #fff; }
+.editor-menu-item.active .editor-menu-icon { border-color: #6a6a6a; background: #3a3a3a; }
+.editor-menu-item.active .editor-menu-detail { color: #dcdcdc; }
+
+/* Linked references (backlinks) */
+.backlinks { margin-top: 48px; padding-top: 22px; border-top: 1px solid #2b2b2b; }
+.backlinks h2 { margin: 0 0 10px; color: #6a6a6a; font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.backlink { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 11px; margin-bottom: 1px; border: 1px solid transparent; border-radius: 8px; color: #6e6e6e; background: transparent; font: inherit; font-size: 15px; text-align: left; cursor: pointer; transition: color .12s, background .12s; }
+@media (hover: hover) { .backlink:hover { color: #a8a8a8; background: #1d1d1d; } }
+.backlink svg { width: 15px; height: 15px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .5; }
+
+/* Share modal: copy link */
+.share-link-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.share-link-label { min-width: 0; color: #8a8a8a; font-size: 12px; line-height: 1.4; }
+.copy-link { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; padding: 7px 12px; border: 0; border-radius: 7px; color: #f1f1f1; background: #454545; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .12s; }
+@media (hover: hover) { .copy-link:hover { background: #525252; } }
+.copy-link svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Deep-link access landing */
+.landing-dismiss { margin-top: 18px; padding: 8px 16px; border: 0; border-radius: 8px; color: var(--baseText); background: transparent; font: inherit; font-size: 14px; cursor: pointer; }
+@media (hover: hover) { .landing-dismiss:hover { color: var(--baseTextContrast); background: var(--baseBgSubtle); } }
+
+/* Transient status toast */
+.flash-toast { position: fixed; left: 50%; bottom: 28px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 11px 18px; border: 1px solid #4a4a4a; border-radius: 10px; color: var(--baseTextContrast); background: #232323; box-shadow: 0 14px 36px rgba(0, 0, 0, .55); font-size: 14px; }
 
 @media (max-width: 760px) {
-  .app-shell { display: block; }
-  .mobile-list main { display: none; }
-  .mobile-editor aside { display: none; }
-  aside { width: 100%; height: 100%; padding: 12px 14px; border: 0; background: #111; }
-  .list-header { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 16px; color: #f4f4f4; font-size: 28px; font-weight: 700; letter-spacing: -.8px; }
-  .icon-new { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border-radius: 50%; font-size: 24px; font-weight: 400; }
-  .desktop-sidebar-actions, .section-label { display: none; }
-  .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 12px 14px; border-right-color: transparent; opacity: 1; pointer-events: auto; }
-  .sidebar-close, .sidebar-open { display: none; }
-  nav { margin: 0 -2px; overflow: auto; }
-  .page-row { border-bottom: 1px solid #202020; border-radius: 0; }
-  .page-link { min-height: 48px; padding: 12px 10px; border-radius: 0; font-size: 16px; }
-  .page-row.active { background: transparent; }
-  .page-menu-button { opacity: 1; }
+  /* Lock the page so ONLY <main> can scroll. Without this, iOS scrolls the
+     whole window up when the keyboard opens over a contenteditable and leaves
+     it shifted (the app "jumps up"). Mirrors the Notes Lab experiment. */
+  html, body { position: fixed; inset: 0; width: 100%; overflow: hidden; }
+  /* The two panes stack and slide instead of swapping with `display: none`, so
+     opening a page reads as the page arriving over the list and going back as
+     it leaving. Both stay mounted; the one off screen is just untouchable.
+
+     The pane at rest is `transform: none`, NOT translateX(0): any transform
+     makes an element the containing block for `position: fixed` descendants,
+     and <main> holds the formatting toolbar, which is fixed to the viewport and
+     driven by mobileKeyboard.ts. An identity transform would quietly re-anchor
+     it. `none` -> `translateX(100%)` still animates, so nothing is lost. */
+  /* `clip`, not `hidden`. Both hide the pane parked off to the right, but
+     `hidden` still makes this a scroll container — and the browser scrolls the
+     nearest one to bring a focused field into view, which is the whole app
+     sliding up under the keyboard and never coming back. `clip` cannot be
+     scrolled by anything, so focus has to settle for scrolling <main>.
+     --drawer-peek is kept in step with DRAWER_PEEK in App.tsx, which needs it
+     to turn a drag distance into progress. */
+  .app-shell { display: block; position: relative; overflow: clip; --drawer-peek: 25%; }
+  aside, main { position: absolute; inset: 0; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  /* Only the transform eases. Width is re-laid-out in one frame, deliberately:
+     every moment the list changes width is a moment the page is covering the
+     part that changes, so the reflow happens where it cannot be seen. Eased, it
+     stops being hidden — the list visibly shrinks out from under the arriving
+     page, or widens after the leaving one has already gone. A dragged drawer
+     always looked right because a drag suppresses transitions anyway; this makes
+     the buttons agree with the gesture. */
+  aside { transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  aside { z-index: 1; transform: none; }
+  main { z-index: 2; background: #111; transform: none; box-shadow: -14px 0 30px rgba(0, 0, 0, .45); }
+  /* The list drifts a little rather than sitting still under the page: parallax
+     is what says the two are one stack, not two screens that happen to swap. */
+  .mobile-editor aside { transform: translateX(-22%); pointer-events: none; }
+
+  /* --- the drawer ---------------------------------------------------------
+     The list over a page that is still open, stopping short so a strip of the
+     page shows. That strip is the affordance: drag it back, or tap it.
+
+     Both panes are driven by one number, --drawer-progress: 0 is the drawer
+     open, 1 is the page covering the screen. At 1 the transforms equal the
+     .mobile-editor ones exactly, so when the drag ends and the class changes
+     underneath, nothing moves. The drag writes the property straight onto the
+     shell; without it the declared values apply and the panes animate. */
+  /* Two opposing pulls on one axis. --drawer-progress runs 0→1 leftwards, the
+     page coming back over the list; --drawer-exit runs 0→1 rightwards, the page
+     leaving altogether. Only one is ever non-zero. At exit 1 this equals
+     `.mobile-list main` exactly, so the page can be handed over to that state
+     without moving. */
+  .mobile-drawer main, .mobile-drawer .drawer-grip, .mobile-drawer .drawer-close-layer { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)) + (var(--drawer-peek) + 34px) * var(--drawer-exit, 0))); }
+  .mobile-drawer main { pointer-events: none; }
+  .mobile-drawer aside { transform: translateX(calc(-22% * var(--drawer-progress, 0))); }
+  /* The list has to end where the page begins, or the strip covers its right
+     edge — and the right edge is where every row keeps its ••• button.
+     Qualified with .app-shell to outrank `.sidebar-collapsed aside`, which sets
+     the padding shorthand, ties on specificity and is declared later. */
+  /* Tied to the exit, so the list widens in step with the page leaving rather
+     than snapping open once it has gone. At exit 1 this is the plain mobile
+     padding, which is what the closed state uses — nothing jumps at handover. */
+  .app-shell.mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
+  /* Rides the page: same box, same transform, one z-index above. While the
+     drawer is open only its leading strip is on screen, which is the part you
+     can touch. Once the page has landed it briefly covers the whole viewport —
+     that is the point, it is swallowing the tail of the gesture that closed it.
+     3 and 4, just past <main>'s 2 — <main> makes its own stacking context, so
+     clearing it clears everything inside it including the sticky header. These
+     used to be 45 and 47, from when the grip lived inside <main> and had to
+     out-stack that chrome directly; left there, they also out-stacked every
+     menu and dialog in the app, which made the page menu unusable. */
+  .drawer-grip { position: absolute; inset: 0; z-index: 3; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  .drawer-dragging .drawer-grip, .no-slide .drawer-grip { transition: none; }
+  /* Not a floating control — the page's own back button, showing an X. It sits
+     exactly where that button sits (the header's 12px inset, centred in the
+     36px row) and rides the page, so when the drawer closes the two land on the
+     same spot at the same size and it reads as one control changing its mind.
+     The layer exists to carry the transform: a percentage translate on the
+     30px button would resolve against the button, not the screen. */
+  .drawer-close-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  /* Leaves with the page. Without this the layer fell back to its resting
+     transform and struck out for the left edge while the page it belongs to
+     slid off the right. Matches .mobile-list main exactly. */
+  .mobile-list .drawer-close-layer { transform: translateX(calc(100% + 34px)); }
+  .drawer-dragging .drawer-close-layer, .no-slide .drawer-close-layer { transition: none; }
+  /* The two never cross-dissolve on top of each other: whichever is leaving goes
+     first and quickly, and the one arriving waits until it has gone. Over the
+     280ms the page is moving, that reads as a single button turning into the
+     other rather than two icons briefly stacked. */
+  .drawer-close { position: absolute; left: 12px; top: 3px; color: #e1e1e1; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+  .mobile-drawer.drawer-x .drawer-close { opacity: 1; pointer-events: auto; transition: opacity .14s ease .15s; }
+  .show-sidebar-button:not(.drawer-close) { transition: opacity .14s ease .15s; }
+  .mobile-drawer.drawer-x .show-sidebar-button:not(.drawer-close) { opacity: 0; transition: opacity .12s ease; }
+  /* An absolutely positioned child is laid out against the padding box, so the
+     list's padding does not move it — the button has to step aside itself. */
+  .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
+  /* The page stays untouchable until after it has arrived AND the gesture that
+     brought it is fully over. A press on the strip is finished by iOS with a
+     burst of emulated events; landing them on a live editor is what put a caret
+     in the text and raised the keyboard against the wrong element. */
+  .drawer-settling main { pointer-events: none; }
+  /* Nothing eases while a finger is deciding: the panes are following it. */
+  .drawer-dragging aside, .drawer-dragging main { transition: none; }
+  /* The extra 34px parks the page's leading shadow past the edge of the screen,
+     so it reads as separation while the two panes are moving and leaves no
+     gradient down the side of the list once they settle. It must clear the
+     shadow's full reach: |offset| + blur/2. */
+  .mobile-list main { transform: translateX(calc(100% + 34px)); pointer-events: none; }
+  /* A back/forward gesture is animated by the browser itself; ours on top of it
+     is the stutter. App.tsx sets this for the frame that repositions the panes. */
+  .no-slide aside, .no-slide main { transition: none; }
+  /* While a finger is on it, everything follows the finger and eases nothing. */
+  .drawer-dragging aside { transition: none; }
+  @media (prefers-reduced-motion: reduce) { aside, main { transition: none; } }
+  /* The list is a column of tap targets, so its last row has to clear the home
+     indicator. Only here — an article is for reading and can run to the edge. */
+  aside { width: 100%; height: 100%; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border: 0; background: #111; }
+  /* Every target in the sidebar is a thumb target here, so the whole top zone
+     grows: 44px controls, a search bar you can hit without aiming, a name big
+     enough to read as the heading of the screen it now is. */
+  .sidebar-top { gap: 4px; margin-bottom: 8px; }
+  .sidebar-top-actions { gap: 4px; }
+  .sidebar-icon { width: 42px; height: 42px; padding: 10px; border-radius: 50%; color: #cfcfcf; }
+  .notification-button { width: 42px; height: 42px; border-radius: 50%; }
+  .notification-button svg { width: 21px; height: 21px; }
+  .notification-center { top: 62px; right: 14px; left: 14px; }
+  /* Ends where the page begins. It cannot simply be lifted over the page: it
+     lives in the sidebar, whose z-index confines everything inside it, so its
+     own z-index only orders it against its siblings there. Same reason the
+     Recently deleted panel is inset. */
+  .app-shell.mobile-drawer .notification-center { right: calc(14px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
+  .sidebar-close { display: none; }
+  /* The list is the home screen now, so its sections have to be legible as
+     sections — three unlabelled runs of rows read as one list with duplicates. */
+  .section-label { padding: 15px 10px 6px; }
+  /* `sidebar-collapsed` is a desktop preference that persists in localStorage
+     and follows the account to a phone, where there is no collapsed state to
+     honour — the sidebar is the home screen. Everything it hides has to be
+     un-hidden here, the button included. */
+  .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border-right-color: transparent; opacity: 1; pointer-events: auto; }
+  .sidebar-collapsed .new-page-action { opacity: 1; pointer-events: auto; }
+  /* Back to a circle, pinned clear of the home indicator: on a phone the button
+     has to be where the thumb already is, and the label is what pays for it. */
+  .new-page-action { position: absolute; right: 18px; bottom: calc(26px + env(safe-area-inset-bottom)); z-index: 12; display: grid; width: 54px; height: 54px; place-items: center; margin: 0; padding: 0; border-radius: 50%; color: #171717; background: #f0f0f0; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); transition: background .12s ease, transform .12s ease, opacity .12s ease; }
+  .new-page-action svg { width: 25px; height: 25px; stroke-width: 2.1; }
+  .new-page-action span { display: none; }
+  .new-page-action:active { transform: scale(.94); }
+  /* A drop target is whatever `elementFromPoint` returns, so anything floating
+     over the list is a hole in it. The button steps out of the way for the
+     duration of a drag, since it is not a place to drop a page. */
+  .dragging-page .new-page-action { opacity: .35; pointer-events: none; }
+  /* Clearance for the floating button, on the nav itself and NOT on the
+     scroller around it: this element is the move-to-top-level drop zone, so
+     space added outside it is a strip of list that silently rejects drops. */
+  .pages-nav { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+  .trash-view { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); background: #111; }
+  /* It fills the sidebar, and while the drawer is open the sidebar stops short
+     of the page. Without this its close button sits under the strip — the one
+     control the panel cannot afford to lose. */
+  .app-shell.mobile-drawer .trash-view { right: calc(var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
+  .trash-view-head strong { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
+  .trash-view-close { width: 40px; height: 40px; padding: 9px; }
+  /* Same idiom as the tree rows, so it follows them. */
+  .trash-item { border-radius: 8px; }
+  .trash-open { min-height: 46px; padding: 8px 10px; }
+  .trash-title { font-size: 15.5px; }
+  /* Search fills the screen: a floating palette on a phone is a small target
+     over a background you cannot use anyway. The field sits at the bottom,
+     under your thumb and directly above the keyboard, with the results filling
+     everything above it. The panel's padding-bottom is the keyboard inset,
+     written inline from visualViewport. */
+  .search-overlay { align-items: stretch; padding: 0; background: #111; }
+  .search-panel { max-width: none; max-height: none; flex: 1; flex-direction: column; border: 0; border-radius: 0; background: #111; box-shadow: none; animation: none; transition: padding-bottom .18s cubic-bezier(.22, 1, .36, 1); }
+  .search-bar { order: 2; gap: 10px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #1e1e1e; border-bottom: 0; }
+  /* A pill, so the field reads as the one live control on the screen. */
+  .search-field { height: 46px; padding: 0 14px; border-radius: 999px; background: #262626; }
+  .search-field input { font-size: 17px; }
+  .search-clear { width: 24px; height: 24px; }
+  .search-close { display: grid; width: 46px; height: 46px; flex: none; place-items: center; padding: 13px; border: 0; border-radius: 50%; color: #e8e8e8; background: #262626; cursor: pointer; }
+  .search-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .search-results { order: 1; flex: 1; padding: 8px 8px 4px; }
+  .search-empty { gap: 18px; padding: 0 20px 12vh; }
+  .search-empty svg { width: 44px; height: 44px; }
+  .search-empty p { font-size: 17px; color: #d0d0d0; }
+  .search-result { min-height: 56px; padding: 10px; border-radius: 10px; }
+  .search-result-title { font-size: 16px; }
+  .search-result-path { font-size: 12.5px; }
+  .sidebar-scroll { margin: 0 -2px; }
+  /* No dividers. A tree already shows its structure through indentation, and a
+     rule under every row competes with that — it reads as a flat list of equals.
+     Rows stay comfortably tappable at 40px, but the list gets dense enough to
+     see a whole branch at once. */
+  .page-row { border-radius: 8px; }
+  .page-link { min-height: 40px; padding: 8px 10px; border-radius: 8px; font-size: 15.5px; }
+  /* The active row is marked here as on desktop. It used not to be, on the
+     grounds that the list was a place you navigated away from and the page it
+     pointed at was never on screen beside it — the drawer made that false, and
+     while peeking the highlight is what ties the two together. With no page
+     open there is no active row for it to match, so the other states are
+     unaffected. */
   .sidebar-footer { padding: 14px 3px 0; }
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
-  article { min-height: 100%; padding: 38px 20px 60px; }
-  .editor-header { height: 102px; }
-  .editor-header-row { height: 102px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: 52px 50px; margin: 0; padding: 0 12px; }
+  /* No gutter is reserved for a scrollbar here, so the fades run edge to edge. */
+  .scroll-fade::before { right: 0; height: 56px; }
+  article { min-height: 100%; padding: 16px 20px 60px; }
+  .editor-header { height: 36px; }
+  /* The path is desktop-only, so nothing has to hide under the header here. */
+  article { margin-top: 0; }
+  .editor-header-row { height: 36px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); grid-template-rows: 36px; margin: 0; padding: 0 12px; }
   .header-left { grid-row: 1; grid-column: 1; max-width: none; }
   .header-right { grid-row: 1; grid-column: 3; justify-self: end; }
-  .editor-toolbar { position: static; grid-row: 2; grid-column: 1 / -1; height: 50px; margin: 0 -12px; padding: 0 13px; }
+  /* The formatting toolbar leaves the header grid and becomes a floating
+     overlay riding just above the software keyboard. Its transform (and the
+     kb-visible class) are driven by useMobileKeyboard / mobileKeyboard.ts;
+     CSS only supplies the look and the off-screen default. */
+  .editor-toolbar { position: fixed; top: -10px; left: 10px; right: 10px; z-index: 50; height: auto; margin: 0; padding: 8px; gap: 0; background: rgba(28, 28, 28, .86); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; box-shadow: 0 -8px 28px rgba(0, 0, 0, .32); overflow-x: visible; scrollbar-width: none; touch-action: pan-x; transform: translateY(-9999px); opacity: 0; transition: opacity .28s ease-out; justify-content: space-around; width: auto; left: 10px; right: 10px; }
+  .editor-toolbar .core-tools { justify-content: space-around; gap: 8px; }
+  .editor-toolbar .extra-tools { justify-content: space-around; gap: 8px; }
+  .editor-toolbar::-webkit-scrollbar { display: none; }
+  .block-type-menu { z-index: 60; }
+  .block-type-item { min-height: 44px; font-size: 15px; }
   .page-path { display: none; }
-  .back-button { color: #e1e1e1; }
+  .show-sidebar-button { color: #e1e1e1; }
   .header-actions { gap: 6px; }
   .header-button { color: #e4e4e4; font-size: 13px; }
   .header-button:first-child { font-size: 22px; }
-  .header-status { font-size: 11px; }
+  /* The scrolled title is centered across the whole row, so a long status can
+     land on top of it. The title is the thing that may be covered — the status
+     carries a pill of the header's own colour so whichever wins, it stays
+     legible instead of the two blending into each other. */
+  .header-status { position: relative; z-index: 1; padding: 3px 8px; border-radius: 999px; background: #111; font-size: 11px; }
   .title { margin-top: 0; margin-bottom: 22px; font-size: 32px; letter-spacing: -1px; }
   .editor-toolbar .extra-tools { display: none; }
-  .motion-md-content { min-height: calc(100dvh - 225px); padding-bottom: 52px; font-size: 17px; line-height: 1.68; }
+  /* padding-bottom is set dynamically by mobileKeyboard.ts while typing
+     (reserveScrollRoom); the static value here is only the resting state. */
+  /* Resting height is compact so backlinks sit close to the content. While the
+     keyboard is open, mobileKeyboard expands min-height (a full page) so iOS has
+     a real scroll surface and doesn't pan the document on short notes. */
+  .motion-md-content { min-height: 30dvh; padding-bottom: 40px; font-size: 17px; line-height: 1.68; }
   .empty { padding-bottom: 60px; }
   .invite-row { flex-wrap: wrap; }
   .invite-row input { min-width: 145px; }
   .invite-row .new { margin-left: auto; }
   .notification-center { top: 58px; right: 14px; left: 14px; max-height: calc(100dvh - 74px); overflow: auto; }
+  /* The trigger menu is squeezed between the caret line and the keyboard, so
+     every row has to be worth its height: touch-sized, and no more. */
+  .editor-menu-item { min-height: 44px; font-size: 15px; }
+  .editor-menu-actions .editor-menu-item { min-height: 44px; font-size: 14px; }
+  .editor-menu-actions .editor-menu-icon { width: 26px; height: 26px; }
 }
+
+/* Page options menu, drop-to-import overlay, and the copy confirmation. The
+   menu itself reuses .page-menu; only the width differs. */
+.header-menu { width: 190px; }
+.page-menu button:disabled { opacity: .4; cursor: default; }
+@media (hover: hover) { .page-menu button:disabled:hover { background: transparent; } }
+.page-options-button svg circle { fill: currentColor; stroke: none; }
+.copied-flash { align-self: center; margin-right: 2px; color: #8bb8a0; font-size: 12px; }

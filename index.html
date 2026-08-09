@@ -1,15 +1,34 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" style="background:#111">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Installed, this is also what iOS tints the status bar with — the same
+         treatment Safari gives the bar around a page, not the flat black the
+         `black` status-bar-style implies. It lands a shade off the app's #111
+         rather than beside it, close enough that the seam is hard to find. -->
     <meta name="theme-color" content="#101010" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <!-- NOT black-translucent, though it is tempting: it would let the app paint
+         its own background behind the status bar instead of sitting beside iOS's
+         black one. But it shifts the document up by the top inset while the
+         viewport keeps reporting the shorter height, stranding a dead strip at
+         the BOTTOM of the screen. The documented cure — pad by the inset and
+         grow every ancestor's min-height by the same amount — was tried on
+         2026-08-07 down to #root and did not close the gap on iOS 26. `black`
+         gives iOS the status bar and a viewport that matches what we may paint;
+         the bar is not the flat black the name suggests but is tinted from
+         theme-color above, so it sits a shade off #111 rather than beside it. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Motion</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- The stylesheet is render-blocking but still a separate request; this is
+         the one frame before it lands, and without it that frame is white. -->
+    <div id="root" style="background:#111"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

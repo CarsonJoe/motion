@@ -33,6 +33,16 @@ self.addEventListener('fetch', (event) => {
   event.respondWith((async () => {
     const cache = await caches.open(CACHE)
     if (event.request.mode === 'navigate') {
+      // Network-first, cache as the offline fallback.
+      //
+      // Cache-first was tried here on 2026-08-08 and reverted the same day. It
+      // does save a round trip on launch, but the document it serves is the one
+      // cached by the PREVIOUS build, so every deploy takes effect only on the
+      // launch after the one that fetched it. During active development that is
+      // a genuinely bad trade: it makes "is this fix live?" unanswerable, and it
+      // cost a debugging session where nobody could tell which build was under
+      // test. Offline launches still work — that is what the catch is for — they
+      // just wait for the fetch to fail first.
       try {
         const response = await fetch(event.request)
         if (response.ok) await cache.put('/index.html', response.clone())

@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Motion — sidebar mockup</title>
+<style>
+:root {
+  --bg: #ffffff;
+  --panel: #fbfbfa;
+  --text: #37352f;
+  --muted: #8b8781;
+  --faint: #b6b2ac;
+  --line: rgba(55,53,47,0.09);
+  --hover: rgba(55,53,47,0.055);
+  --active: rgba(55,53,47,0.09);
+  --accent: #2f7de1;
+  --thread: #b8722c;
+  --radius: 7px;
+  --row: 30px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #191919; --panel: #202020; --text: #e9e7e3; --muted: #8f8b85; --faint: #6b6863;
+    --line: rgba(255,255,255,0.09); --hover: rgba(255,255,255,0.055); --active: rgba(255,255,255,0.09);
+    --accent: #6ba7ee; --thread: #d9a05b;
+  }
+}
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; overscroll-behavior: none; }
+body {
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif;
+  color: var(--text); background: var(--bg);
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+/* ---------- shell ---------- */
+.shell { display: flex; height: 100%; }
+aside {
+  width: 268px; flex: none; background: var(--panel);
+  border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; min-height: 0;
+  padding-top: env(safe-area-inset-top);
+  position: relative;
+}
+main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* ---------- 1. identity ---------- */
+.identity {
+  display: flex; align-items: center; gap: 8px; padding: 8px 8px 6px 8px;
+}
+.identity-btn {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  padding: 5px 6px; border-radius: var(--radius);
+}
+.identity-btn:hover { background: var(--hover); }
+.avatar {
+  width: 22px; height: 22px; border-radius: 5px; flex: none;
+  background: linear-gradient(140deg, #5b8def, #8b5bef);
+  color: #fff; font-size: 11px; font-weight: 600;
+  display: grid; place-items: center;
+}
+.identity-name { font-weight: 600; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-chev { color: var(--faint); width: 12px; height: 12px; }
+.icon-btn {
+  width: 28px; height: 28px; border-radius: var(--radius); display: grid; place-items: center;
+  color: var(--muted); flex: none; position: relative;
+}
+.icon-btn:hover { background: var(--hover); color: var(--text); }
+.badge {
+  position: absolute; top: 2px; right: 2px; min-width: 14px; height: 14px; padding: 0 4px;
+  border-radius: 7px; background: var(--accent); color: #fff;
+  font-size: 9.5px; font-weight: 700; display: grid; place-items: center;
+}
+
+/* ---------- 2. search ---------- */
+.search-wrap { padding: 0 8px 6px 8px; display: flex; flex-direction: column; gap: 6px; }
+.search {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  height: 30px; padding: 0 9px; border-radius: var(--radius);
+  background: var(--hover); color: var(--muted); font-size: 13px;
+}
+.search:hover { background: var(--active); }
+.search input {
+  border: 0; background: none; outline: none; flex: 1; min-width: 0;
+  font: inherit; color: var(--text);
+}
+.search input::placeholder { color: var(--muted); }
+.search kbd {
+  font: 500 10.5px ui-monospace, monospace; color: var(--faint);
+  border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px;
+}
+/* floating circular actions over the tree: messages left, new page right */
+.fab {
+  position: absolute; bottom: calc(42px + env(safe-area-inset-bottom));
+  z-index: 15; width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0,0,0,.14);
+}
+.fab:hover { background: var(--hover); }
+.fab svg { width: 20px; height: 20px; }
+.fab-new { right: 14px; }
+.fab-msg { left: 14px; color: var(--muted); }
+.fab .badge { top: 0; right: 0; }
+
+/* ---------- filter chips ---------- */
+.chips { display: flex; gap: 5px; padding: 2px 10px 8px 10px; }
+.chip {
+  display: flex; align-items: center; gap: 5px;
+  height: 25px; padding: 0 9px; border-radius: 13px;
+  font-size: 12px; color: var(--muted); border: 1px solid var(--line);
+}
+.chip svg { width: 13px; height: 13px; }
+.chip[aria-pressed="true"] { background: var(--active); color: var(--text); border-color: transparent; font-weight: 500; }
+
+/* ---------- 3. tree (only scroller) ---------- */
+.tree { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 64px 6px; -webkit-overflow-scrolling: touch; }
+.section-label {
+  font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--faint);
+  padding: 12px 8px 4px 8px; text-transform: uppercase;
+}
+.row {
+  display: flex; align-items: center; gap: 4px; height: var(--row);
+  border-radius: var(--radius); padding-right: 4px; color: var(--text);
+}
+.row:hover { background: var(--hover); }
+.row.active { background: var(--active); font-weight: 500; }
+.row-open { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; height: 100%; padding-right: 2px; }
+.twisty { width: 18px; height: 18px; display: grid; place-items: center; color: var(--faint); flex: none; border-radius: 4px; }
+.twisty:hover { background: var(--active); }
+.twisty svg { width: 11px; height: 11px; transition: transform .12s ease; }
+.twisty.open svg { transform: rotate(90deg); }
+.type-icon { width: 16px; display: grid; place-items: center; color: var(--faint); flex: none; }
+.row.thread .type-icon { color: var(--thread); }
+.row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.row-more { width: 22px; height: 22px; border-radius: 4px; display: grid; place-items: center; color: var(--faint); opacity: 0; flex: none; }
+.row:hover .row-more, .row.active .row-more { opacity: 1; }
+.row-more:hover { background: var(--active); color: var(--text); }
+.children { display: none; }
+.children.open { display: block; }
+.empty-note { color: var(--faint); font-size: 12.5px; padding: 6px 10px; }
+
+/* ---------- 4. footer ---------- */
+.footer { border-top: 1px solid var(--line); padding: 4px 6px calc(6px + env(safe-area-inset-bottom)) 6px; }
+.foot-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 28px;
+  padding: 0 8px; border-radius: var(--radius); color: var(--muted); font-size: 12.5px;
+}
+.foot-row:hover { background: var(--hover); color: var(--text); }
+.foot-count { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.sync { display: flex; align-items: center; gap: 7px; padding: 3px 8px 2px 8px; color: var(--faint); font-size: 11.5px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: #4caf7d; flex: none; }
+
+/* ---------- main pane ---------- */
+.doc { flex: 1; overflow-y: auto; padding: 48px 6vw 120px; }
+.doc-inner { max-width: 700px; margin: 0 auto; }
+.doc h1 { font-size: 34px; margin: 0 0 6px; letter-spacing: -0.01em; }
+.doc p { color: var(--muted); max-width: 62ch; }
+.doc code { background: var(--hover); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.mobile-bar { display: none; }
+
+/* ---------- overlays ---------- */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.32); opacity: 0; pointer-events: none; transition: opacity .16s; z-index: 40; }
+.scrim.show { opacity: 1; pointer-events: auto; }
+.sheet {
+  position: fixed; z-index: 50; background: var(--bg); border: 1px solid var(--line);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.18); padding: 5px;
+  min-width: 220px; display: none;
+}
+.sheet.show { display: block; }
+.sheet-item { display: flex; align-items: center; gap: 9px; width: 100%; height: 34px; padding: 0 9px; border-radius: 6px; font-size: 13.5px; }
+.sheet-item:hover { background: var(--hover); }
+.sheet-item .sub { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+.sheet-sep { height: 1px; background: var(--line); margin: 4px 6px; }
+
+/* search overlay */
+.search-view {
+  position: fixed; inset: 0; z-index: 60; background: var(--bg);
+  display: none; flex-direction: column; padding-top: env(safe-area-inset-top);
+}
+.search-view.show { display: flex; }
+.sv-head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.sv-head input { flex: 1; min-width: 0; border: 0; outline: none; background: none; font: inherit; font-size: 16px; color: var(--text); }
+.sv-body { flex: 1; overflow-y: auto; padding: 8px 8px calc(20px + env(safe-area-inset-bottom)); }
+.sv-result { display: flex; gap: 10px; align-items: flex-start; width: 100%; padding: 9px 10px; border-radius: var(--radius); text-align: left; }
+.sv-result:hover { background: var(--hover); }
+.sv-result .type-icon { margin-top: 2px; }
+.sv-title { font-size: 14px; }
+.sv-snippet { color: var(--muted); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sv-crumb { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+mark { background: rgba(47,125,225,.22); color: inherit; border-radius: 2px; }
+
+/* messages inbox */
+.msg-row {
+  display: flex; gap: 10px; align-items: flex-start; width: 100%;
+  padding: 10px 10px; border-radius: var(--radius); text-align: left;
+}
+.msg-row:hover { background: var(--hover); }
+.msg-row.unread .msg-last { color: var(--text); }
+.msg-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex: none; margin-top: 2px;
+  display: grid; place-items: center; color: #fff; font-size: 12px; font-weight: 600;
+}
+.msg-main { flex: 1; min-width: 0; }
+.msg-path { font-size: 11.5px; color: var(--faint); display: flex; align-items: center; gap: 3px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msg-path b { color: var(--muted); font-weight: 500; }
+.msg-name { font-size: 14px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-last { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex: none; padding-top: 3px; }
+.msg-time { font-size: 11px; color: var(--faint); }
+.msg-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.msg-invite {
+  display: flex; gap: 10px; align-items: center; padding: 10px;
+  border: 1px solid var(--line); border-radius: var(--radius); margin: 0 0 6px;
+}
+.msg-invite .actions { margin-left: auto; display: flex; gap: 6px; }
+.msg-invite button {
+  height: 28px; padding: 0 11px; border-radius: 6px; font-size: 12.5px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.msg-invite button.accept { background: var(--accent); color: #fff; border-color: transparent; font-weight: 500; }
+
+/* ---------- mobile ---------- */
+@media (max-width: 760px) {
+  .shell { display: block; height: 100%; }
+  aside {
+    width: 100%; height: 100%; border-right: 0;
+    position: absolute; inset: 0; z-index: 20;
+    transform: translateX(0); transition: transform .2s ease;
+  }
+  body.reading aside { transform: translateX(-16%); }
+  main {
+    position: absolute; inset: 0; z-index: 30; background: var(--bg);
+    transform: translateX(100%); transition: transform .2s ease;
+    box-shadow: -8px 0 24px rgba(0,0,0,.12);
+  }
+  body.reading main { transform: translateX(0); }
+  .doc { padding: 12px 20px 100px; }
+  .mobile-bar {
+    display: flex; align-items: center; gap: 6px;
+    padding: calc(6px + env(safe-area-inset-top)) 10px 6px; border-bottom: 1px solid var(--line);
+  }
+  .search kbd { display: none; }
+  :root { --row: 38px; }
+  .row-more { opacity: 1; }
+  .sheet { left: 8px !important; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto !important; min-width: 0; border-radius: 14px; padding: 6px; }
+  .sheet-item { height: 44px; font-size: 15px; }
+  .chip { height: 30px; font-size: 12.5px; }
+}
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <aside>
+    <!-- 1. identity -->
+    <div class="identity">
+      <button class="identity-btn" id="identityBtn">
+        <span class="avatar">C</span>
+        <span class="identity-name">Carson</span>
+        <svg class="identity-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+
+    <!-- 2. search + new -->
+    <div class="search-wrap">
+      <button class="search" id="searchBtn">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <span style="flex:1;text-align:left">Search</span>
+        <kbd>⌘K</kbd>
+      </button>
+    </div>
+
+    <!-- filter chips -->
+    <div class="chips" id="chips">
+      <button class="chip" data-filter="all" aria-pressed="true">All</button>
+      <button class="chip" data-filter="note" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M14 3v5h5M14 3H6v18h12V8z"/></svg>Notes</button>
+      <button class="chip" data-filter="thread" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 01-8 8H4l2.3-2.3A8 8 0 1121 12z"/></svg>Threads</button>
+    </div>
+
+    <!-- 3. tree -->
+    <div class="tree" id="tree"></div>
+
+    <button class="fab fab-msg" id="msgBtn" aria-label="Messages">
+      <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 01-8 8H4l2.3-2.3A8 8 0 1121 12z"/></svg>
+      <span class="badge" id="msgBadge">3</span>
+    </button>
+    <button class="fab fab-new" id="newBtn" aria-label="New page">
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+
+    <!-- 4. footer -->
+    <div class="footer">
+      <div class="sync"><span class="dot"></span><span id="syncLabel">Synced · just now</span></div>
+    </div>
+  </aside>
+
+  <main>
+    <div class="mobile-bar">
+      <button class="icon-btn" id="backBtn" aria-label="Back to pages">
+        <svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg>
+      </button>
+      <span style="font-size:13.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="mobileTitle">Untitled</span>
+      <button class="icon-btn" style="margin-left:auto" aria-label="Page options">
+        <svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg>
+      </button>
+    </div>
+    <div class="doc">
+      <div class="doc-inner">
+        <h1 id="docTitle">Sidebar redesign</h1>
+        <p id="docBody">Four zones: identity, search, one scrolling tree, and a quiet footer. Only the tree scrolls, so search and your profile never scroll out of thumb reach on a phone.</p>
+        <p>Tap a page in the sidebar to swap this pane. Use the pill at the bottom-right to switch between <strong>unified</strong> (threads live in the tree, filtered by chips) and <strong>split</strong> (threads get their own section).</p>
+        <p style="color:var(--faint);font-size:12.5px">Mockup only — no data, no persistence.</p>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="scrim" id="scrim"></div>
+
+<!-- identity / settings sheet -->
+<div class="sheet" id="identitySheet">
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/></svg>Profile</button>
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.6 1.6 0 00-2.7 1.1V21a2 2 0 11-4 0v-.1A1.6 1.6 0 004 19.4l-.1.1a2 2 0 11-2.8-2.8"/></svg>Settings</button>
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><path d="M12 3v10M8 7l4-4 4 4M5 15v4h14v-4"/></svg>Import / export</button>
+  <button class="sheet-item" id="trashBtn"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>Recently deleted<span class="sub">3</span></button>
+  <div class="sheet-sep"></div>
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><path d="M16 17l5-5-5-5M21 12H9M12 21H5V3h7"/></svg>Sign out<span class="sub">Synced</span></button>
+</div>
+
+<!-- row menu -->
+<div class="sheet" id="rowSheet">
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>Add subpage</button>
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><path d="M12 3l2.9 6 6.6.9-4.8 4.6 1.2 6.5L12 18l-5.9 3 1.2-6.5L2.5 9.9 9.1 9z"/></svg>Favorite</button>
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><path d="M4 12a4 4 0 014-4h3M20 12a4 4 0 01-4 4h-3M9 12h6"/></svg>Copy link</button>
+  <button class="sheet-item"><svg viewBox="0 0 24 24"><path d="M4 14v6h16v-6M12 3v12M8 11l4 4 4-4"/></svg>Export</button>
+  <div class="sheet-sep"></div>
+  <button class="sheet-item" style="color:#d9584a"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg>Delete</button>
+</div>
+
+<!-- full-screen search -->
+<div class="search-view" id="searchView">
+  <div class="sv-head">
+    <svg viewBox="0 0 24 24" style="color:var(--muted)"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="svInput" placeholder="Search notes and threads" autocomplete="off" />
+    <button class="icon-btn" id="svClose" aria-label="Close search"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="chips" id="svChips" style="padding:8px 10px">
+    <button class="chip" data-filter="all" aria-pressed="true">All</button>
+    <button class="chip" data-filter="note" aria-pressed="false">Notes</button>
+    <button class="chip" data-filter="thread" aria-pressed="false">Threads</button>
+  </div>
+  <div class="sv-body" id="svBody"></div>
+</div>
+
+<!-- messages inbox (full-screen on mobile, panel on desktop) -->
+<div class="search-view" id="msgView">
+  <div class="sv-head">
+    <strong style="flex:1;font-size:16px">Messages</strong>
+    <button class="icon-btn" id="newThreadBtn" aria-label="New thread" title="New thread">
+      <svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 01-8 8H4l2.3-2.3A8 8 0 1121 12z"/><path d="M12 9v6M9 12h6"/></svg>
+    </button>
+    <button class="icon-btn" id="msgClose" aria-label="Close messages"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+  </div>
+  <div class="sv-body" id="msgBody"></div>
+</div>
+
+<script>
+// ---------------- fake data ----------------
+const PAGES = [
+  { id:'p1', parent:'', type:'note',   title:'Motion',           fav:true,  snippet:'Local-first notes with CRDT sync' },
+  { id:'p2', parent:'p1', type:'note', title:'Architecture',     snippet:'Yjs docs per note, IndexedDB scoped per user' },
+  { id:'p3', parent:'p2', type:'thread', title:'Sync failure postmortem', snippet:'Two paths destroyed local data silently',
+    from:'Dana', color:'#5b8def', last:'Reproduced it — the second write wins even when it is stale.', when:'2m', unread:true },
+  { id:'p4', parent:'p1', type:'thread', title:'Sidebar redesign', snippet:'Four zones, one scroller, typed rows',
+    from:'You', color:'#8b5bef', last:'You: moving New page to the bottom center.', when:'18m', unread:false },
+  { id:'p5', parent:'p1', type:'note',  title:'Roadmap',          snippet:'Trash, archive, threads, search' },
+  { id:'p6', parent:'',   type:'note',  title:'Journal',          fav:true, snippet:'Daily log' },
+  { id:'p7', parent:'p6', type:'note',  title:'2026-08-08',       snippet:'Committed the recently-deleted view' },
+  { id:'p8', parent:'',   type:'thread',title:'Pricing questions', snippet:'What does the free tier include?',
+    from:'Ilya', color:'#d97b4a', last:'Ilya: is the free tier capped by pages or by storage?', when:'1h', unread:true },
+  { id:'p9', parent:'p5', type:'thread',title:'Debugging IndexedDB', snippet:'Orphaned CRDT state, page renders blank',
+    from:'Sam', color:'#3fa37a', last:'Sam: content is in the bytes but nothing references it.', when:'Tue', unread:true },
+  { id:'p10', parent:'',  type:'note',  title:'Reading list',     snippet:'Papers on operational transforms' },
+];
+const ICON = {
+  note: '<path d="M14 3v5h5M14 3H6v18h12V8z"/>',
+  thread: '<path d="M21 12a8 8 0 01-8 8H4l2.3-2.3A8 8 0 1121 12z"/>'
+};
+let filter = 'all', activeId = 'p4';
+const expanded = new Set(['p1','p6']);
+
+const kids = (id) => PAGES.filter(p => p.parent === id);
+const matches = (p) => filter === 'all' || p.type === filter;
+// keep a page if it matches, or any descendant matches
+function keep(p) { return matches(p) || kids(p.id).some(keep); }
+
+function rowHTML(p, depth) {
+  const children = kids(p.id).filter(keep);
+  const open = expanded.has(p.id);
+  const pad = 4 + depth * 14;
+  return `
+  <div class="row ${p.type} ${p.id === activeId ? 'active' : ''}" data-id="${p.id}" style="padding-left:${pad}px">
+    <button class="twisty ${open ? 'open' : ''}" data-twisty="${p.id}" ${children.length ? '' : 'style="visibility:hidden"'}>
+      <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+    </button>
+    <button class="row-open" data-open="${p.id}">
+      <span class="type-icon"><svg viewBox="0 0 24 24">${ICON[p.type]}</svg></span>
+      <span class="row-title">${p.title}</span>
+    </button>
+    <button class="row-more" data-more="${p.id}"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="19" cy="12" r="1.3"/></svg></button>
+  </div>
+  <div class="children ${open ? 'open' : ''}">${children.map(c => rowHTML(c, depth + 1)).join('')}</div>`;
+}
+
+function render() {
+  const tree = document.getElementById('tree');
+  const favs = PAGES.filter(p => p.fav && keep(p));
+  let html = '';
+  if (favs.length) html += `<div class="section-label">Favorites</div>` + favs.map(p => rowHTML(p, 0)).join('');
+
+  const roots = kids('').filter(keep);
+  html += `<div class="section-label">Pages</div>`;
+  html += roots.length ? roots.map(p => rowHTML(p, 0)).join('') : `<div class="empty-note">Nothing here</div>`;
+  tree.innerHTML = html;
+}
+
+// full path of a page, e.g. "Motion / Architecture"
+function pathOf(p) {
+  const parts = []; let cur = p;
+  while (cur && cur.parent) { const par = PAGES.find(x => x.id === cur.parent); if (!par) break; parts.unshift(par.title); cur = par; }
+  return parts;
+}
+
+// ---------------- interactions ----------------
+const $ = (id) => document.getElementById(id);
+const scrim = $('scrim');
+const sheets = ['identitySheet','rowSheet'].map($);
+const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+
+function closeSheets() {
+  sheets.forEach(s => s.classList.remove('show'));
+  scrim.classList.remove('show');
+}
+function openSheet(sheet, anchor) {
+  closeSheets();
+  sheet.classList.add('show');
+  scrim.classList.add('show');
+  if (!isMobile() && anchor) {
+    const r = anchor.getBoundingClientRect();
+    sheet.style.left = Math.min(r.left, window.innerWidth - sheet.offsetWidth - 12) + 'px';
+    sheet.style.top = Math.min(r.bottom + 6, window.innerHeight - sheet.offsetHeight - 12) + 'px';
+  }
+}
+scrim.onclick = closeSheets;
+
+$('identityBtn').onclick = (e) => openSheet($('identitySheet'), e.currentTarget);
+// one action: a new note at the root
+$('newBtn').onclick = () => {
+  const p = { id:'n' + Date.now(), parent:'', type:'note', title:'Untitled', snippet:'' };
+  PAGES.push(p); activeId = p.id; render(); openDoc(p);
+};
+$('trashBtn').onclick = () => { closeSheets(); openDoc({ title:'Recently deleted', snippet:'3 pages · deleted items are kept for 30 days, then permanently removed.' }); };
+
+// ---------------- messages inbox ----------------
+function msgRender() {
+  const threads = PAGES.filter(p => p.type === 'thread' && p.last)
+    .sort((a, b) => Number(b.unread) - Number(a.unread));
+  const unread = threads.filter(t => t.unread).length;
+  const badge = $('msgBadge');
+  badge.textContent = unread; badge.style.display = unread ? 'grid' : 'none';
+  $('msgBody').innerHTML = `
+    <div class="section-label">Invitations</div>
+    <div class="msg-invite">
+      <span class="msg-avatar" style="background:#7a6ce0">R</span>
+      <span style="min-width:0">
+        <div class="msg-name">Rae invited you</div>
+        <div class="msg-path">Motion / <b>Q3 planning</b></div>
+      </span>
+      <span class="actions"><button>Decline</button><button class="accept">Accept</button></span>
+    </div>
+    <div class="section-label">Threads</div>
+    ${threads.map(t => {
+      const path = pathOf(t);
+      return `<button class="msg-row ${t.unread ? 'unread' : ''}" data-open="${t.id}">
+        <span class="msg-avatar" style="background:${t.color}">${t.from[0]}</span>
+        <span class="msg-main">
+          <div class="msg-path">${path.length ? path.join(' / ') + ' /' : 'Top level /'}</div>
+          <div class="msg-name">${t.title}</div>
+          <div class="msg-last">${t.last}</div>
+        </span>
+        <span class="msg-meta">
+          <span class="msg-time">${t.when}</span>
+          ${t.unread ? '<span class="msg-dot"></span>' : ''}
+        </span>
+      </button>`;
+    }).join('')}`;
+}
+$('msgBtn').onclick = () => { msgRender(); $('msgView').classList.add('show'); };
+$('msgClose').onclick = () => $('msgView').classList.remove('show');
+$('msgBody').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-open]'); if (!r) return;
+  const p = PAGES.find(x => x.id === r.dataset.open);
+  p.unread = false;
+  activeId = p.id;
+  // opening from the inbox reveals the thread in the tree too
+  let cur = p; while (cur && cur.parent) { expanded.add(cur.parent); cur = PAGES.find(x => x.id === cur.parent); }
+  $('msgView').classList.remove('show');
+  render(); msgRender(); openDoc(p);
+});
+
+$('newThreadBtn').onclick = () => {
+  const p = { id:'t' + Date.now(), parent:'', type:'thread', title:'New thread', snippet:'',
+    from:'You', color:'#8b5bef', last:'No messages yet', when:'now', unread:false };
+  PAGES.push(p); activeId = p.id;
+  $('msgView').classList.remove('show');
+  render(); msgRender(); openDoc(p);
+};
+
+$('tree').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-twisty]');
+  if (t) { const id = t.dataset.twisty; expanded.has(id) ? expanded.delete(id) : expanded.add(id); render(); return; }
+  const m = e.target.closest('[data-more]');
+  if (m) { openSheet($('rowSheet'), m); return; }
+  const o = e.target.closest('[data-open]');
+  if (o) { activeId = o.dataset.open; render(); openDoc(PAGES.find(p => p.id === activeId)); }
+});
+
+function openDoc(p) {
+  $('docTitle').textContent = p.title;
+  $('docBody').textContent = p.snippet || 'Empty page.';
+  $('mobileTitle').textContent = p.title;
+  if (isMobile()) document.body.classList.add('reading');
+}
+$('backBtn').onclick = () => document.body.classList.remove('reading');
+
+function wireChips(el, onPick) {
+  el.addEventListener('click', (e) => {
+    const c = e.target.closest('.chip'); if (!c) return;
+    el.querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', String(x === c)));
+    onPick(c.dataset.filter);
+  });
+}
+wireChips($('chips'), (f) => { filter = f; render(); });
+
+// search
+let svFilter = 'all';
+function svRender() {
+  const q = $('svInput').value.trim().toLowerCase();
+  const hits = PAGES.filter(p =>
+    (svFilter === 'all' || p.type === svFilter) &&
+    (!q || p.title.toLowerCase().includes(q) || (p.snippet || '').toLowerCase().includes(q)));
+  const hl = (s) => q ? s.replace(new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig'), '<mark>$1</mark>') : s;
+  const crumb = (p) => pathOf(p).join(' / ');
+  $('svBody').innerHTML = (q ? '' : '<div class="section-label">Recent</div>') + (hits.length
+    ? hits.map(p => `<button class="sv-result" data-open="${p.id}">
+        <span class="type-icon" ${p.type === 'thread' ? 'style="color:var(--thread)"' : ''}><svg viewBox="0 0 24 24">${ICON[p.type]}</svg></span>
+        <span style="min-width:0;flex:1">
+          <div class="sv-title">${hl(p.title)}</div>
+          ${p.snippet ? `<div class="sv-snippet">${hl(p.snippet)}</div>` : ''}
+          ${crumb(p) ? `<div class="sv-crumb">${crumb(p)}</div>` : ''}
+        </span></button>`).join('')
+    : `<div class="empty-note">No matches for “${q}”</div>`);
+}
+$('searchBtn').onclick = () => { $('searchView').classList.add('show'); $('svInput').value=''; svRender(); setTimeout(() => $('svInput').focus(), 30); };
+$('svClose').onclick = () => $('searchView').classList.remove('show');
+$('svInput').oninput = svRender;
+wireChips($('svChips'), (f) => { svFilter = f; svRender(); });
+$('svBody').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-open]'); if (!r) return;
+  activeId = r.dataset.open;
+  $('searchView').classList.remove('show');
+  render(); openDoc(PAGES.find(p => p.id === activeId));
+});
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); $('searchBtn').click(); }
+  if (e.key === 'Escape') { closeSheets(); $('searchView').classList.remove('show'); $('msgView').classList.remove('show'); }
+});
+
+render();
+msgRender();
+</script>
+</body>
+</html>

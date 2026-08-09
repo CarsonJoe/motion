@@ -1,17 +1,21 @@
 import { defineSchema } from '@tallpond/schema'
 
+// Motion stores one row of metadata per note and an append-only log of Yjs
+// updates per note body. Metadata (title, parent, deletion) is last-write-wins
+// by client timestamp; content merges through the CRDT log, so the two never
+// share authority. Deletions are soft (`deletedAt`) so a stale device can
+// never resurrect a removed note.
 export default defineSchema({
-  // Private, per-user files are the durable backup transport. Keeping a page in
-  // its own JSON file avoids the managed table-query path while preserving
-  // incremental, cross-device restores.
-  buckets: {
-    motion_pages_backup: (bucket) => {
-      bucket.maxFileSize('1MB')
-      bucket.accept(['application/json'])
-    }
-  },
   tables: {
-    // Preserved for legacy releases; Motion now writes to motion_pages below.
+    // ---------------------------------------------------------------------
+    // Legacy tables from earlier schema generations. The app no longer reads
+    // or writes any of these — the current model is `notes` / `note_updates`
+    // below and the `shared_notes` resource. They stay declared, unchanged,
+    // solely because this platform blocks a deploy that drops a table
+    // ("write a custom migration"); removing them here would delete
+    // whatever production data still lives in them. Do not add new fields to
+    // this app against these tables — extend the live schema instead.
+    // ---------------------------------------------------------------------
     pages: (table) => {
       table.text('pageId').notNull().unique()
       table.text('title').notNull()
@@ -32,9 +36,6 @@ export default defineSchema({
       table.index(['pageId'])
       table.index(['clientUpdatedAt'])
     },
-    // Native structured storage for Motion. Earlier table versions used a
-    // 32-bit integer for JavaScript millisecond timestamps, which overflowed
-    // and surfaced as a gateway 500 during normal page edits.
     motion_documents: (table) => {
       table.text('pageId').notNull().unique()
       table.text('title').notNull()
@@ -46,9 +47,6 @@ export default defineSchema({
       table.index(['pageId'])
       table.index(['clientUpdatedAt'])
     },
-    // Page discovery metadata. markdown/yState/blocks are legacy columns kept
-    // only for a non-destructive schema transition and are written empty.
-    // Immutable motion_crdt_updates are the sole body authority.
     motion_crdt_documents: (table) => {
       table.text('pageId').notNull().unique()
       table.text('title').notNull()
@@ -71,8 +69,6 @@ export default defineSchema({
       table.index(['documentId'])
       table.index(['clientUpdatedAt'])
     },
-    // Deletions are durable records, not hard deletes. They prevent a stale
-    // device from re-publishing a page after it has been removed elsewhere.
     motion_crdt_tombstones: (table) => {
       table.text('pageId').notNull().unique()
       table.text('deleteRootId').notNull()
@@ -82,11 +78,36 @@ export default defineSchema({
       table.index(['pageId'])
       table.index(['deleteRootId'])
       table.index(['deletedAt'])
+    },
+    // ---------------------------------------------------------------------
+    // Live schema.
+    // ---------------------------------------------------------------------
+    notes: (table) => {
+      table.text('noteId').notNull().unique()
+      table.text('title').notNull().default('')
+      // Empty string means the note sits at the root of the tree.
+      table.text('parentId').notNull().default('')
+      // 0 means alive. A nonzero value is the client ms timestamp of deletion.
+      table.bigint('deletedAt').notNull().default(0)
+      table.bigint('clientUpdatedAt').notNull()
+      table.timestamps()
+      table.index(['noteId'])
+      table.index(['parentId'])
+    },
+    // Immutable Yjs updates. Clients merge and re-insert long logs, then delete
+    // the consumed rows — Yjs deduplicates, so concurrent compaction is safe.
+    note_updates: (table) => {
+      table.uuid('updateId').notNull().unique()
+      table.text('noteId').notNull()
+      table.text('payload').notNull()
+      table.timestamps()
+      table.index(['noteId'])
     }
   },
-  // A resource is a single shared root page and every nested page below it.
-  // There is deliberately no workspace object in the product model.
   resources: {
+    // Legacy resource type from an earlier schema generation. Unused by the
+    // app; kept declared for the same reason as the legacy tables above —
+    // dropping a resource type is a destructive migration on this platform.
     shared_document: (document) => {
       document.visibility('members')
       document.defaultRole('reader')
@@ -105,8 +126,6 @@ export default defineSchema({
         table.index(['clientUpdatedAt'])
         table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'admin' })
       })
-      // Only resource owners/admins may create or update deletion markers.
-      // Members can read them so every device can converge on the same tree.
       document.owns('page_tombstones', (table) => {
         table.text('pageId').notNull().unique()
         table.text('deleteRootId').notNull()
@@ -118,8 +137,6 @@ export default defineSchema({
         table.index(['deletedAt'])
         table.access({ read: 'reader', create: 'admin', update: 'admin', delete: 'admin' })
       })
-      // Immutable Yjs updates are the realtime merge transport. A full Yjs
-      // update may be sent again after an offline period; Yjs deduplicates it.
       document.owns('document_updates', (table) => {
         table.uuid('updateId').notNull().unique()
         table.text('documentId').notNull()
@@ -131,9 +148,6 @@ export default defineSchema({
         table.index(['createdAt'])
         table.access({ read: 'reader', create: 'writer', update: 'none', delete: 'admin' })
       })
-      // Compact Markdown-character deltas use a fresh event stream. The
-      // legacy document_updates table contained whole-document Lexical states
-      // and is intentionally left untouched but no longer read or written.
       document.owns('markdown_updates', (table) => {
         table.uuid('updateId').notNull().unique()
         table.text('documentId').notNull()
@@ -144,7 +158,6 @@ export default defineSchema({
         table.index(['clientUpdatedAt'])
         table.access({ read: 'reader', create: 'writer', update: 'none', delete: 'admin' })
       })
-      // Presence is intentionally ephemeral: it is never queued while offline.
       document.owns('presence', (table) => {
         table.text('presenceId').notNull().unique()
         table.text('documentId').notNull()
@@ -154,6 +167,47 @@ export default defineSchema({
         table.timestamps()
         table.index(['documentId'])
         table.index(['expiresAt'])
+        table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'writer' })
+      })
+    },
+    // One shared resource is one shared root note plus every note nested
+    // beneath it. Members see the same two-table model as the private scope;
+    // the member_ prefix exists because resource tables share a namespace
+    // with top-level tables.
+    shared_notes: (resource) => {
+      resource.visibility('members')
+      resource.defaultRole('reader')
+      resource.grant({ owner: 'admin', admin: 'writer', writer: 'reader', reader: null })
+      resource.owns('member_notes', (table) => {
+        table.text('noteId').notNull().unique()
+        table.text('title').notNull().default('')
+        table.text('parentId').notNull().default('')
+        table.bigint('deletedAt').notNull().default(0)
+        table.bigint('clientUpdatedAt').notNull()
+        table.timestamps()
+        table.index(['noteId'])
+        table.index(['parentId'])
+        table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'admin' })
+      })
+      resource.owns('member_note_updates', (table) => {
+        table.uuid('updateId').notNull().unique()
+        table.text('noteId').notNull()
+        table.text('payload').notNull()
+        table.timestamps()
+        table.index(['noteId'])
+        // Writers may delete: compaction replaces consumed rows with their merge.
+        table.access({ read: 'reader', create: 'writer', update: 'none', delete: 'writer' })
+      })
+      // Ephemeral cursors. Rows expire client-side; nothing here is queued
+      // offline or treated as durable.
+      resource.owns('member_presence', (table) => {
+        table.text('presenceId').notNull().unique()
+        table.text('noteId').notNull()
+        table.text('displayName').notNull()
+        table.jsonb('data').notNull()
+        table.bigint('expiresAt').notNull()
+        table.timestamps()
+        table.index(['noteId'])
         table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'writer' })
       })
     }

@@ -12,12 +12,12 @@
     "check": "tallpond check"
   },
   "dependencies": {
+    "@lexical/rich-text": "^0.48.0",
     "@mdxeditor/editor": "^4.2.0",
-    "@tallpond/sdk": "^0.0.15",
+    "@tallpond/sdk": "^0.0.16",
+    "lexical": "^0.48.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "rxdb": "^17.4.0",
-    "y-indexeddb": "^9.0.12",
     "yjs": "^13.6.31"
   },
   "devDependencies": {
