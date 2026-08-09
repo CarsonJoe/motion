@@ -580,6 +580,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      to turn a drag distance into progress. */
   .app-shell { display: block; position: relative; overflow: clip; --drawer-peek: 25%; }
   aside, main { position: absolute; inset: 0; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  /* The list's width is part of the same movement: it gives up room as the page
+     arrives and takes it back as the page leaves, on the same curve. */
+  aside { transition: transform .28s cubic-bezier(.22, 1, .36, 1), padding-right .28s cubic-bezier(.22, 1, .36, 1); }
   aside { z-index: 1; transform: none; }
   main { z-index: 2; background: #111; transform: none; box-shadow: -14px 0 30px rgba(0, 0, 0, .45); }
   /* The list drifts a little rather than sitting still under the page: parallax
@@ -607,7 +610,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      edge — and the right edge is where every row keeps its ••• button.
      Qualified with .app-shell to outrank `.sidebar-collapsed aside`, which sets
      the padding shorthand, ties on specificity and is declared later. */
-  .app-shell.mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek)); }
+  /* Tied to the exit, so the list widens in step with the page leaving rather
+     than snapping open once it has gone. At exit 1 this is the plain mobile
+     padding, which is what the closed state uses — nothing jumps at handover. */
+  .app-shell.mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
   /* Rides the page: same box, same transform, one z-index above. While the
      drawer is open only its leading strip is on screen, which is the part you
      can touch. Once the page has landed it briefly covers the whole viewport —
@@ -638,7 +644,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .mobile-drawer .show-sidebar-button:not(.drawer-close) { opacity: 0; transition: opacity .12s ease; }
   /* An absolutely positioned child is laid out against the padding box, so the
      list's padding does not move it — the button has to step aside itself. */
-  .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek)); }
+  .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
+  .new-page-action { transition: background .12s ease, transform .12s ease, opacity .12s ease, right .28s cubic-bezier(.22, 1, .36, 1); }
   /* The page stays untouchable until after it has arrived AND the gesture that
      brought it is fully over. A press on the strip is finished by iOS with a
      burst of emulated events; landing them on a live editor is what put a caret
@@ -654,6 +661,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   /* A back/forward gesture is animated by the browser itself; ours on top of it
      is the stutter. App.tsx sets this for the frame that repositions the panes. */
   .no-slide aside, .no-slide main { transition: none; }
+  /* While a finger is on it, everything follows the finger and eases nothing. */
+  .drawer-dragging aside, .drawer-dragging .trash-view, .drawer-dragging .new-page-action { transition: none; }
   @media (prefers-reduced-motion: reduce) { aside, main { transition: none; } }
   /* The list is a column of tap targets, so its last row has to clear the home
      indicator. Only here — an article is for reading and can run to the edge. */
@@ -695,7 +704,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   /* It fills the sidebar, and while the drawer is open the sidebar stops short
      of the page. Without this its close button sits under the strip — the one
      control the panel cannot afford to lose. */
-  .app-shell.mobile-drawer .trash-view { right: var(--drawer-peek); }
+  .app-shell.mobile-drawer .trash-view { right: calc(var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
+  .trash-view { transition: right .28s cubic-bezier(.22, 1, .36, 1); }
   .trash-view-head strong { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
   .trash-view-close { width: 40px; height: 40px; padding: 9px; }
   /* Same idiom as the tree rows, so it follows them. */
