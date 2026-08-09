@@ -1278,34 +1278,25 @@ export default function App() {
     for (const key of revealedIds) if (!collapsedIds.has(key)) next.add(key)
     return next
   }, [expandedIds, revealedIds, collapsedIds])
-  // Closing the page keeps its branches open, by writing the reveal down as if
-  // it had been opened by hand.
+  // Peeking the list writes the open page's reveal down as if those branches had
+  // been opened by hand, so the trail you followed through links is still there
+  // when the drawer goes the rest of the way.
   //
-  // The reveal is derived from the open page, which is right while a page is
-  // open — walk to another one and the old branch tidies itself away. But on a
-  // phone the list is also somewhere you *arrive*, and closing the page is the
-  // way you get there: the branch would collapse at the exact moment the list
-  // became the whole screen, throwing away the trail you had just followed
-  // through it. Held in a ref because by the time the close is observable the
-  // page it was derived from is already gone.
-  const revealOnCloseRef = useRef<Set<string>>(new Set())
+  // The reveal is derived from the open page, which is right on its own terms —
+  // walk to another page and the old branch tidies itself away. It only goes
+  // wrong when the list stops being a companion to the page and becomes the
+  // whole screen, because then the branch collapses just as it becomes the thing
+  // you are looking at. That transition is the drawer, so this is where the
+  // commit belongs, and desktop — which has no drawer — keeps the tidying.
   useEffect(() => {
-    if (activeId) {
-      const keep = new Set<string>()
-      for (const key of revealedIds) if (!collapsedIds.has(key)) keep.add(key)
-      revealOnCloseRef.current = keep
-      return
-    }
-    const keep = revealOnCloseRef.current
-    if (!keep.size) return
-    revealOnCloseRef.current = new Set()
+    if (!menuOpen) return
     setExpandedIds((current) => {
       const next = new Set(current)
       let added = false
-      for (const key of keep) if (!next.has(key)) { next.add(key); added = true }
+      for (const key of revealedIds) if (!collapsedIds.has(key) && !next.has(key)) { next.add(key); added = true }
       return added ? next : current
     })
-  }, [activeId, revealedIds, collapsedIds])
+  }, [menuOpen, revealedIds, collapsedIds])
   // Revealing the row is pointless if it is below the fold.
   useEffect(() => {
     if (!activeId) return
