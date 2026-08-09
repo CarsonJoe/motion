@@ -26,5 +26,18 @@ export default defineConfig({
   plugins: [
     react(),
     motionServiceWorker()
-  ]
+  ],
+  // The Tallpond gateway allows the hosted app origin, but not arbitrary LAN
+  // origins such as http://192.168.x.x:5173. Proxy it through Vite during local
+  // development so offline-first work and sync probes behave the same way.
+  server: {
+    proxy: {
+      '/tallpond': {
+        target: 'https://api.tallpond.com',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (path) => path.replace(/^\/tallpond/, '')
+      }
+    }
+  }
 })

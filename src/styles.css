@@ -174,17 +174,21 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .article-path { height: 20px; margin-bottom: 100px; align-items: center; transition: opacity .18s ease, visibility 0s; }
 /* An open sidebar already says where you are, so the path steps aside for it. */
 .article-path.hidden { visibility: hidden; opacity: 0; pointer-events: none; transition: opacity .18s ease, visibility 0s linear .18s; }
-.editor-header { position: sticky; top: 0; z-index: 5; height: 44px; color: #929292; font-size: 12px; }
+.editor-header { position: sticky; top: 0; z-index: 5; height: 44px; color: #929292; font-size: 12px; pointer-events: auto; }
+/* The transparent header owns the breadcrumb hit area; its mouse handler
+   forwards breadcrumb clicks while the real controls remain interactive. */
+.editor-header .header-left, .editor-header .header-actions, .editor-header .header-right, .editor-header .editor-toolbar { pointer-events: auto; }
 /* The bar is painted by a pseudo-element rather than the header's own
    background so it can stop short of the scrollbar. The scrollbar belongs to
    `main` and always paints on top, so a full-bleed bar reads as the track
    running behind the header; ending the bar a track-width early gives the
    scrollbar its own lane. The header box itself stays full width, which keeps
    the toolbar's centring maths lined up with the article below. */
-.editor-header::before { content: ''; position: absolute; inset: 0 var(--scrollbarWidth) 0 0; background: #111; opacity: 1; transition: opacity .18s ease; }
+.editor-header::before { content: ''; position: absolute; inset: 0 var(--scrollbarWidth) 0 0; background: #111; opacity: 1; pointer-events: none; transition: opacity .18s ease; }
 /* At rest the header is just its controls floating over the page — no bar, so
    the path below it reads as part of the document. The backdrop comes in with
    the toolbar and only with the toolbar; scrolling does not summon it. */
+.editor-header.transparent { cursor: pointer; }
 .editor-header.transparent::before { opacity: 0; }
 .editor-header.transparent::after { opacity: 0; }
 /* Content scrolls under the sticky header, so its bottom edge would cut a line of
@@ -192,7 +196,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
    text scrolling under it dissolves into the header instead of being sliced. It
    takes no layout height. */
 .editor-header::after { content: ''; position: absolute; top: 100%; right: var(--scrollbarWidth); left: 0; height: 16px; background: linear-gradient(to bottom, #111111, #11111100); pointer-events: none; opacity: 1; transition: opacity .18s ease; }
-.editor-header-row { position: relative; display: grid; width: 100%; height: 44px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
+.editor-header-row { position: relative; z-index: 7; display: grid; pointer-events: none; width: 100%; height: 44px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; padding: 0 16px; }
 .header-left, .header-actions, .header-right { display: flex; min-width: 0; align-items: center; }
 .header-left { max-width: none; gap: 10px; }
 .header-right { grid-column: 3; justify-self: end; justify-content: flex-end; gap: 10px; }
