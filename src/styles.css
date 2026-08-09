@@ -595,18 +595,22 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      .mobile-editor ones exactly, so when the drag ends and the class changes
      underneath, nothing moves. The drag writes the property straight onto the
      shell; without it the declared values apply and the panes animate. */
-  .mobile-drawer main { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); pointer-events: none; }
+  .mobile-drawer main, .mobile-drawer .drawer-grip { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); }
+  .mobile-drawer main { pointer-events: none; }
   .mobile-drawer aside { transform: translateX(calc(-22% * var(--drawer-progress, 0))); }
   /* The list has to end where the page begins, or the strip covers its right
      edge — and the right edge is where every row keeps its ••• button.
      Qualified with .app-shell to outrank `.sidebar-collapsed aside`, which sets
      the padding shorthand, ties on specificity and is declared later. */
   .app-shell.mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek)); }
-  /* Above the editor's own sticky chrome, not just the prose: the strip has to
-     be one surface with one meaning, whatever of the page happens to show
-     through it. <main> is pointer-events: none in this state, so this is the
-     only thing in there that can be touched at all. */
-  .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  /* Rides the page: same box, same transform, one z-index above. While the
+     drawer is open only its leading strip is on screen, which is the part you
+     can touch. Once the page has landed it briefly covers the whole viewport —
+     that is the point, it is swallowing the tail of the gesture that closed it.
+     Above the editor's sticky chrome so nothing shows through with a different
+     meaning. */
+  .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  .drawer-dragging .drawer-grip, .no-slide .drawer-grip { transition: none; }
   /* An absolutely positioned child is laid out against the padding box, so the
      list's padding does not move it — the button has to step aside itself. */
   .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek)); }
