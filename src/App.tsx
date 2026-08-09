@@ -804,6 +804,16 @@ export default function App() {
   const [landingBusy, setLandingBusy] = useState(false)
   const [flash, setFlash] = useState<string | null>(null)
   const mirrorReadyRef = useRef(false)
+  // True when the entry we are sitting on is a page this session pushed from the
+  // list — the only case where going back is guaranteed to land on the list
+  // rather than out of the app. A page reached by deep link or by the system's
+  // own forward gesture leaves it false, and the back control falls back to
+  // pushing `#/`, which is correct if untidy.
+  const pushedFromListRef = useRef(false)
+  // Set for the instant between us calling history.back() and the route event it
+  // raises, so that one event knows the pop was ours and animates it. A pop the
+  // *user* performed is already being animated by the browser.
+  const selfPopRef = useRef(false)
   const controllerRef = useRef<NoteDocController | null>(null)
   const contentTouchRef = useRef(new Map<string, number>())
 
@@ -1106,11 +1116,14 @@ export default function App() {
     // screen under a `#/` URL. On mobile this is the whole back gesture: `#/`
     // is the list. Safe to do here because only real navigation — back/forward,
     // an opened link — emits these events; our own pushState mirror does not.
-    // Both directions, before either is acted on: this only fires for real
-    // navigation, where the browser is already running its own transition and a
-    // second one on top of it is the stutter.
-    suppressSlide()
-    if (!route.noteId) leaveToList(false)
+    // A pop we asked for is ours to animate. A pop the user performed with the
+    // system gesture is already being animated by the browser, and a second one
+    // on top of it is the stutter — so that case is instant and suppressed, in
+    // both directions, before either is acted on.
+    const selfPop = selfPopRef.current
+    selfPopRef.current = false
+    if (!selfPop) suppressSlide()
+    if (!route.noteId) { pushedFromListRef.current = false; leaveToList(selfPop) }
   }), [leaveToList, suppressSlide])
 
   // URL -> active page. Resolves once the store is up, and again as pages arrive
@@ -1135,7 +1148,13 @@ export default function App() {
   // (normalizing the resource id) replace rather than push a history entry.
   useEffect(() => {
     if (!mirrorReadyRef.current) return
-    writeRoute(activeId, activeNote?.shareId ?? null, readRoute().noteId === activeId)
+    const previous = readRoute().noteId
+    const replace = previous === activeId
+    writeRoute(activeId, activeNote?.shareId ?? null, replace)
+    // Opening a page from the list is the one push worth undoing, so remember
+    // when we made it: that is what lets the back control pop instead of piling
+    // another entry on top (see showSidebar).
+    if (!replace) pushedFromListRef.current = Boolean(activeId) && !previous
   }, [activeId, activeNote?.shareId])
 
   // When a link points at a page we can't open, work out why and offer the way
@@ -1609,13 +1628,26 @@ export default function App() {
 
   // The single header control that means "show me the sidebar". On desktop the
   // sidebar is a panel beside the content, so this is a toggle and the URL is
-  // untouched — collapsing a panel must never become a history entry. On mobile
-  // the sidebar is a full-screen view that lives at `#/`, so this is a real
-  // navigation; that is what puts the list in the history stack and lets the
-  // system back gesture return to it.
+  // untouched — collapsing a panel must never become a history entry.
+  //
+  // On mobile the sidebar is a full-screen view at `#/`, and this control undoes
+  // the push that opened the page: it pops. Pushing another `#/` would also show
+  // the list, but it grows the stack every round trip (`#/`, note, `#/`, note…)
+  // and leaves the back gesture pointing at the page you just left. Popping
+  // keeps the stack two deep and puts the page *forward* of the list, which is
+  // where the system's own forward-swipe expects it — swiping the page back in
+  // costs no code of ours. Only a page we did not push (deep link, or the user's
+  // forward gesture) has no entry to pop, and falls back to the push.
   const showSidebar = () => {
     if (!isMobile) { openSidebar(); return }
-    setNoteMenuId(null); clearPendingNavigation(); leaveToList(true)
+    setNoteMenuId(null); clearPendingNavigation()
+    if (pushedFromListRef.current) {
+      selfPopRef.current = true
+      setExitingToList(true)
+      window.history.back()
+      return
+    }
+    leaveToList(true)
   }
   const copyPageLink = async () => {
     if (!activeNote) return
