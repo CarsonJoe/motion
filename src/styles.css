@@ -619,6 +619,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      30px button would resolve against the button, not the screen. */
   .drawer-close-layer { position: absolute; inset: 0; z-index: 47; pointer-events: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   .mobile-drawer .drawer-close-layer { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); }
+  /* Leaves with the page. Without this the layer fell back to its resting
+     transform and struck out for the left edge while the page it belongs to
+     slid off the right. Matches .mobile-list main exactly. */
+  .mobile-list .drawer-close-layer { transform: translateX(calc(100% + 34px)); }
   .drawer-dragging .drawer-close-layer, .no-slide .drawer-close-layer { transition: none; }
   /* The two never cross-dissolve on top of each other: whichever is leaving goes
      first and quickly, and the one arriving waits until it has gone. Over the
