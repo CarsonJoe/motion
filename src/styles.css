@@ -51,9 +51,9 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
    A labelled row here, sitting between the icons and the tree where the lists
    it creates into begin. The phone turns the same element into a circle pinned
    bottom-right (see the mobile block) — there, thumb reach beats a label. */
-.new-page-action { display: flex; width: 100%; align-items: center; gap: 9px; height: 34px; margin-bottom: 14px; padding: 0 9px; border: 0; border-radius: 8px; color: #c9c9c9; background: transparent; font: inherit; font-size: 13.5px; font-weight: 500; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
-.new-page-action svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-@media (hover: hover) { .new-page-action:hover { color: #fff; background: #242424; } }
+.new-page-action { display: flex; width: 100%; align-items: center; gap: 9px; height: 36px; margin-bottom: 14px; padding: 0 11px; border: 0; border-radius: 8px; color: #171717; background: #f0f0f0; font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; transition: background .12s ease; }
+.new-page-action svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; }
+@media (hover: hover) { .new-page-action:hover { background: #fff; } }
 .sidebar-collapsed .new-page-action { opacity: 0; pointer-events: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
 /* Both section headings are the same drop target — the top level — so both
