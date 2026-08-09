@@ -579,13 +579,20 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      driven by mobileKeyboard.ts. An identity transform would quietly re-anchor
      it. `none` -> `translateX(100%)` still animates, so nothing is lost. */
   .app-shell { display: block; position: relative; }
-  aside, main { position: absolute; inset: 0; transition: transform .26s cubic-bezier(.22, 1, .36, 1); }
+  aside, main { position: absolute; inset: 0; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   aside { z-index: 1; transform: none; }
-  main { z-index: 2; background: #111; transform: none; box-shadow: -12px 0 28px rgba(0, 0, 0, .45); }
+  main { z-index: 2; background: #111; transform: none; box-shadow: -14px 0 30px rgba(0, 0, 0, .45); }
   /* The list drifts a little rather than sitting still under the page: parallax
      is what says the two are one stack, not two screens that happen to swap. */
   .mobile-editor aside { transform: translateX(-22%); pointer-events: none; }
-  .mobile-list main { transform: translateX(100%); pointer-events: none; }
+  /* The extra 34px parks the page's leading shadow past the edge of the screen,
+     so it reads as separation while the two panes are moving and leaves no
+     gradient down the side of the list once they settle. It must clear the
+     shadow's full reach: |offset| + blur/2. */
+  .mobile-list main { transform: translateX(calc(100% + 34px)); pointer-events: none; }
+  /* A back/forward gesture is animated by the browser itself; ours on top of it
+     is the stutter. App.tsx sets this for the frame that repositions the panes. */
+  .no-slide aside, .no-slide main { transition: none; }
   @media (prefers-reduced-motion: reduce) { aside, main { transition: none; } }
   /* The list is a column of tap targets, so its last row has to clear the home
      indicator. Only here — an article is for reading and can run to the edge. */

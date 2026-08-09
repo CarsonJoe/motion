@@ -542,6 +542,9 @@ function IdentityMenu({ anchor, name, connected, signOutBlocked, trashCount, onT
 // results* with the same title — and nothing at all when its title is already
 // unique among them, which is the common case.
 
+// Kept in step with the pane transition in styles.css (mobile block).
+const MOBILE_SLIDE_MS = 280
+
 const PAGE_RESULT_LIMIT = 10
 const editedOn = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 // Titles carry whatever whitespace was typed into them. Two pages called "Todo"
@@ -688,6 +691,36 @@ export default function App() {
   const collapseSidebar = () => { setSidebarOpen(false); localStorage.setItem('motion-sidebar-collapsed', 'true') }
   const openSidebar = () => { setSidebarOpen(true); localStorage.removeItem('motion-sidebar-collapsed') }
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 760)
+  // Going back to the list on mobile is an animated slide, and the page has to
+  // stay on screen for the whole of it. Clearing the note first swapped the
+  // empty state in mid-flight — the `#/` view sliding away instead of the page
+  // you were reading. So the view flips at once (which starts the slide) while
+  // the note lingers behind it until it lands.
+  //
+  // A browser back gesture is the opposite case: the system is already animating
+  // its own snapshot, and ours running on top of it reads as a stutter. Those
+  // exits are instant and switch the transition off for a frame.
+  const [exitingToList, setExitingToList] = useState(false)
+  const [noSlide, setNoSlide] = useState(false)
+  const exitTimer = useRef(0)
+  const leaveToList = useCallback((animate: boolean) => {
+    window.clearTimeout(exitTimer.current)
+    if (!animate) {
+      setNoSlide(true)
+      setExitingToList(false)
+      setActiveId(null)
+      // Two frames: one for React to paint the new position, one for the browser
+      // to accept it as the resting state before transitions are allowed back.
+      requestAnimationFrame(() => requestAnimationFrame(() => setNoSlide(false)))
+      return
+    }
+    setExitingToList(true)
+    exitTimer.current = window.setTimeout(() => { setActiveId(null); setExitingToList(false) }, MOBILE_SLIDE_MS)
+  }, [])
+  useEffect(() => () => window.clearTimeout(exitTimer.current), [])
+  // Opening a page mid-exit cancels the exit, or its timer would clear the note
+  // that was just opened.
+  useEffect(() => { if (activeId) { window.clearTimeout(exitTimer.current); setExitingToList(false) } }, [activeId])
   const [mainEl, setMainEl] = useState<HTMLElement | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   const [docTransport, setDocTransport] = useState<DocTransport>('local')
@@ -909,7 +942,7 @@ export default function App() {
   // the only navigation state, so a refresh, a deep link and a back gesture all
   // land wherever the URL says. The landing interstitial counts as content
   // because it renders into <main>.
-  const mobileView: 'list' | 'editor' = activeId || landing ? 'editor' : 'list'
+  const mobileView: 'list' | 'editor' = (activeId || landing) && !exitingToList ? 'editor' : 'list'
   // The page list is `display: none` while the editor is up on mobile, and an
   // element with no layout forgets its scroll offset. Record it as the user
   // scrolls (reading it back on the way out is too late — it is already 0) and
@@ -1070,8 +1103,10 @@ export default function App() {
     // screen under a `#/` URL. On mobile this is the whole back gesture: `#/`
     // is the list. Safe to do here because only real navigation — back/forward,
     // an opened link — emits these events; our own pushState mirror does not.
-    if (!route.noteId) setActiveId(null)
-  }), [])
+    // Unanimated: this only fires for real navigation, and the browser is
+    // already running its own transition for the back/forward gesture.
+    if (!route.noteId) leaveToList(false)
+  }), [leaveToList])
 
   // URL -> active page. Resolves once the store is up, and again as pages arrive
   // so a deep link opens the moment its page syncs. Consumed on success so an
@@ -1575,7 +1610,7 @@ export default function App() {
   // system back gesture return to it.
   const showSidebar = () => {
     if (!isMobile) { openSidebar(); return }
-    setNoteMenuId(null); clearPendingNavigation(); setActiveId(null)
+    setNoteMenuId(null); clearPendingNavigation(); leaveToList(true)
   }
   const copyPageLink = async () => {
     if (!activeNote) return
@@ -1751,7 +1786,7 @@ export default function App() {
     selection.removeAllRanges()
     selection.addRange(range)
   }
-  return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'} ${drag ? 'dragging-page' : ''}`}>
+  return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'} ${drag ? 'dragging-page' : ''} ${noSlide ? 'no-slide' : ''}`}>
     <aside><div className="sidebar-top"><button className="sidebar-icon" aria-label="Search pages" title="Search pages (⌘K)" onClick={openSearch}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-icon" aria-label="Settings" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M19.4 13.5a7.7 7.7 0 000-3l1.7-1.3-1.8-3.1-2 .8a7.7 7.7 0 00-2.6-1.5L14.4 3h-3.6l-.3 2.4a7.7 7.7 0 00-2.6 1.5l-2-.8-1.8 3.1 1.7 1.3a7.7 7.7 0 000 3l-1.7 1.3 1.8 3.1 2-.8a7.7 7.7 0 002.6 1.5l.3 2.4h3.6l.3-2.4a7.7 7.7 0 002.6-1.5l2 .8 1.8-3.1z" /></svg></button><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button></div></div>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === FAVORITES_DROP ? 'drop-target' : ''}`} data-drop-id={FAVORITES_DROP}>FAVORITES</div><nav className="favorites-nav">{previewParentId === FAVORITES_DROP && <DropLine depth={0} />}{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}<button className="new-page-fab" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => { setTrashViewOpen(false); openNote(note.id) }}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
     {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label="Search pages" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false) }}>
       <div className="search-panel" style={{ paddingBottom: keyboardInset }}>
