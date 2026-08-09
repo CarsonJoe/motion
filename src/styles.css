@@ -587,9 +587,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .trash-view { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); background: #111; }
   .trash-view-head strong { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
   .trash-view-close { width: 40px; height: 40px; padding: 9px; }
-  .trash-item { border-bottom: 1px solid #202020; border-radius: 0; }
-  .trash-open { min-height: 52px; padding: 10px; }
-  .trash-title { font-size: 16px; }
+  /* Same idiom as the tree rows, so it follows them. */
+  .trash-item { border-radius: 8px; }
+  .trash-open { min-height: 46px; padding: 8px 10px; }
+  .trash-title { font-size: 15.5px; }
   /* Search fills the screen: a floating palette on a phone is a small target
      over a background you cannot use anyway. */
   .search-overlay { padding: 0; background: #111; }
@@ -602,8 +603,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .search-result-title { font-size: 16px; }
   .search-result-path { font-size: 12.5px; }
   .sidebar-scroll { margin: 0 -2px; }
-  .page-row { border-bottom: 1px solid #202020; border-radius: 0; }
-  .page-link { min-height: 48px; padding: 12px 10px; border-radius: 0; font-size: 16px; }
+  /* No dividers. A tree already shows its structure through indentation, and a
+     rule under every row competes with that — it reads as a flat list of equals.
+     Rows stay comfortably tappable at 40px, but the list gets dense enough to
+     see a whole branch at once. */
+  .page-row { border-radius: 8px; }
+  .page-link { min-height: 40px; padding: 8px 10px; border-radius: 8px; font-size: 15.5px; }
   /* No active-page highlight on mobile. The list is a place you navigate away
      from, not a pane sitting beside the page it points at — by the time you can
      see the row, that page isn't on screen for it to be "current" relative to. */
