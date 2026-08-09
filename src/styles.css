@@ -47,18 +47,14 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
 .sidebar-icon[aria-expanded="true"] { color: #fff; background: #292929; }
 .sidebar-icon svg, .sidebar-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 
-/* --- the one floating action: a new page at the top level ------------------
-   Circular and anchored to the bottom-right of the sidebar, so it holds still
-   while the tree scrolls under it and stays under the thumb on a phone. */
-.new-page-fab { position: absolute; right: 16px; bottom: 46px; z-index: 12; display: grid; width: 46px; height: 46px; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #171717; background: #f0f0f0; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); transition: background .12s ease, transform .12s ease; }
-.new-page-fab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; }
-@media (hover: hover) { .new-page-fab:hover { background: #fff; } }
-.new-page-fab:active { transform: scale(.94); }
-/* A drop target is whatever `elementFromPoint` returns, so anything floating
-   over the list is a hole in it. The button steps out of the way for the
-   duration of a drag and fades, since it is not a place to drop a page. */
-.dragging-page .new-page-fab { opacity: .35; pointer-events: none; }
-.sidebar-collapsed .new-page-fab { opacity: 0; pointer-events: none; }
+/* --- the one action: a new page at the top level ---------------------------
+   A labelled row here, sitting between the icons and the tree where the lists
+   it creates into begin. The phone turns the same element into a circle pinned
+   bottom-right (see the mobile block) — there, thumb reach beats a label. */
+.new-page-action { display: flex; width: 100%; align-items: center; gap: 9px; height: 34px; margin-bottom: 14px; padding: 0 9px; border: 0; border-radius: 8px; color: #c9c9c9; background: transparent; font: inherit; font-size: 13.5px; font-weight: 500; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
+.new-page-action svg { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+@media (hover: hover) { .new-page-action:hover { color: #fff; background: #242424; } }
+.sidebar-collapsed .new-page-action { opacity: 0; pointer-events: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
 /* Both section headings are the same drop target — the top level — so both
    light up together. The drop line for a top-level drop lands at the top of
@@ -84,10 +80,7 @@ nav { overflow: visible; }
 .sidebar-scroll::-webkit-scrollbar-thumb:hover { background-color: #505050; }
 /* Blank space under the last row is the drop target for "move to top level", so
    the tree claims the rest of the sidebar rather than ending at its last row. */
-/* The room the FAB needs is padding on the nav itself, NOT on the scroller
-   around it: this element is the "move to top level" drop zone, so space added
-   outside it is a strip of the list that silently rejects drops. */
-.pages-nav { min-height: 96px; flex: 1 0 auto; padding-bottom: 68px; }
+.pages-nav { min-height: 96px; flex: 1 0 auto; }
 .section-label, .favorites-nav { flex: none; }
 .page-row.dragging { opacity: .35; }
 /* Sits below its parent row and takes no space, so nothing under the pointer
@@ -615,10 +608,20 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      honour — the sidebar is the home screen. Everything it hides has to be
      un-hidden here, the button included. */
   .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border-right-color: transparent; opacity: 1; pointer-events: auto; }
-  .sidebar-collapsed .new-page-fab { opacity: 1; pointer-events: auto; }
-  /* Clear of the home indicator, and clear of its own shadow. */
-  .new-page-fab { right: 18px; bottom: calc(26px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
-  .new-page-fab svg { width: 25px; height: 25px; }
+  .sidebar-collapsed .new-page-action { opacity: 1; pointer-events: auto; }
+  /* Back to a circle, pinned clear of the home indicator: on a phone the button
+     has to be where the thumb already is, and the label is what pays for it. */
+  .new-page-action { position: absolute; right: 18px; bottom: calc(26px + env(safe-area-inset-bottom)); z-index: 12; display: grid; width: 54px; height: 54px; place-items: center; margin: 0; padding: 0; border-radius: 50%; color: #171717; background: #f0f0f0; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); transition: background .12s ease, transform .12s ease, opacity .12s ease; }
+  .new-page-action svg { width: 25px; height: 25px; stroke-width: 2.1; }
+  .new-page-action span { display: none; }
+  .new-page-action:active { transform: scale(.94); }
+  /* A drop target is whatever `elementFromPoint` returns, so anything floating
+     over the list is a hole in it. The button steps out of the way for the
+     duration of a drag, since it is not a place to drop a page. */
+  .dragging-page .new-page-action { opacity: .35; pointer-events: none; }
+  /* Clearance for the floating button, on the nav itself and NOT on the
+     scroller around it: this element is the move-to-top-level drop zone, so
+     space added outside it is a strip of list that silently rejects drops. */
   .pages-nav { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
   .trash-view { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); background: #111; }
   .trash-view-head strong { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
