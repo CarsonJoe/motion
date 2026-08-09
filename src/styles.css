@@ -618,9 +618,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      drawer is open only its leading strip is on screen, which is the part you
      can touch. Once the page has landed it briefly covers the whole viewport —
      that is the point, it is swallowing the tail of the gesture that closed it.
-     Above the editor's sticky chrome so nothing shows through with a different
-     meaning. */
-  .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+     3 and 4, just past <main>'s 2 — <main> makes its own stacking context, so
+     clearing it clears everything inside it including the sticky header. These
+     used to be 45 and 47, from when the grip lived inside <main> and had to
+     out-stack that chrome directly; left there, they also out-stacked every
+     menu and dialog in the app, which made the page menu unusable. */
+  .drawer-grip { position: absolute; inset: 0; z-index: 3; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   .drawer-dragging .drawer-grip, .no-slide .drawer-grip { transition: none; }
   /* Not a floating control — the page's own back button, showing an X. It sits
      exactly where that button sits (the header's 12px inset, centred in the
@@ -628,7 +631,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      same spot at the same size and it reads as one control changing its mind.
      The layer exists to carry the transform: a percentage translate on the
      30px button would resolve against the button, not the screen. */
-  .drawer-close-layer { position: absolute; inset: 0; z-index: 47; pointer-events: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
+  .drawer-close-layer { position: absolute; inset: 0; z-index: 4; pointer-events: none; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   /* Leaves with the page. Without this the layer fell back to its resting
      transform and struck out for the left edge while the page it belongs to
      slid off the right. Matches .mobile-list main exactly. */
