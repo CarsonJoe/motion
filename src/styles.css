@@ -571,9 +571,14 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      and <main> holds the formatting toolbar, which is fixed to the viewport and
      driven by mobileKeyboard.ts. An identity transform would quietly re-anchor
      it. `none` -> `translateX(100%)` still animates, so nothing is lost. */
-  /* Kept in step with DRAWER_PEEK in App.tsx, which needs it to turn a drag
-     distance into progress. */
-  .app-shell { display: block; position: relative; --drawer-peek: 56px; }
+  /* `clip`, not `hidden`. Both hide the pane parked off to the right, but
+     `hidden` still makes this a scroll container — and the browser scrolls the
+     nearest one to bring a focused field into view, which is the whole app
+     sliding up under the keyboard and never coming back. `clip` cannot be
+     scrolled by anything, so focus has to settle for scrolling <main>.
+     --drawer-peek is kept in step with DRAWER_PEEK in App.tsx, which needs it
+     to turn a drag distance into progress. */
+  .app-shell { display: block; position: relative; overflow: clip; --drawer-peek: 56px; }
   aside, main { position: absolute; inset: 0; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   aside { z-index: 1; transform: none; }
   main { z-index: 2; background: #111; transform: none; box-shadow: -14px 0 30px rgba(0, 0, 0, .45); }
@@ -593,9 +598,15 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .mobile-drawer main { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); pointer-events: none; }
   .mobile-drawer aside { transform: translateX(calc(-22% * var(--drawer-progress, 0))); }
   /* The list has to end where the page begins, or the strip covers its right
-     edge — and the right edge is where every row keeps its ••• button. */
-  .mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek)); }
-  .drawer-grip { position: absolute; inset: 0; z-index: 5; pointer-events: auto; touch-action: none; cursor: grab; }
+     edge — and the right edge is where every row keeps its ••• button.
+     Qualified with .app-shell to outrank `.sidebar-collapsed aside`, which sets
+     the padding shorthand, ties on specificity and is declared later. */
+  .app-shell.mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek)); }
+  /* Above the editor's own sticky chrome, not just the prose: the strip has to
+     be one surface with one meaning, whatever of the page happens to show
+     through it. <main> is pointer-events: none in this state, so this is the
+     only thing in there that can be touched at all. */
+  .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; }
   /* Nothing eases while a finger is deciding: the panes are following it. */
   .drawer-dragging aside, .drawer-dragging main { transition: none; }
   /* The extra 34px parks the page's leading shadow past the edge of the screen,

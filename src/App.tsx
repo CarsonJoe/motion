@@ -739,18 +739,23 @@ export default function App() {
   const dragDrawer = (event: React.PointerEvent) => {
     const shell = shellRef.current
     if (!shell || event.button !== 0) return
+    // Stops the emulated mouse/click sequence a touch would otherwise raise
+    // ~300ms later — by then the drawer has closed and <main> takes pointer
+    // events again, so that phantom click lands in the page's text and drops a
+    // caret there. Tapping the strip means "bring the page back", nothing else.
+    event.preventDefault()
     const startX = event.clientX
     const travel = Math.max(1, window.innerWidth - DRAWER_PEEK)
     let progress = 0
     let moved = false
+    // The property is never cleared here. Clearing it and changing the state
+    // together left a frame where the drawer rules still applied with no
+    // progress set — reading as fully open — and the class swap then animated
+    // back down from there, which is the flicker. The closed drawer ignores the
+    // property entirely, so leaving it at 1 is inert; opening resets it.
     const settle = (target: number) => {
       shell.style.setProperty('--drawer-progress', String(target))
-      window.setTimeout(() => {
-        shell.style.removeProperty('--drawer-progress')
-        // Only now, once the page has arrived: the closed drawer and a progress
-        // of 1 describe the same transform, so the class swap is invisible.
-        if (target === 1) setMenuOpen(false)
-      }, MOBILE_SLIDE_MS)
+      if (target === 1) window.setTimeout(() => setMenuOpen(false), MOBILE_SLIDE_MS)
     }
     const onMove = (move: PointerEvent) => {
       const travelled = startX - move.clientX
@@ -1676,6 +1681,9 @@ export default function App() {
     // Nothing to peek at behind an interstitial, so that case is still a
     // navigation back to the plain list.
     if (!activeNote) { clearPendingNavigation(); leaveToList(true); return }
+    // Back to a closed drawer before it opens: a previous drag leaves the
+    // property at 1, which would hold it shut.
+    shellRef.current?.style.removeProperty('--drawer-progress')
     setMenuOpen(true)
   }
   const copyPageLink = async () => {
