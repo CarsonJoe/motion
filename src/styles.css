@@ -569,9 +569,24 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      whole window up when the keyboard opens over a contenteditable and leaves
      it shifted (the app "jumps up"). Mirrors the Notes Lab experiment. */
   html, body { position: fixed; inset: 0; width: 100%; overflow: hidden; }
-  .app-shell { display: block; }
-  .mobile-list main { display: none; }
-  .mobile-editor aside { display: none; }
+  /* The two panes stack and slide instead of swapping with `display: none`, so
+     opening a page reads as the page arriving over the list and going back as
+     it leaving. Both stay mounted; the one off screen is just untouchable.
+
+     The pane at rest is `transform: none`, NOT translateX(0): any transform
+     makes an element the containing block for `position: fixed` descendants,
+     and <main> holds the formatting toolbar, which is fixed to the viewport and
+     driven by mobileKeyboard.ts. An identity transform would quietly re-anchor
+     it. `none` -> `translateX(100%)` still animates, so nothing is lost. */
+  .app-shell { display: block; position: relative; }
+  aside, main { position: absolute; inset: 0; transition: transform .26s cubic-bezier(.22, 1, .36, 1); }
+  aside { z-index: 1; transform: none; }
+  main { z-index: 2; background: #111; transform: none; box-shadow: -12px 0 28px rgba(0, 0, 0, .45); }
+  /* The list drifts a little rather than sitting still under the page: parallax
+     is what says the two are one stack, not two screens that happen to swap. */
+  .mobile-editor aside { transform: translateX(-22%); pointer-events: none; }
+  .mobile-list main { transform: translateX(100%); pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { aside, main { transition: none; } }
   /* The list is a column of tap targets, so its last row has to clear the home
      indicator. Only here — an article is for reading and can run to the edge. */
   aside { width: 100%; height: 100%; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border: 0; background: #111; }
