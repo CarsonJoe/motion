@@ -647,9 +647,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      280ms the page is moving, that reads as a single button turning into the
      other rather than two icons briefly stacked. */
   .drawer-close { position: absolute; left: 12px; top: 3px; color: #e1e1e1; opacity: 0; pointer-events: none; transition: opacity .12s ease; }
-  .mobile-drawer .drawer-close { opacity: 1; pointer-events: auto; transition: opacity .14s ease .15s; }
+  .mobile-drawer.drawer-x .drawer-close { opacity: 1; pointer-events: auto; transition: opacity .14s ease .15s; }
   .show-sidebar-button:not(.drawer-close) { transition: opacity .14s ease .15s; }
-  .mobile-drawer .show-sidebar-button:not(.drawer-close) { opacity: 0; transition: opacity .12s ease; }
+  .mobile-drawer.drawer-x .show-sidebar-button:not(.drawer-close) { opacity: 0; transition: opacity .12s ease; }
   /* An absolutely positioned child is laid out against the padding box, so the
      list's padding does not move it — the button has to step aside itself. */
   .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
