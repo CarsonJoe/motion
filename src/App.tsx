@@ -237,7 +237,7 @@ function RemoteCursors({ presence, containerRef }: { presence: CollaboratorPrese
 // `hiddenRootIds` drops top-level rows that FAVORITES already shows, so a
 // favorited root page isn't listed twice. Nested rows are never hidden: a
 // favorited child still belongs under its parent in PAGES.
-type NoteTreeShared = { scope: string; notes: Note[]; recency: Map<string, number>; activeId: string | null; onOpen: (id: string) => void; menuKey: string | null; onToggleMenu: (key: string, anchor: HTMLElement) => void; expandedIds: Set<string>; onToggleExpanded: (key: string, expanded: boolean) => void; hiddenRootIds?: Set<string>; previewParentId: string | null; dimmedIds: Set<string> | null; dragEnabled: boolean; onDragStart: (note: Note, event: React.PointerEvent) => void; clickSuppressed: () => boolean; renamingKey: string | null; onRenameSubmit: (note: Note, title: string) => void; onRenameCancel: () => void }
+type NoteTreeShared = { scope: string; notes: Note[]; recency: Map<string, number>; activeId: string | null; onOpen: (id: string) => void; menuKey: string | null; onToggleMenu: (key: string, anchor: HTMLElement) => void; expandedIds: Set<string>; onToggleExpanded: (key: string, expanded: boolean) => void; hiddenRootIds?: Set<string>; previewParentId: string | null; dimmedIds: Set<string> | null; dragEnabled: boolean; onDragStart: (note: Note, event: React.PointerEvent, fromScope: string) => void; clickSuppressed: () => boolean; renamingKey: string | null; onRenameSubmit: (note: Note, title: string) => void; onRenameCancel: () => void }
 
 // Marks where the page will come to rest: children sort by recency and the move
 // bumps the dragged note's timestamp, so it lands at the top of its new parent.
@@ -259,7 +259,12 @@ const byRecency = (recency: Map<string, number>) => (a: Note, b: Note) => (recen
 // Only what the tree needs to paint. The cursor-following ghost is a plain DOM
 // node instead, so pointer movement never re-renders App — and App owns the
 // editor, which is far too heavy to re-render at pointer rate.
-type DragState = { noteId: string; targetId: string | null; valid: boolean }
+type DragState = { noteId: string; targetId: string | null; valid: boolean; fromScope: string }
+// The two section headings move a page between the lists rather than around the
+// tree: drop on FAVORITES to favorite it, drop back on PAGES to unfavorite. The
+// sentinel keeps FAVORITES distinguishable from a real parent id ('' is the top
+// level, which PAGES and the blank space below the tree still mean).
+const FAVORITES_DROP = 'motion:favorites'
 
 // Pointer-driven because the sidebar is the whole home screen on mobile, where
 // HTML5 drag-and-drop does not exist. A mouse drag starts on movement; a touch
@@ -272,8 +277,8 @@ type DragState = { noteId: string; targetId: string | null; valid: boolean }
 // the list it is being dropped into.
 function useNoteDrag(options: {
   scrollRef: React.RefObject<HTMLDivElement | null>
-  canDrop: (noteId: string, parentId: string) => boolean
-  onDrop: (noteId: string, parentId: string) => void
+  canDrop: (noteId: string, targetId: string, fromScope: string) => boolean
+  onDrop: (noteId: string, targetId: string, fromScope: string) => void
 }) {
   const latest = useRef(options)
   latest.current = options
@@ -288,7 +293,7 @@ function useNoteDrag(options: {
     if (!next || !current || current.noteId !== next.noteId || current.targetId !== next.targetId || current.valid !== next.valid) setDrag(next)
   }
 
-  const startDrag = (note: Note, event: React.PointerEvent) => {
+  const startDrag = (note: Note, event: React.PointerEvent, fromScope: string) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const hold = event.pointerType !== 'mouse'
     const origin = { x: event.clientX, y: event.clientY }
@@ -311,7 +316,7 @@ function useNoteDrag(options: {
     const update = (x: number, y: number) => {
       const zone = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest('[data-drop-id]') as HTMLElement | null
       const targetId = zone?.getAttribute('data-drop-id') ?? null
-      apply({ noteId: note.id, targetId, valid: targetId !== null && latest.current.canDrop(note.id, targetId) })
+      apply({ noteId: note.id, targetId, fromScope, valid: targetId !== null && latest.current.canDrop(note.id, targetId, fromScope) })
     }
     const tick = () => {
       const box = latest.current.scrollRef.current
@@ -344,7 +349,7 @@ function useNoteDrag(options: {
       if (active) {
         suppressClick.current = true
         window.setTimeout(() => { suppressClick.current = false }, 0)
-        if (current?.valid && current.targetId !== null) latest.current.onDrop(current.noteId, current.targetId)
+        if (current?.valid && current.targetId !== null) latest.current.onDrop(current.noteId, current.targetId, current.fromScope)
       }
       apply(null)
     }
@@ -394,7 +399,7 @@ function NoteTreeNode({ note, depth, ...shared }: NoteTreeShared & { note: Note;
   return <div className="page-tree-item">
     <div data-drop-id={dragEnabled ? note.id : undefined} className={`page-row ${activeId === note.id ? 'active' : ''} ${dragging ? 'dragging' : ''}`}>{hasChildren ? <button className="page-toggle" style={{ marginLeft: 5 + depth * 16 }} aria-label={`${expanded ? 'Collapse' : 'Expand'} ${note.title || 'Untitled'}`} aria-expanded={expanded} onClick={() => onToggleExpanded(key, expanded)}><svg viewBox="0 0 16 16" aria-hidden="true"><path d={expanded ? 'm4 6 4 4 4-4' : 'm6 4 4 4-4 4'} /></svg></button> : <span className="page-toggle-spacer" style={{ marginLeft: 5 + depth * 16 }} />}{renamingKey === key
       ? <RenameInput title={note.title} onSubmit={(title) => onRenameSubmit(note, title)} onCancel={onRenameCancel} />
-      : <button className="page-link" onPointerDown={dragEnabled ? (event) => onDragStart(note, event) : undefined} onClick={() => { if (!clickSuppressed()) onOpen(note.id) }}><span className="page-link-label">{note.title || 'Untitled'}</span></button>}<button className={`page-menu-button ${menuKey === key ? 'menu-open' : ''}`} aria-label={`Page options for ${note.title || 'Untitled'}`} aria-haspopup="menu" aria-expanded={menuKey === key} onClick={(event) => onToggleMenu(key, event.currentTarget)}>•••</button>{previewParentId === note.id && <DropLine depth={depth + 1} />}</div>
+      : <button className="page-link" onPointerDown={dragEnabled ? (event) => onDragStart(note, event, scope) : undefined} onClick={() => { if (!clickSuppressed()) onOpen(note.id) }}><span className="page-link-label">{note.title || 'Untitled'}</span></button>}<button className={`page-menu-button ${menuKey === key ? 'menu-open' : ''}`} aria-label={`Page options for ${note.title || 'Untitled'}`} aria-haspopup="menu" aria-expanded={menuKey === key} onClick={(event) => onToggleMenu(key, event.currentTarget)}>•••</button>{previewParentId === note.id && <DropLine depth={depth + 1} />}</div>
     {hasChildren && expanded && <NoteTree {...shared} parentId={note.id} depth={depth + 1} />}
   </div>
 }
@@ -1278,13 +1283,29 @@ export default function App() {
   }
   const { drag, startDrag, clickSuppressed } = useNoteDrag({
     scrollRef: pagesNavRef,
-    canDrop: (noteId, parentId) => moveBlockedBy(notes, noteId, parentId) === 'none',
-    onDrop: (noteId, parentId) => void moveNote(noteId, parentId)
+    // A heading is a membership change, not a move: the page keeps its place in
+    // the tree either way. Dropping on PAGES only unfavorites when the row came
+    // out of the favorites list — a row dragged from PAGES to its own heading
+    // still means "move to the top level", as does the blank space below it.
+    canDrop: (noteId, targetId, fromScope) => {
+      if (targetId === FAVORITES_DROP) return !favorites.has(noteId)
+      if (targetId === '' && fromScope === 'fav') return favorites.has(noteId)
+      return moveBlockedBy(notes, noteId, targetId) === 'none'
+    },
+    onDrop: (noteId, targetId, fromScope) => {
+      if (targetId === FAVORITES_DROP || (targetId === '' && fromScope === 'fav')) { toggleFavorite(noteId); return }
+      void moveNote(noteId, targetId)
+    }
   })
   const dimmedIds = drag ? subtreeIds(notes, drag.noteId) : null
   // A file drag paints through the same preview the reorder drag uses, so the
   // two gestures read identically: the same insertion line, in the same place.
   const previewParentId = fileDrag ? fileDrag.parentId : drag?.valid ? drag.targetId : null
+  // A favorite/unfavorite drop changes no parent, so the tree must not draw an
+  // insertion line for it — the line would promise a move that is not coming.
+  // The heading's own highlight carries that drop instead.
+  const favoriteDrop = Boolean(drag?.valid && (drag.targetId === FAVORITES_DROP || (drag.targetId === '' && drag.fromScope === 'fav')))
+  const treePreviewParentId = favoriteDrop ? null : previewParentId
 
   // Deleting takes the whole subtree with it and there's no undo, so the menu
   // only stages the note here — removeNote runs once the dialog is confirmed.
@@ -1642,7 +1663,10 @@ export default function App() {
       event.preventDefault()
       if (!fileDragLatest.current.sidebarOpen) fileDragLatest.current.openSidebar()
       const zone = (document.elementFromPoint(event.clientX, event.clientY) as HTMLElement | null)?.closest('[data-drop-id]')
-      const parentId = zone?.getAttribute('data-drop-id') ?? null
+      const zoneId = zone?.getAttribute('data-drop-id') ?? null
+      // FAVORITES is a membership target, not a parent — there is nothing for an
+      // imported file to land in, so the heading rejects the drag outright.
+      const parentId = zoneId === FAVORITES_DROP ? null : zoneId
       if (event.dataTransfer) event.dataTransfer.dropEffect = parentId === null ? 'none' : 'copy'
       fileDragLatest.current.parentId = parentId
       setFileDrag((current) => current?.parentId === parentId ? current : { parentId })
@@ -1714,7 +1738,7 @@ export default function App() {
     selection.addRange(range)
   }
   return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'} ${drag ? 'dragging-page' : ''}`}>
-    <aside><div className="sidebar-top"><button className="identity" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><span className="identity-avatar" aria-hidden="true">{accountInitial}</span><span className="identity-name">{accountName}</span><svg className="identity-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button></div></div><button className="sidebar-search" onClick={openSearch}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg><span>Search</span><kbd aria-hidden="true">⌘K</kbd></button>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}<button className="new-page-fab" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => { setTrashViewOpen(false); openNote(note.id) }}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
+    <aside><div className="sidebar-top"><button className="identity" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><span className="identity-avatar" aria-hidden="true">{accountInitial}</span><span className="identity-name">{accountName}</span><svg className="identity-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button></div></div><button className="sidebar-search" onClick={openSearch}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg><span>Search</span><kbd aria-hidden="true">⌘K</kbd></button>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId: treePreviewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === FAVORITES_DROP ? 'drop-target' : ''}`} data-drop-id={FAVORITES_DROP}>FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}<button className="new-page-fab" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => { setTrashViewOpen(false); openNote(note.id) }}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
     {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label="Search pages" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false) }}>
       <div className="search-panel">
         <div className="search-field">
