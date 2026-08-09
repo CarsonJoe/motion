@@ -574,7 +574,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   /* The list is the home screen now, so its sections have to be legible as
      sections — three unlabelled runs of rows read as one list with duplicates. */
   .section-label { padding: 15px 10px 6px; }
+  /* `sidebar-collapsed` is a desktop preference that persists in localStorage
+     and follows the account to a phone, where there is no collapsed state to
+     honour — the sidebar is the home screen. Everything it hides has to be
+     un-hidden here, the button included. */
   .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border-right-color: transparent; opacity: 1; pointer-events: auto; }
+  .sidebar-collapsed .new-page-fab { opacity: 1; pointer-events: auto; }
   /* Clear of the home indicator, and clear of its own shadow. */
   .new-page-fab { right: 18px; bottom: calc(26px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
   .new-page-fab svg { width: 25px; height: 25px; }
