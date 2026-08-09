@@ -571,13 +571,33 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      and <main> holds the formatting toolbar, which is fixed to the viewport and
      driven by mobileKeyboard.ts. An identity transform would quietly re-anchor
      it. `none` -> `translateX(100%)` still animates, so nothing is lost. */
-  .app-shell { display: block; position: relative; }
+  /* Kept in step with DRAWER_PEEK in App.tsx, which needs it to turn a drag
+     distance into progress. */
+  .app-shell { display: block; position: relative; --drawer-peek: 56px; }
   aside, main { position: absolute; inset: 0; transition: transform .28s cubic-bezier(.22, 1, .36, 1); }
   aside { z-index: 1; transform: none; }
   main { z-index: 2; background: #111; transform: none; box-shadow: -14px 0 30px rgba(0, 0, 0, .45); }
   /* The list drifts a little rather than sitting still under the page: parallax
      is what says the two are one stack, not two screens that happen to swap. */
   .mobile-editor aside { transform: translateX(-22%); pointer-events: none; }
+
+  /* --- the drawer ---------------------------------------------------------
+     The list over a page that is still open, stopping short so a strip of the
+     page shows. That strip is the affordance: drag it back, or tap it.
+
+     Both panes are driven by one number, --drawer-progress: 0 is the drawer
+     open, 1 is the page covering the screen. At 1 the transforms equal the
+     .mobile-editor ones exactly, so when the drag ends and the class changes
+     underneath, nothing moves. The drag writes the property straight onto the
+     shell; without it the declared values apply and the panes animate. */
+  .mobile-drawer main { transform: translateX(calc((100% - var(--drawer-peek)) * (1 - var(--drawer-progress, 0)))); pointer-events: none; }
+  .mobile-drawer aside { transform: translateX(calc(-22% * var(--drawer-progress, 0))); }
+  /* The list has to end where the page begins, or the strip covers its right
+     edge — and the right edge is where every row keeps its ••• button. */
+  .mobile-drawer aside { padding-right: calc(14px + var(--drawer-peek)); }
+  .drawer-grip { position: absolute; inset: 0; z-index: 5; pointer-events: auto; touch-action: none; cursor: grab; }
+  /* Nothing eases while a finger is deciding: the panes are following it. */
+  .drawer-dragging aside, .drawer-dragging main { transition: none; }
   /* The extra 34px parks the page's leading shadow past the edge of the screen,
      so it reads as separation while the two panes are moving and leaves no
      gradient down the side of the list once they settle. It must clear the
