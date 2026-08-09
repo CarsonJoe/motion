@@ -606,7 +606,15 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      be one surface with one meaning, whatever of the page happens to show
      through it. <main> is pointer-events: none in this state, so this is the
      only thing in there that can be touched at all. */
-  .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; }
+  .drawer-grip { position: absolute; inset: 0; z-index: 45; pointer-events: auto; touch-action: none; cursor: grab; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  /* An absolutely positioned child is laid out against the padding box, so the
+     list's padding does not move it — the button has to step aside itself. */
+  .app-shell.mobile-drawer .new-page-action { right: calc(18px + var(--drawer-peek)); }
+  /* The page stays untouchable until after it has arrived AND the gesture that
+     brought it is fully over. A press on the strip is finished by iOS with a
+     burst of emulated events; landing them on a live editor is what put a caret
+     in the text and raised the keyboard against the wrong element. */
+  .drawer-settling main { pointer-events: none; }
   /* Nothing eases while a finger is deciding: the panes are following it. */
   .drawer-dragging aside, .drawer-dragging main { transition: none; }
   /* The extra 34px parks the page's leading shadow past the edge of the screen,
