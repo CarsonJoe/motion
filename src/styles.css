@@ -27,20 +27,45 @@ body { margin: 0; background: #111; }
 .sidebar-collapsed aside { width: 0; flex-basis: 0; padding-right: 0; padding-left: 0; border-right-color: transparent; opacity: 0; pointer-events: none; }
 
 aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display: flex; flex-direction: column; overflow: hidden; padding: 16px 10px; background: #161616; border-right: 1px solid #2a2a2a; transition: width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), padding .24s ease, border-color .24s ease, opacity .16s ease; }
-.list-header { display: none; }
-.list-header-actions { display: flex; align-items: center; gap: 8px; }
 .new { border: 0; border-radius: 7px; padding: 10px 12px; color: #171717; background: #f0f0f0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 /* Every :hover in this file is gated behind `(hover: hover)`. On touch, a tap
    leaves :hover latched on the element until you tap somewhere else, so an
    ungated hover reads as a stuck selection. Anything that must show state after
    a tap uses a class or :focus-visible instead. */
 @media (hover: hover) { .new:hover { background: #fff; } }
-.desktop-sidebar-actions { display: flex; align-items: center; gap: 6px; margin-bottom: 24px; }
-.desktop-new { min-width: 0; flex: 1; text-align: left; }
+
+/* --- sidebar zone 1: identity ---------------------------------------------
+   Four fixed zones, one scroller. Identity and search sit above the tree and
+   never move; the tree takes the rest; the sync line closes it. Anything that
+   used to live at the bottom of the scroll (account, trash) moved into the
+   identity menu, so the scroller holds pages and nothing else. */
+.sidebar-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.identity { display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; padding: 6px 8px 6px 6px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: #f1f1f1; text-align: left; cursor: pointer; }
+@media (hover: hover) { .identity:hover { background: #222; } }
+.identity[aria-expanded="true"] { background: #262626; }
+.identity-avatar { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border-radius: 7px; background: linear-gradient(140deg, #4c8ef7, #8b5bef); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0; }
+.identity-name { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.identity-chevron { width: 13px; height: 13px; flex: none; color: #6e6e6e; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sidebar-top-actions { display: flex; align-items: center; gap: 2px; flex: none; }
 .sidebar-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
 @media (hover: hover) { .sidebar-close:hover { color: #fff; background: #292929; } }
 .sidebar-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-.icon-new { display: none; }
+
+/* --- sidebar zone 2: search ----------------------------------------------- */
+.sidebar-search { display: flex; width: 100%; align-items: center; gap: 8px; height: 34px; margin-bottom: 14px; padding: 0 10px; border: 0; border-radius: 8px; color: #8b8b8b; background: #1e1e1e; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
+@media (hover: hover) { .sidebar-search:hover { color: #d8d8d8; background: #262626; } }
+.sidebar-search svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.sidebar-search span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-search kbd { flex: none; padding: 1px 5px; border: 1px solid #333; border-radius: 4px; color: #6b6b6b; font-family: inherit; font-size: 10.5px; font-weight: 600; }
+
+/* --- the one floating action: a new page at the top level ------------------
+   Circular and anchored to the bottom-right of the sidebar, so it holds still
+   while the tree scrolls under it and stays under the thumb on a phone. */
+.new-page-fab { position: absolute; right: 16px; bottom: 46px; z-index: 12; display: grid; width: 46px; height: 46px; place-items: center; padding: 0; border: 1px solid #333; border-radius: 50%; color: #f1f1f1; background: #242424; cursor: pointer; box-shadow: 0 6px 18px rgba(0, 0, 0, .45); transition: background .12s ease, transform .12s ease; }
+.new-page-fab svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+@media (hover: hover) { .new-page-fab:hover { background: #303030; } }
+.new-page-fab:active { transform: scale(.94); }
+.sidebar-collapsed .new-page-fab { opacity: 0; pointer-events: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
 /* The list is for navigating and dragging, not reading — a drag that paints a
    text selection behind it looks broken, and on touch the long-press that
@@ -48,7 +73,9 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
 aside { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 /* FAVORITES and PAGES scroll together as one list — separate scrollers made the
    sidebar read as two panes and stranded the bottom of PAGES. */
-.sidebar-scroll { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding-bottom: 8px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+/* The bottom padding is the FAB's landing strip: without it the button covers
+   the last row of a list scrolled to its end. */
+.sidebar-scroll { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: auto; padding-bottom: 68px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
 .sidebar-scroll .section-label:not(:first-child) { padding-top: 18px; }
 nav { overflow: visible; }
 .sidebar-scroll::-webkit-scrollbar { width: 10px; }
@@ -295,19 +322,25 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 
 /* Recently deleted. Collapsed by default and quiet by design: it is a safety
    net, not a place anyone means to spend time. */
-.trash-section { margin-top: auto; padding: 10px 8px 0; }
-.trash-toggle { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 4px; border: 0; border-radius: 6px; color: #8e8e8e; background: none; font: inherit; font-size: 12px; cursor: pointer; }
-.trash-toggle svg { width: 13px; height: 13px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform .14s ease; }
-.trash-toggle svg.open { transform: rotate(90deg); }
-.trash-count { margin-left: auto; color: #6b6b6b; font-variant-numeric: tabular-nums; }
-@media (hover: hover) { .trash-toggle:hover { color: #ddd; background: #1d1d1d; } }
-.trash-list { display: grid; max-height: 210px; margin-top: 2px; overflow-y: auto; gap: 1px; }
-.trash-item { display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+/* Recently deleted is a destination reached from the identity menu, not a
+   section of the tree. It covers the sidebar rather than opening a dialog over
+   the whole app: it is scoped to the list, and on a phone the sidebar *is* the
+   screen, so a full-width panel is the same gesture in both layouts. */
+.trash-view { position: absolute; inset: 0; z-index: 25; display: flex; flex-direction: column; padding: 16px 10px calc(12px + env(safe-area-inset-bottom)); background: #161616; animation: trash-view-in .16s ease; }
+@keyframes trash-view-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.trash-view-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px 8px; }
+.trash-view-head strong { flex: 1; color: #f1f1f1; font-size: 15px; font-weight: 600; }
+.trash-view-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 6px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
+@media (hover: hover) { .trash-view-close:hover { color: #fff; background: #292929; } }
+.trash-view-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.trash-view-empty { margin: 4px 8px; color: #7c7c7c; font-size: 13px; line-height: 1.5; }
+.trash-list { display: grid; min-height: 0; flex: 1; margin-top: 2px; overflow-y: auto; gap: 2px; }
+.trash-item { display: flex; align-items: center; gap: 4px; border-radius: 7px; }
 .trash-item.active { background: #242424; }
-.trash-open { display: grid; min-width: 0; flex: 1; padding: 6px 6px 6px 22px; border: 0; border-radius: 6px; gap: 1px; background: none; font: inherit; text-align: left; cursor: pointer; }
-.trash-title { overflow: hidden; color: #b4b4b4; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.trash-when { color: #6b6b6b; font-size: 11px; }
-.trash-restore { flex: none; padding: 4px 8px; border: 0; border-radius: 5px; color: #9a9a9a; background: none; font: inherit; font-size: 11px; cursor: pointer; }
+.trash-open { display: grid; min-width: 0; flex: 1; padding: 9px 8px 9px 10px; border: 0; border-radius: 7px; gap: 2px; background: none; font: inherit; text-align: left; cursor: pointer; }
+.trash-title { overflow: hidden; color: #cfcfcf; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.trash-when { color: #6b6b6b; font-size: 11.5px; }
+.trash-restore { flex: none; margin-right: 6px; padding: 6px 11px; border: 1px solid #333; border-radius: 6px; color: #b6b6b6; background: none; font: inherit; font-size: 12px; cursor: pointer; }
 .trash-restore:disabled { color: #555; cursor: not-allowed; }
 @media (hover: hover) {
   .trash-item:hover { background: #1d1d1d; }
@@ -326,16 +359,47 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .trash-banner .new { width: 100%; }
 }
 
-.sidebar-account { display: flex; align-items: center; gap: 8px; margin-top: auto; padding: 13px 8px 0; color: #8e8e8e; font-size: 12px; }
-.sidebar-account + .sidebar-footer { margin-top: 0; padding-top: 7px; }
-/* Only the first of the three stacked footers claims the leftover space. */
-.trash-section + .sidebar-account, .trash-section + .sidebar-footer { margin-top: 0; padding-top: 9px; }
-.account-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.account-signout { margin-left: auto; padding: 0; border: 0; color: #aaa; background: none; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
-.account-signout:disabled { color: #555; cursor: not-allowed; }
-@media (hover: hover) { .account-signout:not(:disabled):hover { color: #fff; } }
+/* --- identity menu --------------------------------------------------------
+   `.page-menu` supplies the chrome; only the header row and the count badge are
+   its own. The scrim is what makes a tap anywhere else close it — the row menus
+   get that from their own outside-click handling. */
+.identity-menu { width: 232px; }
+.identity-menu-head { padding: 6px 9px 8px; border-bottom: 1px solid #363636; margin-bottom: 5px; overflow: hidden; color: #8b8b8b; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.identity-menu button { font-size: 13px; padding: 9px 9px; }
+.identity-menu button:disabled { color: #666; cursor: not-allowed; }
+.identity-menu-count { margin-left: auto; color: #7d7d7d; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.menu-scrim { position: fixed; inset: 0; z-index: 29; }
 
-.notification-center { position: absolute; top: 62px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
+/* --- search ---------------------------------------------------------------
+   A palette on desktop, a full screen on mobile. Both are the same markup: the
+   panel just grows to fill the viewport at the narrow breakpoint. */
+.search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: center; padding: 12vh 20px 20px; background: rgba(0, 0, 0, .5); animation: search-fade .12s ease; }
+@keyframes search-fade { from { opacity: 0; } to { opacity: 1; } }
+.search-panel { display: flex; width: 100%; max-width: 560px; max-height: 62vh; flex-direction: column; overflow: hidden; border: 1px solid #333; border-radius: 13px; background: #1c1c1c; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); animation: search-rise .14s cubic-bezier(.22, 1, .36, 1); }
+@keyframes search-rise { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.search-field { display: flex; align-items: center; gap: 10px; flex: none; padding: 12px 14px; border-bottom: 1px solid #2c2c2c; }
+.search-field > svg { width: 18px; height: 18px; flex: none; color: #7d7d7d; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.search-field input { min-width: 0; flex: 1; padding: 0; border: 0; color: #f1f1f1; background: transparent; font: inherit; font-size: 16px; outline: none; }
+.search-field input::placeholder { color: #6e6e6e; }
+.search-field input::-webkit-search-cancel-button { display: none; }
+.search-clear { display: grid; width: 26px; height: 26px; flex: none; place-items: center; padding: 4px; border: 0; border-radius: 50%; color: #7d7d7d; background: transparent; cursor: pointer; }
+.search-clear svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+@media (hover: hover) { .search-clear:hover { color: #eee; background: #2c2c2c; } }
+.search-cancel { display: none; }
+.search-results { min-height: 0; flex: 1; overflow-y: auto; padding: 6px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+.search-section { padding: 8px 10px 6px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
+.search-empty { margin: 0; padding: 26px 14px; color: #7c7c7c; font-size: 13px; text-align: center; }
+.search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.search-result-icon { width: 16px; height: 16px; flex: none; color: #6e6e6e; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+.search-result-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
+.search-result-title { overflow: hidden; color: #ededed; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
+.search-result-path { overflow: hidden; color: #6f6f6f; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .search-result:hover { background: #272727; } }
+.search-result:focus-visible { background: #272727; outline: none; }
+
+/* Hangs below the fixed top zone (identity row + search), so it starts where the
+   tree starts rather than covering the controls that opened it. */
+.notification-center { position: absolute; top: 106px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
 .notification-empty { margin: 0; padding: 14px; color: #888; font-size: 12px; text-align: center; }
 .invitation-list { display: grid; }
 .invitation-item { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 9px 9px 9px 12px; }
@@ -490,15 +554,48 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .mobile-editor aside { display: none; }
   /* The list is a column of tap targets, so its last row has to clear the home
      indicator. Only here — an article is for reading and can run to the edge. */
-  aside { width: 100%; height: 100%; padding: 12px 14px calc(12px + env(safe-area-inset-bottom)); border: 0; background: #111; }
-  .list-header { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 16px; color: #f4f4f4; font-size: 28px; font-weight: 700; letter-spacing: -.8px; }
-  .icon-new { display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border-radius: 50%; font-size: 24px; font-weight: 400; }
-  .desktop-sidebar-actions { display: none; }
+  aside { width: 100%; height: 100%; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border: 0; background: #111; }
+  /* Every target in the sidebar is a thumb target here, so the whole top zone
+     grows: 44px controls, a search bar you can hit without aiming, a name big
+     enough to read as the heading of the screen it now is. */
+  .sidebar-top { gap: 4px; margin-bottom: 12px; }
+  .identity { gap: 11px; padding: 8px 10px 8px 8px; border-radius: 11px; }
+  .identity-avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 15px; }
+  .identity-name { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
+  .identity-chevron { width: 15px; height: 15px; }
+  .sidebar-top-actions { gap: 4px; }
+  .sidebar-search { height: 42px; margin-bottom: 6px; padding: 0 13px; border-radius: 11px; background: #1c1c1c; font-size: 16px; }
+  .sidebar-search svg { width: 18px; height: 18px; }
+  .sidebar-search kbd { display: none; }
+  .notification-button { width: 40px; height: 40px; border-radius: 50%; }
+  .notification-button svg { width: 21px; height: 21px; }
+  .notification-center { top: 120px; right: 14px; left: 14px; }
+  .sidebar-close { display: none; }
   /* The list is the home screen now, so its sections have to be legible as
      sections — three unlabelled runs of rows read as one list with duplicates. */
   .section-label { padding: 15px 10px 6px; }
-  .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 12px 14px; border-right-color: transparent; opacity: 1; pointer-events: auto; }
-  .sidebar-close { display: none; }
+  .sidebar-collapsed aside { width: 100%; flex-basis: auto; padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); border-right-color: transparent; opacity: 1; pointer-events: auto; }
+  /* Clear of the home indicator, and clear of its own shadow. */
+  .new-page-fab { right: 18px; bottom: calc(26px + env(safe-area-inset-bottom)); width: 54px; height: 54px; }
+  .new-page-fab svg { width: 25px; height: 25px; }
+  .sidebar-scroll { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
+  .trash-view { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); background: #111; }
+  .trash-view-head strong { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
+  .trash-view-close { width: 40px; height: 40px; padding: 9px; }
+  .trash-item { border-bottom: 1px solid #202020; border-radius: 0; }
+  .trash-open { min-height: 52px; padding: 10px; }
+  .trash-title { font-size: 16px; }
+  /* Search fills the screen: a floating palette on a phone is a small target
+     over a background you cannot use anyway. */
+  .search-overlay { padding: 0; background: #111; }
+  .search-panel { max-width: none; max-height: none; flex: 1; border: 0; border-radius: 0; background: #111; box-shadow: none; animation: none; }
+  .search-field { padding: calc(8px + env(safe-area-inset-top)) 14px 10px; gap: 9px; }
+  .search-field input { font-size: 17px; }
+  .search-cancel { display: block; flex: none; padding: 0 2px 0 6px; border: 0; color: #7fa9ee; background: none; font: inherit; font-size: 16px; cursor: pointer; }
+  .search-results { padding: 4px 8px calc(20px + env(safe-area-inset-bottom)); }
+  .search-result { min-height: 56px; padding: 10px 8px; border-bottom: 1px solid #1c1c1c; border-radius: 0; }
+  .search-result-title { font-size: 16px; }
+  .search-result-path { font-size: 12.5px; }
   .sidebar-scroll { margin: 0 -2px; }
   .page-row { border-bottom: 1px solid #202020; border-radius: 0; }
   .page-link { min-height: 48px; padding: 12px 10px; border-radius: 0; font-size: 16px; }

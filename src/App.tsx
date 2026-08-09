@@ -481,6 +481,54 @@ function HeaderMenu({ anchor, canShare, onShare, onCopyMarkdown, onDownload, onC
   )
 }
 
+// Account-level actions, hung off the sidebar's identity button. Recently
+// deleted lives here rather than in the tree: it is a place you visit to undo
+// something, not a peer of the pages you navigate every day. Shares `.page-menu`
+// chrome with the other two dropdowns.
+function IdentityMenu({ anchor, name, connected, signOutBlocked, trashCount, onTrash, onConnect, onSignOut, onClose }: {
+  anchor: HTMLElement
+  name: string
+  connected: boolean
+  signOutBlocked: boolean
+  trashCount: number
+  onTrash: () => void
+  onConnect: () => void
+  onSignOut: () => void
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
+  useLayoutEffect(() => {
+    const place = () => {
+      const rect = anchor.getBoundingClientRect()
+      const width = ref.current?.offsetWidth ?? 220
+      const height = ref.current?.offsetHeight ?? 120
+      const gap = 6
+      // Left-aligned to the button it hangs from, unlike the page menus, which
+      // hang off a right-hand icon and align to their right edge.
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
+      const top = rect.bottom + gap + height > window.innerHeight - 8
+        ? Math.max(8, rect.top - height - gap)
+        : rect.bottom + gap
+      setPos({ top, left })
+    }
+    place()
+    window.addEventListener('resize', place)
+    window.addEventListener('scroll', onClose, true)
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', onClose, true) }
+  }, [anchor, onClose])
+  return createPortal(<>
+    <div className="menu-scrim" onMouseDown={onClose} />
+    <div ref={ref} className="page-menu identity-menu" role="menu" style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
+      <div className="identity-menu-head">{name}</div>
+      <button role="menuitem" onClick={onTrash}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>Recently deleted{trashCount > 0 && <span className="identity-menu-count">{trashCount}</span>}</button>
+      {connected
+        ? <button role="menuitem" disabled={signOutBlocked} title={signOutBlocked ? 'Waiting for your changes to finish syncing' : undefined} onClick={onSignOut}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M16 17l5-5-5-5M21 12H9M12 21H5V3h7" /></svg>Sign out</button>
+        : <button role="menuitem" onClick={onConnect}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M9 12H4M8 8l-4 4 4 4M15 3h4v18h-4" /></svg>Connect to Tallpond</button>}
+    </div>
+  </>, document.body)
+}
+
 // --- `[[` picker ranking ----------------------------------------------------
 // Results are ordered by how well the title matches, then by how close the page
 // sits to the one being edited (a sibling called "Spec" is nearly always the one
@@ -567,6 +615,46 @@ function rankPages(notes: Note[], activeId: string, query: string): PageOption[]
   return top.map((note) => ({ id: note.id, title: cleanTitle(note.title), kind: 'page', context: context.get(note.id) }))
 }
 
+// --- sidebar search ----------------------------------------------------------
+// Titles only. There is no body index in the app (`links.ts` indexes outgoing
+// links, not text), and building one over every CRDT doc to answer a keystroke
+// would cost more than it returns — a page you can name is the case worth being
+// instant. Ranking mirrors the `[[` picker: exact, prefix, word-prefix,
+// substring. Every result carries its full path, because in a tree the same
+// title in two places is the ambiguity search has to resolve.
+const SEARCH_RESULT_LIMIT = 40
+function searchPages(notes: Note[], query: string) {
+  const byId = new Map(notes.map((note) => [note.id, note]))
+  const pathOf = (note: Note) => {
+    const names: string[] = []
+    const seen = new Set<string>([note.id])
+    for (let id = note.parentId; id && !seen.has(id) && names.length < 12;) {
+      const parent = byId.get(id)
+      if (!parent) break
+      names.unshift(cleanTitle(parent.title) || 'Untitled')
+      seen.add(id)
+      id = parent.parentId
+    }
+    return names.join(' / ')
+  }
+  const q = cleanTitle(query).toLowerCase()
+  const scored: { note: Note; rank: number }[] = []
+  for (const note of notes) {
+    const title = cleanTitle(note.title || '').toLowerCase()
+    let rank = 4
+    if (q) {
+      if (title === q) rank = 0
+      else if (title.startsWith(q)) rank = 1
+      else if (title.split(/\W+/).some((word) => word.startsWith(q))) rank = 2
+      else if (title.includes(q)) rank = 3
+      else continue
+    }
+    scored.push({ note, rank })
+  }
+  scored.sort((a, b) => a.rank - b.rank || b.note.updatedAt - a.note.updatedAt)
+  return scored.slice(0, SEARCH_RESULT_LIMIT).map(({ note }) => ({ note, path: pathOf(note) }))
+}
+
 export default function App() {
   const [store, setStore] = useState<LocalStore | null>(null)
   const articleRef = useRef<HTMLElement>(null)
@@ -591,6 +679,13 @@ export default function App() {
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationsLoading, setNotificationsLoading] = useState(false)
+  // The three sidebar surfaces that open over the tree. Only one at a time —
+  // each opener closes the others, since they all cover the same column.
+  const [identityOpen, setIdentityOpen] = useState(false)
+  const [identityAnchor, setIdentityAnchor] = useState<HTMLElement | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [trashViewOpen, setTrashViewOpen] = useState(false)
   const [remotePresence, setRemotePresence] = useState<CollaboratorPresence[]>([])
   const [toolbarHost, setToolbarHost] = useState<HTMLDivElement | null>(null)
   // Menu/expand state is keyed by `${scope}:${noteId}` so a page shown in both
@@ -1281,7 +1376,6 @@ export default function App() {
 
   // Recently deleted, and getting back out of it.
   const trashed = useMemo(() => trashRoots(allNotes), [allNotes])
-  const [trashOpen, setTrashOpen] = useState(false)
   // Raised when someone tries to type into a page that is in the trash. The
   // page is genuinely read-only, so the keystroke is going nowhere — saying why,
   // once, beats letting them wonder why the keyboard stopped working.
@@ -1298,6 +1392,31 @@ export default function App() {
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not recover this page') }
     finally { setRecoverBusy(false) }
   }
+
+  // --- sidebar surfaces ------------------------------------------------------
+  const searchResults = useMemo(() => searchOpen ? searchPages(notes, searchQuery) : [], [searchOpen, searchQuery, notes])
+  const openSearch = useCallback(() => { setIdentityOpen(false); setNotificationsOpen(false); setSearchQuery(''); setSearchOpen(true) }, [])
+  const accountName = sync.connected && sync.user ? sync.user.name : 'Local'
+  const accountInitial = (accountName.trim()[0] || '?').toUpperCase()
+  // ⌘K/Ctrl-K opens search from anywhere, including mid-sentence in the editor,
+  // so it has to win over the browser default. Escape closes whichever surface
+  // is open — deepest first, so it never skips one.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        openSearch()
+        return
+      }
+      if (event.key !== 'Escape') return
+      if (searchOpen) setSearchOpen(false)
+      else if (trashViewOpen) setTrashViewOpen(false)
+      else if (identityOpen) setIdentityOpen(false)
+      else if (notificationsOpen) setNotificationsOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openSearch, searchOpen, trashViewOpen, identityOpen, notificationsOpen])
   // Modifier combinations and navigation keys are how someone reads a page —
   // scrolling, selecting, copying. Only a key that would have produced text is
   // treated as an attempt to edit.
@@ -1595,7 +1714,25 @@ export default function App() {
     selection.addRange(range)
   }
   return <div className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'}`}>
-    <aside><div className="list-header"><span onClick={countDebugTap}>Notes</span><div className="list-header-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}<button className="new icon-new" aria-label="New page" onClick={() => void createNote()}>＋</button></div></div><div className="desktop-sidebar-actions"><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button><button className="new desktop-new" onClick={() => void createNote()}>＋ New page</button>{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => setNotificationsOpen((open) => !open)} />}</div>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className="section-label">FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} previewParentId={null} dimmedIds={null} dragEnabled={false} note={note} depth={0} />)}</nav></>}<div className="section-label" data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{trashed.length > 0 && <div className="trash-section"><button className="trash-toggle" aria-expanded={trashOpen} onClick={() => setTrashOpen((open) => !open)}><svg viewBox="0 0 24 24" aria-hidden="true" className={trashOpen ? 'open' : ''}><path d="M9 6l6 6-6 6" /></svg>Recently deleted<span className="trash-count">{trashed.length}</span></button>{trashOpen && <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => openNote(note.id)}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{sync.connected && sync.user && <div className="sidebar-account"><span className="account-name" title={sync.user.name}>{sync.user.name}</span><button className="account-signout" disabled={sync.pending > 0} title={sync.pending > 0 ? 'Waiting for your changes to finish syncing' : 'Sign out'} onClick={() => void leave()}>Sign out</button></div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
+    <aside><div className="sidebar-top"><button className="identity" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><span className="identity-avatar" aria-hidden="true">{accountInitial}</span><span className="identity-name">{accountName}</span><svg className="identity-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M14 9l-3 3 3 3" /></svg></button></div></div><button className="sidebar-search" onClick={openSearch}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg><span>Search</span><kbd aria-hidden="true">⌘K</kbd></button>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className="section-label">FAVORITES</div><nav className="favorites-nav">{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} previewParentId={null} dimmedIds={null} dragEnabled={false} note={note} depth={0} />)}</nav></>}<div className="section-label" data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}<button className="new-page-fab" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg></button>{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => { setTrashViewOpen(false); openNote(note.id) }}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
+    {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label="Search pages" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false) }}>
+      <div className="search-panel">
+        <div className="search-field">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg>
+          <input autoFocus type="search" enterKeyHint="go" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="Search pages" aria-label="Search pages" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && searchResults[0]) { setSearchOpen(false); openNote(searchResults[0].note.id) } }} />
+          {searchQuery && <button className="search-clear" aria-label="Clear search" onClick={() => setSearchQuery('')}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9 9l6 6M15 9l-6 6" /></svg></button>}
+          <button className="search-cancel" onClick={() => setSearchOpen(false)}>Cancel</button>
+        </div>
+        <div className="search-results">
+          {searchResults.length === 0
+            ? <p className="search-empty">{searchQuery ? 'No pages match that name.' : 'Nothing here yet.'}</p>
+            : <>{!searchQuery && <div className="search-section">Recent</div>}{searchResults.map(({ note, path }) => <button key={note.id} className="search-result" onClick={() => { setSearchOpen(false); openNote(note.id) }}>
+              <svg className="search-result-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>
+              <span className="search-result-text"><span className="search-result-title">{note.title || 'Untitled'}</span><span className="search-result-path">{path || 'Top level'}</span></span>
+            </button>)}</>}
+        </div>
+      </div>
+    </div>}
     <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={focusEditorCanvas}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{activeNote && !landing ? <><header className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
