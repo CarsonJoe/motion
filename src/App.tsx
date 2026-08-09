@@ -557,6 +557,31 @@ const DRAWER_EDGE_GUARD = 24
 // that the browser has not committed to a scroll yet, large enough to have a
 // direction worth reading.
 const DRAWER_SWIPE_SLOP = 10
+// px/ms. Past this the gesture is a flick and its direction decides the
+// outcome, however far it actually travelled — a fast, short push means the
+// same thing as a slow, long one, and only distance was being read.
+const DRAWER_FLING = 0.45
+
+// Speed over the last stretch of a drag, in px/ms. A window rather than the last
+// two events: single-event deltas are noise at 120Hz, and a finger that stops
+// dead before lifting should read as stopped, which a window gives for free
+// once the stale samples fall out of it.
+function createFlingTracker(x: number) {
+  const samples = [{ x, t: performance.now() }]
+  return {
+    add(next: number) {
+      const t = performance.now()
+      samples.push({ x: next, t })
+      while (samples.length > 2 && t - samples[0].t > 90) samples.shift()
+    },
+    velocity() {
+      const first = samples[0]
+      const last = samples[samples.length - 1]
+      const elapsed = last.t - first.t
+      return elapsed > 0 ? (last.x - first.x) / elapsed : 0
+    },
+  }
+}
 
 const PAGE_RESULT_LIMIT = 10
 const editedOn = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -823,6 +848,7 @@ export default function App() {
     let decided = false
     let engaged = false
     let progress = 1
+    const fling = createFlingTracker(startX)
     const stop = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('touchmove', onTouchMove)
@@ -854,6 +880,7 @@ export default function App() {
         setDrawerDragging(true)
         setMenuOpen(true)
       }
+      fling.add(move.clientX)
       progress = Math.min(1, Math.max(0, 1 - dx / travel))
       shell.style.setProperty('--drawer-progress', String(progress))
     }
@@ -864,8 +891,11 @@ export default function App() {
       stop()
       if (!engaged) return
       setDrawerDragging(false)
-      // Whichever end it is nearer to. No commit threshold: the page goes where
-      // you left it pointing, so a short pull returns and a long one opens.
+      // Still moving when it let go: follow the throw. Otherwise it goes to
+      // whichever end it is nearer to.
+      const speed = fling.velocity()
+      if (speed >= DRAWER_FLING) { settleDrawer(0, false); return }
+      if (speed <= -DRAWER_FLING) { settleDrawer(1, false); return }
       settleDrawer(progress < 0.5 ? 0 : 1, false)
     }
     window.addEventListener('pointermove', onMove)
@@ -895,9 +925,11 @@ export default function App() {
     let progress = 0
     let exit = 0
     let moved = false
+    const fling = createFlingTracker(startX)
     const onMove = (move: PointerEvent) => {
       const travelled = startX - move.clientX
       if (Math.abs(travelled) > 4) moved = true
+      fling.add(move.clientX)
       progress = travelled > 0 ? Math.min(1, travelled / travelBack) : 0
       exit = travelled < 0 ? Math.min(1, -travelled / travelOut) : 0
       shell.style.setProperty('--drawer-progress', String(progress))
@@ -908,12 +940,18 @@ export default function App() {
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
       setDrawerDragging(false)
-      // Past halfway out, the page is leaving.
-      if (exit >= 0.5) { closePage(); return }
+      // A tap on the strip means the same thing as dragging it all the way back.
+      // It is also the only release that needs the guard, being the only one
+      // iOS finishes with a burst of emulated events.
+      if (!moved) { shell.style.setProperty('--drawer-exit', '0'); settleDrawer(1, true); return }
+      // Still moving when it let go: follow the throw, whichever way it points —
+      // rightwards the page is being pushed away, leftwards pulled back.
+      const speed = fling.velocity()
+      const thrownOut = speed >= DRAWER_FLING
+      const thrownBack = speed <= -DRAWER_FLING
+      if (thrownOut || (!thrownBack && exit >= 0.5)) { closePage(); return }
       shell.style.setProperty('--drawer-exit', '0')
-      // A tap on the strip means the same thing as dragging it all the way back;
-      // a drag lands at whichever end it stopped nearer to.
-      settleDrawer(!moved || progress >= 0.5 ? 1 : 0, !moved)
+      settleDrawer(thrownBack || progress >= 0.5 ? 1 : 0, false)
     }
     cancelDrawerLanding()
     setDrawerDragging(true)
