@@ -683,6 +683,11 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .notification-button { width: 42px; height: 42px; border-radius: 50%; }
   .notification-button svg { width: 21px; height: 21px; }
   .notification-center { top: 62px; right: 14px; left: 14px; }
+  /* Ends where the page begins. It cannot simply be lifted over the page: it
+     lives in the sidebar, whose z-index confines everything inside it, so its
+     own z-index only orders it against its siblings there. Same reason the
+     Recently deleted panel is inset. */
+  .app-shell.mobile-drawer .notification-center { right: calc(14px + var(--drawer-peek) * (1 - var(--drawer-exit, 0))); }
   .sidebar-close { display: none; }
   /* The list is the home screen now, so its sections have to be legible as
      sections — three unlabelled runs of rows read as one list with duplicates. */
