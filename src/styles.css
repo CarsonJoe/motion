@@ -34,29 +34,18 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
    a tap uses a class or :focus-visible instead. */
 @media (hover: hover) { .new:hover { background: #fff; } }
 
-/* --- sidebar zone 1: identity ---------------------------------------------
-   Four fixed zones, one scroller. Identity and search sit above the tree and
-   never move; the tree takes the rest; the sync line closes it. Anything that
-   used to live at the bottom of the scroll (account, trash) moved into the
-   identity menu, so the scroller holds pages and nothing else. */
-.sidebar-top { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
-.identity { display: flex; min-width: 0; flex: 1; align-items: center; gap: 9px; padding: 6px 8px 6px 6px; border: 0; border-radius: 8px; background: transparent; font: inherit; color: #f1f1f1; text-align: left; cursor: pointer; }
-@media (hover: hover) { .identity:hover { background: #222; } }
-.identity[aria-expanded="true"] { background: #262626; }
-.identity-avatar { display: grid; width: 24px; height: 24px; flex: none; place-items: center; border-radius: 7px; background: linear-gradient(140deg, #4c8ef7, #8b5bef); color: #fff; font-size: 11px; font-weight: 700; letter-spacing: 0; }
-.identity-name { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.identity-chevron { width: 13px; height: 13px; flex: none; color: #6e6e6e; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
-.sidebar-top-actions { display: flex; align-items: center; gap: 2px; flex: none; }
-.sidebar-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 5px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
-@media (hover: hover) { .sidebar-close:hover { color: #fff; background: #292929; } }
-.sidebar-close svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
-
-/* --- sidebar zone 2: search ----------------------------------------------- */
-.sidebar-search { display: flex; width: 100%; align-items: center; gap: 8px; height: 34px; margin-bottom: 14px; padding: 0 10px; border: 0; border-radius: 8px; color: #8b8b8b; background: #1e1e1e; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: background .12s ease, color .12s ease; }
-@media (hover: hover) { .sidebar-search:hover { color: #d8d8d8; background: #262626; } }
-.sidebar-search svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.sidebar-search span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-search kbd { flex: none; padding: 1px 5px; border: 1px solid #333; border-radius: 4px; color: #6b6b6b; font-family: inherit; font-size: 10.5px; font-weight: 600; }
+/* --- sidebar zone 1: a row of icons ---------------------------------------
+   Three fixed zones, one scroller. The icon row sits above the tree and never
+   moves; the tree takes the rest; the sync line closes it. Search is an icon
+   rather than a field — a text input that opens a different surface when you
+   touch it is a button wearing the wrong costume. The account is not shown at
+   all; it lives inside settings, along with Recently deleted. */
+.sidebar-top { display: flex; align-items: center; gap: 2px; margin-bottom: 10px; }
+.sidebar-top-actions { display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto; }
+.sidebar-icon, .sidebar-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 6px; border: 0; border-radius: 7px; color: #999; background: transparent; cursor: pointer; }
+@media (hover: hover) { .sidebar-icon:hover, .sidebar-close:hover { color: #fff; background: #292929; } }
+.sidebar-icon[aria-expanded="true"] { color: #fff; background: #292929; }
+.sidebar-icon svg, .sidebar-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
 
 /* --- the one floating action: a new page at the top level ------------------
    Circular and anchored to the bottom-right of the sidebar, so it holds still
@@ -390,22 +379,36 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 /* --- search ---------------------------------------------------------------
    A palette on desktop, a full screen on mobile. Both are the same markup: the
    panel just grows to fill the viewport at the narrow breakpoint. */
-.search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: center; padding: 12vh 20px 20px; background: rgba(0, 0, 0, .5); animation: search-fade .12s ease; }
+/* flex-start, or the palette stretches to the full height of the overlay and
+   two results sit in a mostly empty box. */
+.search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 20px 20px; background: rgba(0, 0, 0, .5); animation: search-fade .12s ease; }
 @keyframes search-fade { from { opacity: 0; } to { opacity: 1; } }
-.search-panel { display: flex; width: 100%; max-width: 560px; max-height: 62vh; flex-direction: column; overflow: hidden; border: 1px solid #333; border-radius: 13px; background: #1c1c1c; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); animation: search-rise .14s cubic-bezier(.22, 1, .36, 1); }
+/* The bar is last in the DOM because that is the phone order — results above,
+   field at the bottom riding the keyboard. `column-reverse` lifts it back to
+   the top here, where a palette's field belongs; the mobile block drops the
+   reverse and takes the DOM order as written. */
+.search-panel { display: flex; width: 100%; max-width: 560px; max-height: 62vh; flex-direction: column-reverse; overflow: hidden; border: 1px solid #333; border-radius: 13px; background: #1c1c1c; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); animation: search-rise .14s cubic-bezier(.22, 1, .36, 1); }
 @keyframes search-rise { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-.search-field { display: flex; align-items: center; gap: 10px; flex: none; padding: 12px 14px; border-bottom: 1px solid #2c2c2c; }
+.search-bar { display: flex; align-items: center; gap: 8px; flex: none; padding: 12px 14px; border-bottom: 1px solid #2c2c2c; }
+.search-field { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; }
 .search-field > svg { width: 18px; height: 18px; flex: none; color: #7d7d7d; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .search-field input { min-width: 0; flex: 1; padding: 0; border: 0; color: #f1f1f1; background: transparent; font: inherit; font-size: 16px; outline: none; }
 .search-field input::placeholder { color: #6e6e6e; }
 .search-field input::-webkit-search-cancel-button { display: none; }
-.search-clear { display: grid; width: 26px; height: 26px; flex: none; place-items: center; padding: 4px; border: 0; border-radius: 50%; color: #7d7d7d; background: transparent; cursor: pointer; }
-.search-clear svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
-@media (hover: hover) { .search-clear:hover { color: #eee; background: #2c2c2c; } }
-.search-cancel { display: none; }
-.search-results { min-height: 0; flex: 1; overflow-y: auto; padding: 6px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+.search-clear { display: grid; width: 22px; height: 22px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; color: #6a6a6a; background: transparent; cursor: pointer; }
+.search-clear svg { width: 100%; height: 100%; stroke-width: 2; stroke-linecap: round; }
+@media (hover: hover) { .search-clear:hover { color: #8d8d8d; } }
+/* Outside the field, not in it: it dismisses the whole surface, where the
+   inner one only empties the text. */
+.search-close { display: none; }
+/* Shrink-to-fit here so the palette is as tall as its results; the phone
+   layout below claims the whole screen instead. */
+.search-results { min-height: 0; flex: 0 1 auto; overflow-y: auto; padding: 6px; scrollbar-width: thin; scrollbar-color: #3a3a3a transparent; }
+.search-results.is-empty { display: grid; place-items: center; }
 .search-section { padding: 8px 10px 6px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
-.search-empty { margin: 0; padding: 26px 14px; color: #7c7c7c; font-size: 13px; text-align: center; }
+.search-empty { display: grid; justify-items: center; gap: 14px; padding: 30px 14px; color: #7c7c7c; text-align: center; }
+.search-empty svg { width: 34px; height: 34px; color: #6a6a6a; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
+.search-empty p { margin: 0; font-size: 15px; }
 .search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
 .search-result-icon { width: 16px; height: 16px; flex: none; color: #6e6e6e; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .search-result-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
@@ -414,9 +417,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 @media (hover: hover) { .search-result:hover { background: #272727; } }
 .search-result:focus-visible { background: #272727; outline: none; }
 
-/* Hangs below the fixed top zone (identity row + search), so it starts where the
-   tree starts rather than covering the controls that opened it. */
-.notification-center { position: absolute; top: 106px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
+/* Hangs below the fixed icon row, so it starts where the tree starts rather than
+   covering the button that opened it. */
+.notification-center { position: absolute; top: 60px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
 .notification-empty { margin: 0; padding: 14px; color: #888; font-size: 12px; text-align: center; }
 .invitation-list { display: grid; }
 .invitation-item { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 9px 9px 9px 12px; }
@@ -575,18 +578,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   /* Every target in the sidebar is a thumb target here, so the whole top zone
      grows: 44px controls, a search bar you can hit without aiming, a name big
      enough to read as the heading of the screen it now is. */
-  .sidebar-top { gap: 4px; margin-bottom: 12px; }
-  .identity { gap: 11px; padding: 8px 10px 8px 8px; border-radius: 11px; }
-  .identity-avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 15px; }
-  .identity-name { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
-  .identity-chevron { width: 15px; height: 15px; }
+  .sidebar-top { gap: 4px; margin-bottom: 8px; }
   .sidebar-top-actions { gap: 4px; }
-  .sidebar-search { height: 42px; margin-bottom: 6px; padding: 0 13px; border-radius: 11px; background: #1c1c1c; font-size: 16px; }
-  .sidebar-search svg { width: 18px; height: 18px; }
-  .sidebar-search kbd { display: none; }
-  .notification-button { width: 40px; height: 40px; border-radius: 50%; }
+  .sidebar-icon { width: 42px; height: 42px; padding: 10px; border-radius: 50%; color: #cfcfcf; }
+  .notification-button { width: 42px; height: 42px; border-radius: 50%; }
   .notification-button svg { width: 21px; height: 21px; }
-  .notification-center { top: 120px; right: 14px; left: 14px; }
+  .notification-center { top: 62px; right: 14px; left: 14px; }
   .sidebar-close { display: none; }
   /* The list is the home screen now, so its sections have to be legible as
      sections — three unlabelled runs of rows read as one list with duplicates. */
@@ -609,14 +606,24 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .trash-open { min-height: 46px; padding: 8px 10px; }
   .trash-title { font-size: 15.5px; }
   /* Search fills the screen: a floating palette on a phone is a small target
-     over a background you cannot use anyway. */
-  .search-overlay { padding: 0; background: #111; }
-  .search-panel { max-width: none; max-height: none; flex: 1; border: 0; border-radius: 0; background: #111; box-shadow: none; animation: none; }
-  .search-field { padding: calc(8px + env(safe-area-inset-top)) 14px 10px; gap: 9px; }
+     over a background you cannot use anyway. The field sits at the bottom,
+     under your thumb and directly above the keyboard, with the results filling
+     everything above it. The panel's padding-bottom is the keyboard inset,
+     written inline from visualViewport. */
+  .search-overlay { align-items: stretch; padding: 0; background: #111; }
+  .search-panel { max-width: none; max-height: none; flex: 1; flex-direction: column; border: 0; border-radius: 0; background: #111; box-shadow: none; animation: none; transition: padding-bottom .18s cubic-bezier(.22, 1, .36, 1); }
+  .search-bar { order: 2; gap: 10px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #1e1e1e; border-bottom: 0; }
+  /* A pill, so the field reads as the one live control on the screen. */
+  .search-field { height: 46px; padding: 0 14px; border-radius: 999px; background: #262626; }
   .search-field input { font-size: 17px; }
-  .search-cancel { display: block; flex: none; padding: 0 2px 0 6px; border: 0; color: #7fa9ee; background: none; font: inherit; font-size: 16px; cursor: pointer; }
-  .search-results { padding: 4px 8px calc(20px + env(safe-area-inset-bottom)); }
-  .search-result { min-height: 56px; padding: 10px 8px; border-bottom: 1px solid #1c1c1c; border-radius: 0; }
+  .search-clear { width: 24px; height: 24px; }
+  .search-close { display: grid; width: 46px; height: 46px; flex: none; place-items: center; padding: 13px; border: 0; border-radius: 50%; color: #e8e8e8; background: #262626; cursor: pointer; }
+  .search-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+  .search-results { order: 1; flex: 1; padding: 8px 8px 4px; }
+  .search-empty { gap: 18px; padding: 0 20px 12vh; }
+  .search-empty svg { width: 44px; height: 44px; }
+  .search-empty p { font-size: 17px; color: #d0d0d0; }
+  .search-result { min-height: 56px; padding: 10px; border-radius: 10px; }
   .search-result-title { font-size: 16px; }
   .search-result-path { font-size: 12.5px; }
   .sidebar-scroll { margin: 0 -2px; }
