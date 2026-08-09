@@ -71,6 +71,15 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
 .dragging-page .new-page-fab { opacity: .35; pointer-events: none; }
 .sidebar-collapsed .new-page-fab { opacity: 0; pointer-events: none; }
 .section-label { padding: 0 9px 8px; color: #777; font-size: 10px; font-weight: 700; letter-spacing: 1.1px; }
+/* Both section headings are the same drop target — the top level — so both
+   light up together. The drop line for a top-level drop lands at the top of
+   .pages-nav, which can be far below the finger (or off screen entirely when
+   FAVORITES is long), so the heading under the pointer has to say so itself. */
+   A rule under the heading rather than a filled box: the two labels carry
+   different top padding (PAGES gets 18px as a later sibling), so a box would
+   render at two different heights — and the line sits exactly at the edge the
+   page will land on. */
+.section-label.drop-target { color: #cddffa; box-shadow: inset 0 -2px 0 #4c8ef7; }
 /* The list is for navigating and dragging, not reading — a drag that paints a
    text selection behind it looks broken, and on touch the long-press that
    starts a drag is also what raises the selection handles and the iOS callout. */
