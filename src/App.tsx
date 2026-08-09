@@ -553,6 +553,10 @@ const DRAWER_EXIT_MARGIN = 34
 // A swipe starting inside this band belongs to the browser's own back gesture,
 // which lives at the same edge and cannot be turned off. Ours starts further in.
 const DRAWER_EDGE_GUARD = 24
+// How far a finger travels before the swipe is assigned an axis. Small enough
+// that the browser has not committed to a scroll yet, large enough to have a
+// direction worth reading.
+const DRAWER_SWIPE_SLOP = 10
 
 const PAGE_RESULT_LIMIT = 10
 const editedOn = (at: number) => new Date(at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
@@ -804,23 +808,42 @@ export default function App() {
     const shell = shellRef.current
     if (!shell || !isMobile || mobileView !== 'editor' || !activeNote) return
     if (event.pointerType === 'mouse' || event.clientX < DRAWER_EDGE_GUARD) return
+    // Never taken from something that pans sideways for itself — a wide code
+    // block or table. This is the case `touch-action: pan-y` on <main> would
+    // have broken, which is why the axis is settled here in script instead.
+    for (let node = event.target as HTMLElement | null; node && node !== shell; node = node.parentElement) {
+      if (node.scrollWidth > node.clientWidth + 2) {
+        const overflowX = getComputedStyle(node).overflowX
+        if (overflowX === 'auto' || overflowX === 'scroll') return
+      }
+    }
     const startX = event.clientX
     const startY = event.clientY
     const travel = Math.max(1, window.innerWidth * (1 - DRAWER_PEEK_RATIO))
+    let decided = false
     let engaged = false
     let progress = 1
     const stop = () => {
       window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
     }
+    // Once the gesture is ours the page stops scrolling under it. Preventing the
+    // touch default is that lock: <main> is the scroller, and it would otherwise
+    // keep taking the vertical component of a diagonal drag.
+    const onTouchMove = (touch: TouchEvent) => { if (engaged && touch.cancelable) touch.preventDefault() }
     const onMove = (move: PointerEvent) => {
       const dx = move.clientX - startX
       const dy = move.clientY - startY
-      if (!engaged) {
-        // Vertical, or heading the wrong way: this gesture is not ours.
-        if (Math.abs(dy) > Math.abs(dx) || dx < -8) { stop(); return }
-        if (dx < 16 || dx < Math.abs(dy) * 1.6) return
+      // The axis is settled once, at the first movement large enough to have a
+      // direction, and never revisited. Re-testing it on every move is what made
+      // this so hard to land: a swipe already travelling sideways was thrown
+      // away by a single wobble of the thumb, and a thumb always wobbles.
+      if (!decided) {
+        if (Math.hypot(dx, dy) < DRAWER_SWIPE_SLOP) return
+        decided = true
+        if (dx <= 0 || dx <= Math.abs(dy)) { stop(); return }
         engaged = true
         // Set before the class flips. At 1 the drawer transform equals the
         // page's resting one, so opening the drawer here moves nothing — the
@@ -846,6 +869,7 @@ export default function App() {
       settleDrawer(progress < 0.5 ? 0 : 1, false)
     }
     window.addEventListener('pointermove', onMove)
+    window.addEventListener('touchmove', onTouchMove, { passive: false })
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onUp)
   }
