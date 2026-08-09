@@ -1278,6 +1278,34 @@ export default function App() {
     for (const key of revealedIds) if (!collapsedIds.has(key)) next.add(key)
     return next
   }, [expandedIds, revealedIds, collapsedIds])
+  // Closing the page keeps its branches open, by writing the reveal down as if
+  // it had been opened by hand.
+  //
+  // The reveal is derived from the open page, which is right while a page is
+  // open — walk to another one and the old branch tidies itself away. But on a
+  // phone the list is also somewhere you *arrive*, and closing the page is the
+  // way you get there: the branch would collapse at the exact moment the list
+  // became the whole screen, throwing away the trail you had just followed
+  // through it. Held in a ref because by the time the close is observable the
+  // page it was derived from is already gone.
+  const revealOnCloseRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (activeId) {
+      const keep = new Set<string>()
+      for (const key of revealedIds) if (!collapsedIds.has(key)) keep.add(key)
+      revealOnCloseRef.current = keep
+      return
+    }
+    const keep = revealOnCloseRef.current
+    if (!keep.size) return
+    revealOnCloseRef.current = new Set()
+    setExpandedIds((current) => {
+      const next = new Set(current)
+      let added = false
+      for (const key of keep) if (!next.has(key)) { next.add(key); added = true }
+      return added ? next : current
+    })
+  }, [activeId, revealedIds, collapsedIds])
   // Revealing the row is pointless if it is below the fold.
   useEffect(() => {
     if (!activeId) return
