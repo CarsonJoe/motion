@@ -667,6 +667,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      space added outside it is a strip of list that silently rejects drops. */
   .pages-nav { padding-bottom: calc(90px + env(safe-area-inset-bottom)); }
   .trash-view { padding: 10px 14px calc(12px + env(safe-area-inset-bottom)); background: #111; }
+  /* It fills the sidebar, and while the drawer is open the sidebar stops short
+     of the page. Without this its close button sits under the strip — the one
+     control the panel cannot afford to lose. */
+  .app-shell.mobile-drawer .trash-view { right: var(--drawer-peek); }
   .trash-view-head strong { font-size: 19px; font-weight: 700; letter-spacing: -.3px; }
   .trash-view-close { width: 40px; height: 40px; padding: 9px; }
   /* Same idiom as the tree rows, so it follows them. */
