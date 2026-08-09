@@ -750,32 +750,51 @@ export default function App() {
   // last quarter and reads as the page vanishing. Driving --drawer-exit to 1
   // first walks it out along the same path a rightward drag uses, and lands on
   // exactly the transform `.mobile-list main` holds, so the handover is still.
+  // A landing books work for later, and a gesture that arrives before that work
+  // runs has to cancel it — otherwise the close scheduled by the last gesture
+  // fires into the middle of this one and slams the drawer shut under the
+  // finger.
+  const drawerTimers = useRef<number[]>([])
+  const cancelDrawerLanding = useCallback(() => {
+    drawerTimers.current.forEach(window.clearTimeout)
+    drawerTimers.current = []
+    setDrawerSettling(false)
+  }, [])
+  useEffect(() => () => drawerTimers.current.forEach(window.clearTimeout), [])
+
   const closePage = useCallback(() => {
     const shell = shellRef.current
     if (!shell) { clearPendingNavigation(); leaveToList(true); return }
+    cancelDrawerLanding()
     shell.style.setProperty('--drawer-exit', '1')
-    window.setTimeout(() => { clearPendingNavigation(); leaveToList(false) }, MOBILE_SLIDE_MS)
+    drawerTimers.current.push(window.setTimeout(() => { clearPendingNavigation(); leaveToList(false) }, MOBILE_SLIDE_MS))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [leaveToList])
+  }, [leaveToList, cancelDrawerLanding])
+
   // Where a gesture lets go: 1 is the page covering the list, 0 is the drawer
-  // open. Shared by both gestures so they land the same way.
+  // open. Shared by both gestures so they land the same way. `guard` keeps the
+  // page untouchable for a moment afterwards, and is only wanted when the
+  // gesture was a press — a press ends in a burst of emulated events that a live
+  // editor would take as a caret placement, while a drag ends in nothing. Left
+  // on for drags it also blocked the next swipe for half a second.
   //
   // The property is never cleared here. Clearing it and changing the state
   // together left a frame where the drawer rules still applied with no progress
   // set — reading as fully open — and the class swap then animated back down
   // from there, which is the flicker. The closed drawer ignores the property
   // entirely, so leaving it at 1 is inert; opening resets it.
-  const settleDrawer = useCallback((target: number) => {
+  const settleDrawer = useCallback((target: number, guard: boolean) => {
     const shell = shellRef.current
     if (!shell) return
+    cancelDrawerLanding()
     shell.style.setProperty('--drawer-progress', String(target))
     if (target !== 1) return
-    // Held past the arrival, because a press ends in a burst of emulated events
-    // that a live editor would accept as a caret placement.
-    setDrawerSettling(true)
-    window.setTimeout(() => setMenuOpen(false), MOBILE_SLIDE_MS)
-    window.setTimeout(() => setDrawerSettling(false), MOBILE_SLIDE_MS + 260)
-  }, [])
+    if (guard) {
+      setDrawerSettling(true)
+      drawerTimers.current.push(window.setTimeout(() => setDrawerSettling(false), MOBILE_SLIDE_MS + 260))
+    }
+    drawerTimers.current.push(window.setTimeout(() => setMenuOpen(false), MOBILE_SLIDE_MS))
+  }, [cancelDrawerLanding])
 
   // Swiping right across the page pulls the list out from under it — the way in
   // that matches the way out. Nothing happens until the movement is clearly
@@ -806,6 +825,7 @@ export default function App() {
         // Set before the class flips. At 1 the drawer transform equals the
         // page's resting one, so opening the drawer here moves nothing — the
         // finger does all of it from this point.
+        cancelDrawerLanding()
         shell.style.setProperty('--drawer-progress', '1')
         shell.style.setProperty('--drawer-exit', '0')
         setDrawerDragging(true)
@@ -821,7 +841,9 @@ export default function App() {
       stop()
       if (!engaged) return
       setDrawerDragging(false)
-      settleDrawer(progress < 0.72 ? 0 : 1)
+      // Whichever end it is nearer to. No commit threshold: the page goes where
+      // you left it pointing, so a short pull returns and a long one opens.
+      settleDrawer(progress < 0.5 ? 0 : 1, false)
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -862,12 +884,14 @@ export default function App() {
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
       setDrawerDragging(false)
-      // Pushed the page far enough off that it is leaving.
-      if (exit > 0.3) { closePage(); return }
+      // Past halfway out, the page is leaving.
+      if (exit >= 0.5) { closePage(); return }
       shell.style.setProperty('--drawer-exit', '0')
-      // A tap on the strip means the same thing as dragging it all the way back.
-      settleDrawer(!moved || progress > 0.28 ? 1 : 0)
+      // A tap on the strip means the same thing as dragging it all the way back;
+      // a drag lands at whichever end it stopped nearer to.
+      settleDrawer(!moved || progress >= 0.5 ? 1 : 0, !moved)
     }
+    cancelDrawerLanding()
     setDrawerDragging(true)
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -1782,7 +1806,9 @@ export default function App() {
     // navigation back to the plain list.
     if (!activeNote) { clearPendingNavigation(); leaveToList(true); return }
     // Back to a closed drawer before it opens: a previous gesture leaves these
-    // at 1, which would hold it shut or park the page off screen.
+    // at 1, which would hold it shut or park the page off screen, and its
+    // pending landing would close what we are opening.
+    cancelDrawerLanding()
     shellRef.current?.style.removeProperty('--drawer-progress')
     shellRef.current?.style.removeProperty('--drawer-exit')
     setMenuOpen(true)
