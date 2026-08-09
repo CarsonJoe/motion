@@ -814,6 +814,9 @@ export default function App() {
   // raises, so that one event knows the pop was ours and animates it. A pop the
   // *user* performed is already being animated by the browser.
   const selfPopRef = useRef(false)
+  // The route as of the last change we saw, from either direction — the URL
+  // alone cannot say what preceded it.
+  const lastRouteNoteRef = useRef<string | null>(readRoute().noteId)
   const controllerRef = useRef<NoteDocController | null>(null)
   const contentTouchRef = useRef(new Map<string, number>())
 
@@ -1123,7 +1126,15 @@ export default function App() {
     const selfPop = selfPopRef.current
     selfPopRef.current = false
     if (!selfPop) suppressSlide()
-    if (!route.noteId) { pushedFromListRef.current = false; leaveToList(selfPop) }
+    const previous = lastRouteNoteRef.current
+    lastRouteNoteRef.current = route.noteId
+    if (!route.noteId) { pushedFromListRef.current = false; leaveToList(selfPop); return }
+    // Arriving at a page from the list — including by the system's own forward
+    // gesture — means the entry behind us is the list, so the back control can
+    // pop to it. Getting this wrong is not cosmetic: the control would push
+    // instead, and a push discards the forward entry, which is what made the
+    // forward-swipe stop working after one round trip.
+    pushedFromListRef.current = !previous
   }), [leaveToList, suppressSlide])
 
   // URL -> active page. Resolves once the store is up, and again as pages arrive
@@ -1155,6 +1166,7 @@ export default function App() {
     // when we made it: that is what lets the back control pop instead of piling
     // another entry on top (see showSidebar).
     if (!replace) pushedFromListRef.current = Boolean(activeId) && !previous
+    lastRouteNoteRef.current = activeId
   }, [activeId, activeNote?.shareId])
 
   // When a link points at a page we can't open, work out why and offer the way
