@@ -1686,7 +1686,10 @@ export default function App() {
   // Explicit navigation clears any pending deep-link/landing so it doesn't keep
   // covering the page the user just chose.
   const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
-  const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setActiveId(id) }
+  // Closes the drawer itself rather than leaving it to the effect on activeId:
+  // tapping the row of the page already peeking sets the same id, so there is no
+  // change for that effect to notice and the tap did nothing.
+  const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setMenuOpen(false); setActiveId(id) }
   // Five taps on the sidebar title toggle the keyboard debug overlay. The
   // reload is what applies it: the flag is read once, when the effect installs.
   const debugTaps = useRef({ count: 0, at: 0 })
