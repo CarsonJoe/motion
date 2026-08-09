@@ -746,11 +746,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      see a whole branch at once. */
   .page-row { border-radius: 8px; }
   .page-link { min-height: 40px; padding: 8px 10px; border-radius: 8px; font-size: 15.5px; }
-  /* No active-page highlight on mobile. The list is a place you navigate away
-     from, not a pane sitting beside the page it points at — by the time you can
-     see the row, that page isn't on screen for it to be "current" relative to. */
-  .page-row.active { background: transparent; }
-  .page-row.active .page-link { color: #aaa; }
+  /* The active row is marked here as on desktop. It used not to be, on the
+     grounds that the list was a place you navigated away from and the page it
+     pointed at was never on screen beside it — the drawer made that false, and
+     while peeking the highlight is what ties the two together. With no page
+     open there is no active row for it to match, so the other states are
+     unaffected. */
   .sidebar-footer { padding: 14px 3px 0; }
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
