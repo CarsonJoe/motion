@@ -94,7 +94,7 @@ nav { overflow: visible; }
 .pages-nav > .drop-line, .favorites-nav > .drop-line { top: -3px; bottom: auto; }
 .page-tree-item { position: relative; }
 .page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
-.page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; text-decoration: none; cursor: pointer; }
 .page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Sits in the row exactly where `.page-link` was, so renaming does not reflow
    the tree around it. */
