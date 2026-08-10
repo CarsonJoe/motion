@@ -19,6 +19,19 @@ import { editorAdapter } from './editorAdapter'
 // is a no-op unless `enabled` (small screens only), so desktop is untouched.
 
 const CONTENT_SELECTOR = '.motion-md-content'
+const DISMISS_EVENT = 'motion:dismiss-mobile-keyboard'
+const IS_CHROME = /(?:Chrome|Chromium|CriOS)\//.test(navigator.userAgent)
+
+// Drawer peeks are navigation, not editor selection gestures. Tell the active
+// keyboard controller to suppress Lexical/iOS's immediate refocus, then blur
+// the field and discard the DOM selection so neither the keyboard nor a text
+// highlight rides along with the page.
+export function dismissMobileKeyboard() {
+  window.dispatchEvent(new Event(DISMISS_EVENT))
+  const active = document.activeElement
+  if (active instanceof HTMLElement && active.closest('main')) active.blur()
+  window.getSelection()?.removeAllRanges()
+}
 
 // The on-screen debug overlay, toggled by five taps on the sidebar title. An
 // installed PWA always launches at its fixed start_url, so `?debug` can't be
@@ -249,6 +262,24 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       return rect
     }
 
+    // A range's bounding box covers every selected line, which cannot tell us
+    // which handle is moving. Collapse a temporary range at the focus endpoint
+    // so downward selection can scroll before that handle reaches the physical
+    // bottom of the screen, without pulling upward selections back down.
+    function getSelectionFocusRect(sel: Selection): DOMRect | null {
+      if (!sel.focusNode) return null
+      const range = document.createRange()
+      try {
+        range.setStart(sel.focusNode, sel.focusOffset)
+        range.collapse(true)
+      } catch { return null }
+      const rect = range.getBoundingClientRect()
+      if (!(rect.width === 0 && rect.height === 0 && rect.top === 0)) return rect
+      let node: Node | null = sel.focusNode
+      if (node.nodeType === Node.TEXT_NODE) node = (node as Text).parentElement
+      return node instanceof Element ? node.getBoundingClientRect() : null
+    }
+
     // Drives the scroll animation directly (not native `behavior:'smooth'`) so
     // speed scales with distance and main.scrollTop is always the true current
     // position, not an ambiguous commanded target.
@@ -274,6 +305,11 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // the window ends, so the caret's latest position always gets corrected.
     let lastCorrectionAt = 0
     let pendingCorrectionTimer: number | null = null
+    // Chrome correctly resolves taps while its keyboard is already open, but a
+    // selectionchange correction immediately afterwards scrolls <main> again.
+    // Suppress only that redundant collapsed-caret pass — fresh keyboard opens
+    // still use our preempt/land so Chrome cannot push the app viewport upward.
+    let suppressChromeTapCorrectionUntil = 0
     const CORRECTION_THROTTLE_MS = 24
 
     function maybeCorrectCaretScroll() {
@@ -301,6 +337,18 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
       const content = getContent()
       const sel = window.getSelection()
       if (!content || !sel || sel.rangeCount === 0 || !content.contains(sel.anchorNode)) return
+      if (!sel.isCollapsed) {
+        if (!sel.focusNode || !content.contains(sel.focusNode)) return
+        // Selection keeps the useful half of caret automation: advance the
+        // document when the moving endpoint enters the keyboard safe zone, but
+        // never correct upward and fight a handle being dragged toward the top.
+        const endpoint = getSelectionFocusRect(sel)
+        if (!endpoint) return
+        const zone = getSafeZone(currentOrEstimatedToolbarTop())
+        if (endpoint.bottom > zone.bottom) animateScrollTo(main!.scrollTop + (endpoint.bottom - zone.bottom))
+        return
+      }
+      if (performance.now() < suppressChromeTapCorrectionUntil) return
       const rect = getCaretRect(sel)
       if (rect.width === 0 && rect.height === 0 && rect.top === 0) return
 
@@ -334,7 +382,10 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     function getCaretScreenSpan(tapY: number | null): [number, number] | null {
       const content = getContent()
       const sel = window.getSelection()
-      if (content && sel && sel.rangeCount > 0 && content.contains(sel.anchorNode)) {
+      // A pre-existing text range may still be live while a new tap is opening
+      // the keyboard. It is not the tap's caret, and using its multi-line box
+      // scrolls the document before Safari places the new caret under the finger.
+      if (content && sel && sel.isCollapsed && sel.rangeCount > 0 && content.contains(sel.anchorNode)) {
         const rect = getCaretRect(sel)
         if (!(rect.width === 0 && rect.height === 0 && rect.top === 0)) return [rect.top, rect.bottom]
       }
@@ -371,6 +422,14 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
 
     // --- event handlers ------------------------------------------------------
     const onPointerDown = (e: PointerEvent) => {
+      // Freeze the scroller before the browser resolves this press to a text
+      // position. A downward-selection correction can still be coasting when a
+      // new tap begins; moving content under that tap lands the caret lines away.
+      if (scrollAnimFrame) { cancelAnimationFrame(scrollAnimFrame); scrollAnimFrame = null }
+      if (pendingCorrectionTimer) { clearTimeout(pendingCorrectionTimer); pendingCorrectionTimer = null }
+      const content = getContent()
+      const keyboardUp = Boolean(vv && layoutH() - vv.height > 100)
+      if (IS_CHROME && keyboardUp && content?.contains(document.activeElement)) suppressChromeTapCorrectionUntil = performance.now() + 300
       pendingTapY = main.scrollTop + (e.clientY - main.getBoundingClientRect().top)
     }
 
@@ -679,7 +738,22 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // synchronously): Safari runs its own "keep caret visible" pass right after
     // an edit, and correcting in the same tick lets that pass cancel ours.
     const onInput = () => requestAnimationFrame(maybeCorrectCaretScroll)
+    const hasEditorSelectionRange = () => {
+      const content = getContent()
+      const selection = window.getSelection()
+      return Boolean(content && selection && !selection.isCollapsed && selection.anchorNode && selection.focusNode && content.contains(selection.anchorNode) && content.contains(selection.focusNode))
+    }
     const onSelectionChange = () => {
+      if (hasEditorSelectionRange()) {
+        // Stop work already booked for a caret before the range was created.
+        // Native handle dragging owns autoscroll until the selection collapses.
+        landArmed = false
+        if (landFallbackTimer) { clearTimeout(landFallbackTimer); landFallbackTimer = null }
+        if (pendingCorrectionTimer) { clearTimeout(pendingCorrectionTimer); pendingCorrectionTimer = null }
+        if (scrollAnimFrame) { cancelAnimationFrame(scrollAnimFrame); scrollAnimFrame = null }
+        correctCaretScroll()
+        return
+      }
       // The first selectionchange after engaging is the caret being placed at
       // the tap — do the deferred land now (scroll after placement). Otherwise
       // keep the caret in the safe zone as it moves (arrow keys, taps while the
@@ -718,8 +792,18 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     // re-engagement (focus / reopen / preempt) from the tail of that gesture.
     let dismissedAt = 0
     const justDismissed = () => performance.now() - dismissedAt < 500
-    const onTouchStart = (e: TouchEvent) => { touchStartY = e.touches[0]?.clientY ?? null }
+    const onDrawerDismiss = () => {
+      dismissedAt = performance.now()
+      hideToolbar()
+    }
+    window.addEventListener(DISMISS_EVENT, onDrawerDismiss)
+    const onTouchStart = (e: TouchEvent) => {
+      // A drag that starts with selection handles visible belongs entirely to
+      // selection, even if the browser briefly collapses the range mid-drag.
+      touchStartY = hasEditorSelectionRange() ? null : e.touches[0]?.clientY ?? null
+    }
     const onTouchMove = (e: TouchEvent) => {
+      if (hasEditorSelectionRange()) { touchStartY = null; return }
       if (touchStartY == null || !toolbar.classList.contains('kb-visible')) return
       const y = e.touches[0]?.clientY
       if (y == null) return
@@ -756,6 +840,7 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     return () => {
       panPin.remove()
       window.removeEventListener('scroll', onAnyScroll, true)
+      window.removeEventListener(DISMISS_EVENT, onDrawerDismiss)
       main.removeEventListener('touchstart', onTouchStart)
       main.removeEventListener('touchmove', onTouchMove)
       main.removeEventListener('pointerdown', onPointerDown)

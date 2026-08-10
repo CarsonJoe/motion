@@ -17,6 +17,9 @@ export type Note = {
   // row a stale device may push later.
   deletedAt: number
   updatedAt: number
+  // Local provenance only; never sent to Tallpond. Undefined is treated as
+  // unknown for databases created before absence reconciliation existed.
+  remoteKnown?: boolean
 }
 
 export type UpdateOp = { id: string; kind: 'update'; noteId: string; shareId: string; payload: string; createdAt: number }
@@ -148,10 +151,21 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
       if (existing) {
         if (existing.shareId && !remote.shareId) return false
         const claims = Boolean(remote.shareId) && !existing.shareId
-        if (claims ? remote.updatedAt < existing.updatedAt : remote.updatedAt <= existing.updatedAt) return false
+        if (claims ? remote.updatedAt < existing.updatedAt : remote.updatedAt <= existing.updatedAt) {
+          // Even an older row proves this id exists remotely. Preserve the
+          // newer local value while recording that provenance for a later
+          // authoritative-absence check.
+          if (!existing.remoteKnown) await writeNote({ ...existing, remoteKnown: true })
+          return false
+        }
       }
-      await writeNote(remote)
+      await writeNote({ ...remote, remoteKnown: true })
       return true
+    },
+
+    markRemoteKnown: async (noteId: string, known = true) => {
+      const note = cache.get(noteId)
+      if (note && note.remoteKnown !== known) await writeNote({ ...note, remoteKnown: known })
     },
 
     getDocState: async (noteId: string) => {
@@ -188,6 +202,13 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
       if (!ids.length) return
       const transaction = db.transaction('outbox', 'readwrite')
       for (const id of ids) transaction.objectStore('outbox').delete(id)
+      await done(transaction)
+    },
+    removeOpsForNote: async (noteId: string) => {
+      const transaction = db.transaction('outbox', 'readwrite')
+      const store = transaction.objectStore('outbox')
+      const keys = store.index('noteId').getAllKeys(noteId)
+      keys.onsuccess = () => { for (const key of keys.result) store.delete(key) }
       await done(transaction)
     },
     // A note op only leaves the outbox if no edit bumped its revision while
@@ -345,7 +366,13 @@ export async function adoptScope(
     // remote path is reused verbatim: it already resolves last-write-wins and
     // refuses to let a private row displace a note that has moved into a share.
     for (const note of notes) {
-      if (await target.applyRemoteNote(note)) adopted += 1
+      if (await target.applyRemoteNote(note)) {
+        adopted += 1
+        // The source is another local scope, not proof of a server row. Newer
+        // clients stamp false at creation; legacy anonymous rows are treated
+        // the same way when adopted.
+        await target.markRemoteKnown(note.id, note.remoteKnown ?? false)
+      }
     }
 
     // Bodies merge rather than overwrite. The target may already hold server

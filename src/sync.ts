@@ -6,8 +6,17 @@ import { adoptScope, ANON_SCOPE, dropScope, openLocalStore, subtreeIds, surveySc
 // supplies the same two values through .env.local. Developer credentials never
 // ship in the bundle — sessions are cookie-backed PKCE logins.
 const clientId = import.meta.env.VITE_TALLPOND_CLIENT_ID as string | undefined
+const injectedConfig = typeof window === 'undefined' ? null : (window as Window & {
+  __TALLPOND__?: { gatewayUrl?: string; clientId?: string }
+}).__TALLPOND__
 export const tallpond = (() => {
   try {
+    // Hosted config must outrank build-time development variables. Tallpond
+    // injects `/_osg` here; a production bundle built on a machine whose
+    // .env.local points at Vite's `/tallpond` proxy must not carry that local
+    // route onto the hosted origin, where it is an app-shell path and returns
+    // 405 for auth refreshes.
+    if (injectedConfig?.gatewayUrl && injectedConfig.clientId) return createClient()
     return clientId
       ? createClient({ gatewayUrl: import.meta.env.VITE_TALLPOND_GATEWAY_URL || 'https://api.tallpond.com', clientId })
       : createClient()
@@ -16,7 +25,8 @@ export const tallpond = (() => {
 
 export type TallpondClient = NonNullable<typeof tallpond>
 
-export type SyncPhase = 'local' | 'connecting' | 'offline' | 'syncing' | 'synced' | 'error' | 'auth-required'
+export type SyncPhase = 'checking' | 'local' | 'connecting' | 'offline' | 'syncing' | 'synced' | 'error' | 'auth-required'
+export type DeletedElsewhereSurvey = { notes: number; titles: string[]; ids: string[] }
 export type SyncState = {
   phase: SyncPhase
   // True once this run has confirmed a valid session. Presentation state like
@@ -30,6 +40,10 @@ export type SyncState = {
   // Set when signing in found work in the anonymous scope. Purely a question
   // for the user: nothing is moved or dropped until they answer it.
   adoptable: ScopeSurvey | null
+  // Previously-synced pages missing from a complete server inventory, but
+  // carrying local outbox work. Sync pauses those pages until the user chooses
+  // whether to keep the work as new pages or move it to Recently deleted.
+  deletedElsewhere: DeletedElsewhereSurvey | null
   // A whole-tree pull is running: startup, reconnect, or an explicit retry.
   // Tracked separately because `phase: 'syncing'` cannot carry this — `settle`
   // also uses it to mean "the outbox still has work", which is true through
@@ -95,7 +109,10 @@ const restoreRoute = () => {
   if (hash) window.dispatchEvent(new Event('hashchange'))
 }
 
-let state: SyncState = { phase: 'local', connected: false, error: null, user: null, roles: storedRoles(storedScope()), pending: 0, fullSyncing: false, adoptable: null }
+// Until startSync has checked connectivity and the remembered session, neither
+// “Connect” nor “Offline” is known to be true. Keeping that brief startup state
+// explicit prevents either status flashing before the real answer arrives.
+let state: SyncState = { phase: 'checking', connected: false, error: null, user: null, roles: storedRoles(storedScope()), pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null }
 const listeners = new Set<() => void>()
 const setState = (patch: Partial<SyncState>) => {
   state = { ...state, ...patch }
@@ -168,7 +185,7 @@ const isPermanentRejection = (error: unknown) => {
   return status === 403 || status === 404
 }
 
-export async function drainOutbox(client: TallpondClient, store: LocalStore) {
+export async function drainOutbox(client: TallpondClient, store: LocalStore, blockedNoteIds: ReadonlySet<string> = new Set()) {
   // Bounded by progress rather than by an empty queue. A metadata op whose
   // revision keeps moving — a title being typed — can never be dequeued, and
   // looping until it is would cost a gateway round trip per keystroke. A pass
@@ -184,7 +201,7 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore) {
 
     const updates = new Map<string, UpdateOp[]>()
     for (const op of ops) {
-      if (op.kind !== 'update') continue
+      if (op.kind !== 'update' || blockedNoteIds.has(op.noteId)) continue
       const key = `${op.shareId}:${op.noteId}`
       updates.set(key, [...updates.get(key) ?? [], op])
     }
@@ -215,7 +232,7 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore) {
     }
 
     for (const op of ops) {
-      if (op.kind !== 'note') continue
+      if (op.kind !== 'note' || blockedNoteIds.has(op.noteId)) continue
       try {
         if (await pushNoteRow(client, store, op)) progress = true
       } catch (error) {
@@ -244,6 +261,7 @@ async function pushNoteRow(client: TallpondClient, store: LocalStore, op: NoteOp
   if (!updated.length && !await table().select('noteId').eq('noteId', note.id).maybeSingle()) {
     await table().insert({ noteId: note.id, ...values })
   }
+  await store.markRemoteKnown(note.id)
   return store.removeNoteOpIfRev(op)
 }
 
@@ -265,6 +283,9 @@ let retryTimer: number | null = null
 let retryAttempt = 0
 let fullSyncPromise: Promise<void> | null = null
 let flushTimer: number | null = null
+// In-memory on purpose. If the app closes before the question is answered the
+// outbox remains untouched, and the next complete sync discovers it again.
+const deletedElsewhereIds = new Set<string>()
 
 // Edits arrive per keystroke; pushes do not have to. Content updates already
 // merge per note inside the drain and metadata ops coalesce onto one stable
@@ -347,7 +368,7 @@ async function flush() {
   try {
     do {
       flushQueued = false
-      await drainOutbox(tallpond, local)
+      await drainOutbox(tallpond, local, deletedElsewhereIds)
     } while (flushQueued)
     await settle()
   } catch (error) {
@@ -391,6 +412,39 @@ async function membershipEnded(resourceId: string) {
   }
 }
 
+export async function reconcileAuthoritativeAbsence(store: LocalStore, seenByScope: Map<string, Set<string>>) {
+  const ops = await store.listOps()
+  const pending = new Set(ops.map((op) => op.noteId))
+  const conflicts: Note[] = []
+
+  for (const note of store.getSnapshot()) {
+    const seen = seenByScope.get(note.shareId)
+    // A scope not fetched completely says nothing about absence. Explicit
+    // false marks a page created locally by this version; undefined is legacy
+    // data, where a queued op is conservatively offered to the user rather than
+    // allowed to resurrect an id that may have been purged.
+    if (!seen || note.remoteKnown === false || seen.has(note.id)) continue
+
+    if (note.deletedAt) {
+      // This device already saw the deletion. The server has now finished the
+      // purge, so its old outgoing tombstone is obsolete; retain the local
+      // trash copy only for the remainder of its own recovery window.
+      await store.removeOpsForNote(note.id)
+      if (purgeDueAt(note) <= Date.now()) await store.removeNote(note.id)
+      else await store.markRemoteKnown(note.id, false)
+    } else if (pending.has(note.id)) conflicts.push(note)
+    else await store.removeNote(note.id)
+  }
+
+  deletedElsewhereIds.clear()
+  for (const note of conflicts) deletedElsewhereIds.add(note.id)
+  setState({
+    deletedElsewhere: conflicts.length
+      ? { notes: conflicts.length, titles: conflicts.slice(0, 8).map((note) => note.title.trim() || 'Untitled'), ids: conflicts.map((note) => note.id) }
+      : null
+  })
+}
+
 export async function fullSync() {
   fullSyncPromise ??= (async () => {
     try {
@@ -401,24 +455,43 @@ export async function fullSync() {
       // Captured before the resource list is fetched: a share created
       // concurrently by this device is absent here and so is never pruned.
       const sharesBefore = new Set(local.getSnapshot().map((note) => note.shareId).filter(Boolean))
+      const seenByScope = new Map<string, Set<string>>()
 
-      for (const row of await selectAll((cursor) => {
-        const query = tallpond.table('notes').select()
-        return cursor ? query.after(cursor) : query
-      })) await local.applyRemoteNote(rowToNote(row, ''))
+      // Neither inventory depends on the other. Starting both together removes
+      // a full gateway round trip from every startup, including an account with
+      // no changes at all.
+      const [privateRows, resources] = await Promise.all([
+        selectAll((cursor) => {
+          const query = tallpond.table('notes').select()
+          return cursor ? query.after(cursor) : query
+        }),
+        tallpond.resource.list({ type: 'shared_notes' })
+      ])
 
-      const resources = await tallpond.resource.list({ type: 'shared_notes' })
+      seenByScope.set('', new Set(privateRows.map((row) => String(row.noteId))))
+      for (const row of privateRows) await local.applyRemoteNote(rowToNote(row, ''))
+
+      // Shared resources are independent scopes too. Fetch them concurrently;
+      // applying their rows remains ordered below so IndexedDB writes stay
+      // simple and deterministic.
+      const sharedInventories = await Promise.all(resources.map(async (resource) => ({
+        resource,
+        rows: await selectAll((cursor) => {
+          const query = tallpond.resource(resource.id).table('member_notes').select()
+          return cursor ? query.after(cursor) : query
+        })
+      })))
       const roles = { ...state.roles }
-      for (const resource of resources) {
+      for (const { resource, rows } of sharedInventories) {
         if (resource.currentMember?.role) {
           roles[resource.id] = resource.currentMember.role
           localStorage.setItem(roleKey(resource.id), resource.currentMember.role)
         }
-        for (const row of await selectAll((cursor) => {
-          const query = tallpond.resource(resource.id).table('member_notes').select()
-          return cursor ? query.after(cursor) : query
-        })) await local.applyRemoteNote(rowToNote(row, resource.id))
+        seenByScope.set(resource.id, new Set(rows.map((row) => String(row.noteId))))
+        for (const row of rows) await local.applyRemoteNote(rowToNote(row, resource.id))
       }
+
+      await reconcileAuthoritativeAbsence(local, seenByScope)
 
       // A share that has dropped out of the list may be one this user is no
       // longer a member of — deleted, or access revoked, on another device.
@@ -448,7 +521,7 @@ export async function fullSync() {
       }
       setState({ roles })
       subscribeLive(tallpond, resources.map((resource) => resource.id))
-      await drainOutbox(tallpond, local)
+      await drainOutbox(tallpond, local, deletedElsewhereIds)
       // After the drain, so a delete queued on this device reaches the server
       // before the purge decides whether that page's window has passed.
       await purgeExpired(tallpond, local)
@@ -512,10 +585,12 @@ async function applyScope(userId: string) {
   if (!local || local.scope === userId) return
   const previous = local
   const scoped = await openLocalStore(userId)
+  await purgeExpiredLocalCopies(scoped)
   local = scoped
+  deletedElsewhereIds.clear()
   previous.close()
   onScopeChange?.(scoped)
-  setState({ roles: storedRoles(userId) })
+  setState({ roles: storedRoles(userId), deletedElsewhere: null })
   await refreshPending()
 
   // Whatever the previous scope held is now untouched by the running app, so
@@ -557,6 +632,7 @@ export async function startSync(store: LocalStore, scopeChanged: (store: LocalSt
   if (local) return
   local = store
   onScopeChange = scopeChanged
+  await purgeExpiredLocalCopies(store)
   await refreshPending()
   window.addEventListener('online', () => {
     if (state.connected || rememberedLogin()) void resume()
@@ -612,6 +688,59 @@ export async function discardAnonymousWork() {
   setState({ adoptable: null })
 }
 
+// A complete pull found that these previously-synced ids no longer exist, but
+// this device has work queued for them. Keeping copies the latest local state
+// into fresh private pages: an explicit recovery, not a resurrection of ids the
+// server permanently purged.
+// Defers the question without releasing its outbox rows. A later complete sync
+// discovers the same ids and asks again.
+export const declineDeletedElsewhere = () => setState({ deletedElsewhere: null })
+
+export async function keepDeletedElsewhere() {
+  if (!local || !deletedElsewhereIds.size) return
+  const ids = new Set(deletedElsewhereIds)
+  const originals = local.getSnapshot().filter((note) => ids.has(note.id))
+  const newIds = new Map(originals.map((note) => [note.id, crypto.randomUUID()]))
+  const now = Date.now()
+
+  for (const note of originals) {
+    const id = newIds.get(note.id)!
+    const parentId = newIds.get(note.parentId) ?? ''
+    const recovered: Note = {
+      ...note, id, parentId, shareId: '', deletedAt: 0,
+      updatedAt: now, remoteKnown: false
+    }
+    await local.putNote(recovered)
+    const body = await local.getDocState(note.id)
+    if (body) {
+      await local.putDocState(id, body)
+      await local.enqueueUpdate(id, '', body)
+    }
+    await local.enqueueNote(id)
+  }
+  for (const note of originals) await local.removeNote(note.id)
+
+  deletedElsewhereIds.clear()
+  setState({ deletedElsewhere: null })
+  noteChanged()
+}
+
+// Trash reuses the existing recovery path. Its old outgoing edits are removed
+// first so the local tombstone can never recreate the permanently-purged row.
+export async function trashDeletedElsewhere() {
+  if (!local || !deletedElsewhereIds.size) return
+  const now = Date.now()
+  for (const id of deletedElsewhereIds) {
+    const note = local.getNote(id)
+    if (!note) continue
+    await local.removeOpsForNote(id)
+    await local.putNote({ ...note, deletedAt: now, updatedAt: now, remoteKnown: false })
+  }
+  deletedElsewhereIds.clear()
+  setState({ deletedElsewhere: null })
+  noteChanged()
+}
+
 // Signing out is refused while the outbox still holds work. It would be
 // possible to drain first, but the honest failure — "this device still has
 // changes that have not reached the server" — is one the user can act on,
@@ -639,11 +768,13 @@ export async function signOut() {
   // its name is the previous user's id and nothing but their sign-in reaches it.
   const previous = local
   const anonymous = await openLocalStore(ANON_SCOPE)
+  await purgeExpiredLocalCopies(anonymous)
   local = anonymous
   previous?.close()
   onScopeChange?.(anonymous)
 
-  setState({ phase: 'local', connected: false, error: null, user: null, roles: {}, pending: 0, fullSyncing: false, adoptable: null })
+  deletedElsewhereIds.clear()
+  setState({ phase: 'local', connected: false, error: null, user: null, roles: {}, pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null })
 }
 
 // Local mutation entry point: App persists the note + op, then calls this to
@@ -664,7 +795,9 @@ export async function saveNote(store: LocalStore, note: Note) {
   // Callers pass a snapshot taken at render time, which may predate a
   // concurrent re-home or delete. Scope and liveness belong to the store —
   // only sharing and deleting may change them, and both write directly.
-  const merged = current ? { ...note, shareId: current.shareId, deletedAt: current.deletedAt } : note
+  // Explicit false distinguishes a new offline page from legacy rows whose
+  // provenance predates authoritative-absence reconciliation.
+  const merged = current ? { ...note, shareId: current.shareId, deletedAt: current.deletedAt } : { ...note, remoteKnown: note.remoteKnown ?? false }
   await store.putNote(merged)
   await store.enqueueNote(merged.id)
   noteChanged()
@@ -702,6 +835,17 @@ export async function deleteNoteTree(store: LocalStore, rootId: string) {
 export const TRASH_RETENTION_MS = 30 * 24 * 60 * 60 * 1000
 
 export const purgeDueAt = (note: Note) => note.deletedAt + TRASH_RETENTION_MS
+
+// Copies retained only on this device after an authoritative server purge can
+// finish expiring without a connection. Ordinary synced tombstones stay until
+// connected purge confirms the corresponding server deletion.
+export async function purgeExpiredLocalCopies(store: LocalStore, now = Date.now()) {
+  for (const note of store.getSnapshot()) {
+    if (note.remoteKnown === false && note.deletedAt && purgeDueAt(note) <= now) {
+      await store.removeNote(note.id)
+    }
+  }
+}
 
 // The notes to show in Recently deleted: the top of each deletion, not every
 // page it took with it. A note is a root of its deletion if its parent was not

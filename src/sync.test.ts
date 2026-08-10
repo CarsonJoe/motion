@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { deleteNoteTree, drainOutbox, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { deleteNoteTree, drainOutbox, getSyncState, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -239,7 +239,84 @@ describe('restoreNoteTree', () => {
   })
 })
 
+describe('authoritative absence', () => {
+  it('hard-deletes a previously synced stale cache with no local work', async () => {
+    const store = await openLocalStore()
+    await store.applyRemoteNote(note({ id: 'gone', title: 'old server copy' }))
+
+    await reconcileAuthoritativeAbsence(store, new Map([['', new Set()]]))
+
+    expect(store.getNote('gone')).toBeNull()
+    expect(getSyncState().deletedElsewhere).toBeNull()
+  })
+
+  it('pauses a previously synced page that has queued local changes', async () => {
+    const store = await openLocalStore()
+    await store.applyRemoteNote(note({ id: 'changed', title: 'draft' }))
+    await store.enqueueNote('changed')
+
+    await reconcileAuthoritativeAbsence(store, new Map([['', new Set()]]))
+
+    expect(store.getNote('changed')).not.toBeNull()
+    expect(await store.countOps()).toBe(1)
+    expect(getSyncState().deletedElsewhere).toEqual({ notes: 1, titles: ['draft'], ids: ['changed'] })
+  })
+
+  it('does not mistake a never-uploaded local page for a remote purge', async () => {
+    const store = await openLocalStore()
+    await store.putNote(note({ id: 'new-local', title: 'offline creation', remoteKnown: false }))
+    await store.enqueueNote('new-local')
+
+    await reconcileAuthoritativeAbsence(store, new Map([['', new Set()]]))
+
+    expect(store.getNote('new-local')).not.toBeNull()
+    expect(await store.countOps()).toBe(1)
+    expect(getSyncState().deletedElsewhere).toBeNull()
+  })
+
+  it('keeps an unexpired local trash copy without re-uploading its tombstone', async () => {
+    const store = await openLocalStore()
+    await store.applyRemoteNote(note({ id: 'trashed', deletedAt: Date.now(), updatedAt: Date.now() }))
+    await store.enqueueNote('trashed')
+
+    await reconcileAuthoritativeAbsence(store, new Map([['', new Set()]]))
+
+    expect(store.getNote('trashed')?.deletedAt).toBeGreaterThan(0)
+    expect(store.getNote('trashed')?.remoteKnown).toBe(false)
+    expect(await store.countOps()).toBe(0)
+  })
+
+  it('expires a server-purged trash copy locally without a connection', async () => {
+    const store = await openLocalStore()
+    const deletedAt = Date.now() - TRASH_RETENTION_MS - 1
+    await store.putNote(note({ id: 'expired-local-copy', deletedAt, updatedAt: deletedAt, remoteKnown: false }))
+    await store.putDocState('expired-local-copy', 'body')
+
+    await purgeExpiredLocalCopies(store)
+
+    expect(store.getNote('expired-local-copy')).toBeNull()
+    expect(await store.getDocState('expired-local-copy')).toBeNull()
+  })
+})
+
 describe('drainOutbox', () => {
+  it('leaves blocked notes queued while draining unrelated work', async () => {
+    const store = await openLocalStore()
+    const blocked = note({ id: 'blocked', title: 'local edits' })
+    const allowed = note({ id: 'allowed', title: 'send me' })
+    await store.putNote(blocked)
+    await store.putNote(allowed)
+    await store.enqueueNote(blocked.id)
+    await store.enqueueNote(allowed.id)
+    const { client, calls } = fakeClient({ notes: null })
+
+    await drainOutbox(client, store, new Set([blocked.id]))
+
+    expect(calls.some((call) => call.values?.noteId === blocked.id)).toBe(false)
+    expect(calls.some((call) => call.values?.noteId === allowed.id)).toBe(true)
+    expect((await store.listOps()).map((op) => op.noteId)).toEqual([blocked.id])
+  })
+
   it('merges content updates per note into one insert against the right scope', async () => {
     const store = await openLocalStore()
     await store.enqueueUpdate('n1', '', encodedInsert('hello'))
