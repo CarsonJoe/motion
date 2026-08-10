@@ -1,4 +1,4 @@
-import { createClient, type InvitationInfo, type MemberInfo, type ResourceInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
+import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
 import { mergeBase64Updates } from './codec'
 import { adoptScope, ANON_SCOPE, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
 
@@ -123,6 +123,20 @@ export const subscribeSyncState = (listener: () => void) => {
   return () => { listeners.delete(listener) }
 }
 export const getSyncState = () => state
+
+// Membership is not durable app data, but changes affect several views at once:
+// notification badges, access requests, the share sheet, and the set of resource
+// scopes included in sync. Keep the gateway subscription here and expose only a
+// small invalidation signal to UI consumers.
+export type MembershipEvent = { resourceId: string }
+const membershipListeners = new Set<(event: MembershipEvent) => void>()
+export const subscribeMembershipChanges = (listener: (event: MembershipEvent) => void) => {
+  membershipListeners.add(listener)
+  return () => { membershipListeners.delete(listener) }
+}
+const emitMembershipChange = (resourceId: string) => {
+  for (const listener of membershipListeners) listener({ resourceId })
+}
 
 // A failure the user has read should not outlive their attention. The condition
 // itself, if it persists, re-reports itself on the next attempt.
@@ -387,10 +401,43 @@ const applyRemoteRow = (shareId: string) => (row: Row) => {
 function subscribeLive(client: TallpondClient, shareIds: string[]) {
   for (const subscription of liveSubscriptions) subscription.close()
   const onError = (error: unknown) => { if (isAuthError(error)) reportFailure(error) }
-  liveSubscriptions = ['', ...shareIds].map((shareId) => notesTable(client, shareId).select().live()
+  const notes = ['', ...shareIds].map((shareId) => notesTable(client, shareId).select().live()
     .on('insert', applyRemoteRow(shareId))
     .on('update', applyRemoteRow(shareId))
     .on('error', onError))
+
+  // This private-scope feed covers this user's invitations and membership in
+  // every resource. An acceptance in another tab must pull the newly available
+  // pages; a role change or removal must refresh permissions/local scopes.
+  const refreshOwnMembership = (change: MembershipChange | { id: string }) => {
+    const resourceId = 'resourceId' in change
+      ? change.resourceId
+      : change.id.slice(0, change.id.lastIndexOf(':'))
+    if (!resourceId) return
+    emitMembershipChange(resourceId)
+    const role = 'role' in change ? change.role : null
+    const needsSync = 'state' in change
+      ? change.state === 'active' && state.roles[resourceId] !== role
+      : Boolean(state.roles[resourceId])
+    if (needsSync) void fullSync().finally(() => emitMembershipChange(resourceId))
+  }
+  const ownMembership = client.membership.live()
+    .on('insert', refreshOwnMembership)
+    .on('update', refreshOwnMembership)
+    .on('delete', refreshOwnMembership)
+    .on('error', onError)
+
+  // Admins additionally receive changes for every member of their resources:
+  // new access requests, invite acceptance/rejection, removals, and role edits.
+  const managedMemberships = shareIds
+    .filter((shareId) => ['owner', 'admin'].includes(state.roles[shareId]))
+    .map((shareId) => client.resource(shareId).members.live()
+      .on('insert', () => emitMembershipChange(shareId))
+      .on('update', () => emitMembershipChange(shareId))
+      .on('delete', () => emitMembershipChange(shareId))
+      .on('error', onError))
+
+  liveSubscriptions = [...notes, ownMembership, ...managedMemberships]
 }
 
 // Does the server agree this user has lost access to a resource? Only a
@@ -979,14 +1026,7 @@ export async function leaveShare(store: LocalStore, shareId: string) {
 
 export async function listInvitations(): Promise<InvitationInfo[]> {
   if (!tallpond) return []
-  // SDK 0.0.15 defines `invitations` on the internal resource API but does not
-  // copy it onto the public callable wrapper (only create/list/browse/static
-  // are assigned), so the helper is undefined at runtime. Use it when a later
-  // SDK restores it, and call the same authenticated route otherwise.
-  const api = tallpond.resource as Partial<{ invitations: (opts: { type: string }) => Promise<InvitationInfo[]> }>
-  if (typeof api.invitations === 'function') return api.invitations({ type: 'shared_notes' })
-  const response = await tallpond.gateway.request<{ invitations: InvitationInfo[] }>('/v1/resources/invitations?type=shared_notes')
-  return response.invitations ?? []
+  return tallpond.resource.invitations({ type: 'shared_notes' })
 }
 
 export async function acceptInvitation(resourceId: string) {

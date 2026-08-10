@@ -8,7 +8,7 @@ import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscrib
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, requestAccess, restoreNoteTree, saveNote, shareNoteTree, signOut, startSync, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, requestAccess, restoreNoteTree, saveNote, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -1184,8 +1184,8 @@ export default function App() {
     finally { setNotificationsLoading(false) }
   }, [])
 
-  // Membership has no realtime channel, so notifications are fetched on connect
-  // and on window focus — event-driven, no background timer.
+  // Fetch an authoritative snapshot on connect and when returning to a tab.
+  // The membership live feed below handles changes while the tab stays open.
   useEffect(() => {
     if (!sync.connected) { setInvitations([]); setRequests([]); return }
     void loadInvitations()
@@ -1655,6 +1655,14 @@ export default function App() {
     void loadMembers(activeNote.shareId)
   }, [activeNote?.shareId, sync.connected, loadMembers])
 
+  // The data layer owns the sockets and announces only which resource changed.
+  // Refresh both derived membership views; accepted invites and revoked access
+  // also trigger a full scope sync in sync.ts.
+  useEffect(() => subscribeMembershipChanges(({ resourceId }) => {
+    void loadInvitations()
+    if (activeNote?.shareId === resourceId) void loadMembers(resourceId)
+  }), [activeNote?.shareId, loadInvitations, loadMembers])
+
   useEffect(() => {
     if (!shareOpen) return
     const frame = window.requestAnimationFrame(() => inviteInputRef.current?.focus())
@@ -1918,9 +1926,8 @@ export default function App() {
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not decline invitation') }
     finally { setNotificationsLoading(false) }
   }
-  // Membership lives on the server, not in a table we can subscribe to, so after
-  // any change refresh both views that show it — notifications and the open
-  // share sheet — to keep them from drifting apart.
+  // Optimistically refresh after local membership actions as well; the live
+  // event is authoritative but may arrive a moment after the request resolves.
   const refreshMembership = async (resourceId: string) => {
     await loadInvitations()
     if (activeNote?.shareId === resourceId) await loadMembers(resourceId)
