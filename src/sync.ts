@@ -1066,38 +1066,82 @@ async function purgeExpired(client: TallpondClient, store: LocalStore) {
   }
 }
 
-// Sharing is an online operation: it creates the resource, copies the subtree
-// into it (metadata rows plus one full-state update each), soft-deletes the
-// private remote rows, and re-homes the local notes. Edits racing the copy are
-// healed by the document controller, which pushes any local-only state it
-// finds after hydrating a scope.
-export async function shareNoteTree(store: LocalStore, root: Note) {
-  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
-  if (!navigator.onLine) throw new Error('Reconnect to share this page.')
-  if (root.shareId) return root.shareId
-  const resource = await tallpond.resource.create('shared_notes', { name: root.title || 'Untitled Note', visibility: 'members' })
-  const notes = store.getSnapshot().filter((note) => !note.deletedAt && !note.shareId)
-  const ids = subtreeIds(notes, root.id)
-  const tree = notes.filter((note) => ids.has(note.id))
-  const deletedAt = Date.now()
+// A share promotion has to survive at every await boundary. The old path wrote
+// the remote metadata first and only then remembered the resource locally. If a
+// body upload failed between those steps, retrying created another resource and
+// collided with the orphaned row's globally-unique noteId.
+const shareMigrationKey = (noteId: string) => `motion-share-migration:${currentScope()}:${noteId}`
+
+async function interruptedShare(client: TallpondClient, rootId: string) {
+  const resources = await client.resource.list({ type: 'shared_notes' })
+  const remembered = localStorage.getItem(shareMigrationKey(rootId))
+  const candidates = [...resources].sort((a, b) => Number(b.id === remembered) - Number(a.id === remembered))
+  for (const resource of candidates) {
+    if (!['owner', 'admin'].includes(resource.currentMember?.role ?? '')) continue
+    try {
+      const row = await client.resource(resource.id).table('member_notes').select('noteId').eq('noteId', rootId).maybeSingle()
+      if (row) return resource
+    } catch { /* another candidate may be the interrupted promotion */ }
+  }
+  return null
+}
+
+export async function migrateNoteTreeToShare(client: TallpondClient, store: LocalStore, root: Note, shareId: string) {
+  // A nested page already belonging to another share is a scope boundary, not
+  // part of this promotion. This mirrors moveBlockedBy's cross-scope invariant.
+  const eligible = store.getSnapshot().filter((note) =>
+    !note.deletedAt && (!note.shareId || note.shareId === shareId))
+  const ids = subtreeIds(eligible, root.id)
+  const tree = eligible.filter((note) => ids.has(note.id))
+  if (!tree.some((note) => note.id === root.id)) throw new Error('This page belongs to a different shared space.')
+
+  // Persist the complete destination before making another remote write. The
+  // outbox is rebuilt from full local state, so old private-scope operations
+  // cannot race the promotion and a restart can safely resume it.
   for (const note of tree) {
     const parentId = note.id === root.id ? '' : note.parentId
-    await tallpond.resource(resource.id).table('member_notes').insert({
-      noteId: note.id, title: note.title, parentId, deletedAt: 0, clientUpdatedAt: note.updatedAt
-    })
+    await store.removeOpsForNote(note.id)
+    await store.putNote({ ...note, parentId, shareId, remoteKnown: false })
+    await store.enqueueNote(note.id)
     const body = await store.getDocState(note.id)
-    if (body) await tallpond.resource(resource.id).table('member_note_updates').insert({
-      updateId: crypto.randomUUID(), noteId: note.id, payload: body
-    })
-    // Re-home locally *before* retiring the private row. The private live
-    // subscription reports that soft delete, and only a note already carrying
-    // the new scope is protected from it by the cross-scope guard.
-    await store.putNote({ ...note, parentId, shareId: resource.id })
-    await tallpond.table('notes').update({ deletedAt, clientUpdatedAt: deletedAt }).eq('noteId', note.id)
+    if (body) await store.enqueueUpdate(note.id, shareId, body)
   }
-  const roles = { ...state.roles, [resource.id]: 'owner' }
-  localStorage.setItem(roleKey(resource.id), 'owner')
-  setState({ roles })
+
+  await drainOutbox(client, store)
+
+  // Retire private rows only after their shared replacements are confirmed.
+  // Repeating this update is harmless, which makes the whole promotion
+  // resumable rather than a one-shot sequence of inserts.
+  const deletedAt = Date.now()
+  for (const note of tree) {
+    await client.table('notes').update({ deletedAt, clientUpdatedAt: deletedAt }).eq('noteId', note.id)
+  }
+}
+
+// Sharing is an online operation: create (or recover) the resource, durably
+// re-home the subtree, drain its full state, and only then retire private rows.
+export async function shareNoteTree(store: LocalStore, root: Note) {
+  const client = tallpond
+  if (!client) throw new Error('Sync is not configured for this deployment.')
+  if (!navigator.onLine) throw new Error('Reconnect to share this page.')
+
+  const migrationKey = shareMigrationKey(root.id)
+  if (root.shareId && localStorage.getItem(migrationKey) !== root.shareId) return root.shareId
+
+  let resource = root.shareId
+    ? await client.resource(root.shareId).get()
+    : await interruptedShare(client, root.id)
+  if (!resource) {
+    resource = await client.resource.create('shared_notes', { name: root.title || 'Untitled Note', visibility: 'members' })
+  }
+
+  localStorage.setItem(migrationKey, resource.id)
+  const role = resource.currentMember?.role || 'owner'
+  localStorage.setItem(roleKey(resource.id), role)
+  setState({ roles: { ...state.roles, [resource.id]: role } })
+
+  await migrateNoteTreeToShare(client, store, root, resource.id)
+  localStorage.removeItem(migrationKey)
   subscribeLiveForCurrentShares(store)
   return resource.id
 }

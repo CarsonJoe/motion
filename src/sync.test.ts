@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { deleteNoteTree, drainOutbox, getSyncState, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -65,6 +65,40 @@ const encodedInsert = (value: string) => {
   doc.getText('content').insert(0, value)
   return toBase64(Y.encodeStateAsUpdate(doc))
 }
+
+describe('share promotion', () => {
+  it('durably re-homes the whole subtree before the first remote write can fail', async () => {
+    const store = await openLocalStore('user-a')
+    await store.putNote(note({ id: 'root', title: 'Plan' }))
+    await store.putNote(note({ id: 'child', title: 'Details', parentId: 'root' }))
+    await store.putDocState('root', encodedInsert('draft'))
+
+    const failing = {
+      resource: () => ({
+        table: () => ({ insert: () => Promise.reject(new Error('network interrupted')) })
+      })
+    } as unknown as TallpondClient
+
+    await expect(migrateNoteTreeToShare(failing, store, store.getNote('root')!, 'share-1')).rejects.toThrow('network interrupted')
+
+    expect(store.getNote('root')).toMatchObject({ shareId: 'share-1', parentId: '', remoteKnown: false })
+    expect(store.getNote('child')).toMatchObject({ shareId: 'share-1', parentId: 'root', remoteKnown: false })
+    expect(await store.countOps()).toBeGreaterThan(0)
+  })
+
+  it('drains the promoted state before retiring the private rows', async () => {
+    const store = await openLocalStore('user-a')
+    await store.putNote(note({ id: 'root', title: 'Plan', updatedAt: 10 }))
+    await store.putNote(note({ id: 'child', title: 'Details', parentId: 'root', updatedAt: 11 }))
+    const { client, calls } = fakeClient()
+
+    await migrateNoteTreeToShare(client, store, store.getNote('root')!, 'share-1')
+
+    expect(await store.countOps()).toBe(0)
+    expect(calls.filter((call) => call.scope === 'share-1' && call.table === 'member_notes' && call.op === 'insert')).toHaveLength(2)
+    expect(calls.filter((call) => call.scope === 'private' && call.table === 'notes' && call.op === 'update')).toHaveLength(2)
+  })
+})
 
 describe('saveNote', () => {
   it('never lets a stale caller snapshot revert the note scope or a delete', async () => {
