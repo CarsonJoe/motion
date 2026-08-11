@@ -35,7 +35,10 @@ describe('remote metadata apply', () => {
     const id = crypto.randomUUID()
     const shareId = crypto.randomUUID()
     await store.applyRemoteNote(note({ id, title: 'private', updatedAt: 10 }))
-    // Sharing re-homes a note without editing it: equal timestamps must claim.
+    // Sharing re-homes a note without editing it. Older clients stamped the
+    // private retirement later than the shared copy, so scope — not timestamp —
+    // must decide which one wins on a fresh device.
+    await store.applyRemoteNote(note({ id, title: 'private retirement', deletedAt: 30, updatedAt: 30 }))
     expect(await store.applyRemoteNote(note({ id, title: 'shared', shareId, updatedAt: 10 }))).toBe(true)
     expect(await store.applyRemoteNote(note({ id, title: 'late private row', updatedAt: 30 }))).toBe(false)
     const current = store.getNote(id)

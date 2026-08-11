@@ -138,8 +138,10 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
 
     // Remote rows apply last-write-wins, with two standing invariants:
     // a private row never overrides a note that has moved into a shared scope,
-    // and a share row may claim a private note at an equal timestamp (sharing
-    // re-homes the note without editing it).
+    // and a share row always claims a private copy. Promotion is one-way —
+    // there is no unshare operation — and older clients retired the private
+    // row with a newer timestamp than the shared copy. Requiring timestamp
+    // order here made those pages look private/deleted on every new device.
     //
     // A tombstone arriving here does NOT drop the body. It used to, which meant
     // a delete on one device destroyed the page's contents on every other one,
@@ -151,7 +153,7 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
       if (existing) {
         if (existing.shareId && !remote.shareId) return false
         const claims = Boolean(remote.shareId) && !existing.shareId
-        if (claims ? remote.updatedAt < existing.updatedAt : remote.updatedAt <= existing.updatedAt) {
+        if (!claims && remote.updatedAt <= existing.updatedAt) {
           // Even an older row proves this id exists remotely. Preserve the
           // newer local value while recording that provenance for a later
           // authoritative-absence check.

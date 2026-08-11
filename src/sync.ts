@@ -1114,7 +1114,10 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
   // resumable rather than a one-shot sequence of inserts.
   const deletedAt = Date.now()
   for (const note of tree) {
-    await client.table('notes').update({ deletedAt, clientUpdatedAt: deletedAt }).eq('noteId', note.id)
+    // Promotion changes scope, not the note revision. Keeping the same conflict
+    // timestamp lets a fresh device deterministically replace this private
+    // tombstone with the shared row when it pulls both inventories.
+    await client.table('notes').update({ deletedAt, clientUpdatedAt: note.updatedAt }).eq('noteId', note.id)
   }
 }
 
