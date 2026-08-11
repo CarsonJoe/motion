@@ -290,6 +290,10 @@ let onScopeChange: ((store: LocalStore) => void) | null = null
 const currentScope = () => local?.scope ?? storedScope()
 const roleKey = (shareId: string) => `${rolePrefix(currentScope())}${shareId}`
 let liveSubscriptions: Array<{ close: () => void }> = []
+const closeLiveSubscriptions = () => {
+  for (const subscription of liveSubscriptions) subscription.close()
+  liveSubscriptions = []
+}
 let applyChain = Promise.resolve()
 let flushing = false
 let flushQueued = false
@@ -342,7 +346,10 @@ const QUIET_RETRIES = 1
 let authCheck: Promise<void> | null = null
 function verifyThenLatch(error: unknown) {
   authCheck ??= (async () => {
-    if (await confirmSignedOut()) setState({ phase: 'auth-required', connected: false, error: describeError(error) })
+    if (await confirmSignedOut()) {
+      closeLiveSubscriptions()
+      setState({ phase: 'auth-required', connected: false, error: describeError(error) })
+    }
     // Still signed in: the 401 was noise. Treat it as any other transient
     // failure — quiet retry, and the outbox still holds the work.
     else scheduleRetry(error)
@@ -399,7 +406,7 @@ const applyRemoteRow = (shareId: string) => (row: Row) => {
 }
 
 function subscribeLive(client: TallpondClient, shareIds: string[]) {
-  for (const subscription of liveSubscriptions) subscription.close()
+  closeLiveSubscriptions()
   const onError = (error: unknown) => { if (isAuthError(error)) reportFailure(error) }
   const notes = ['', ...shareIds].map((shareId) => notesTable(client, shareId).select().live()
     .on('insert', applyRemoteRow(shareId))
@@ -610,6 +617,17 @@ async function establishSession() {
     }
     return false
   }
+
+  // Signing into another account in a sibling tab replaces this origin's
+  // cookies without notifying the old tab. Stop its transports as soon as the
+  // session endpoint names a different principal: otherwise an old scope can
+  // keep retrying sockets — or, worse, send its outbox under the new account.
+  const sessionUserId = session.userId
+  if (sessionUserId && sessionUserId !== currentScope()) {
+    closeLiveSubscriptions()
+    setState({ connected: false, user: null })
+  }
+
   // The identity is now on the critical path rather than a background nicety:
   // every local database is scoped by it, so a session we cannot name is a
   // session we cannot safely sync. Failing here is strictly better than
@@ -617,9 +635,12 @@ async function establishSession() {
   // notes into another's scope.
   const user: User | null = await tallpond.auth.getUser()
   if (!user) return false
+  // The cookie changed again between the two identity requests. Do not sync
+  // either account; the retry will take a fresh, internally consistent reading.
+  if (sessionUserId && sessionUserId !== user.id) throw new Error('Your Tallpond session changed while Motion was reconnecting.')
   rememberLogin()
-  setState({ connected: true, user: { id: user.id, name: user.profile.displayName || user.profile.handle || 'You' } })
   await applyScope(user.id)
+  setState({ connected: true, user: { id: user.id, name: user.profile.displayName || user.profile.handle || 'You' } })
   return true
 }
 
@@ -653,12 +674,16 @@ async function applyScope(userId: string) {
 
 // The one re-entry point for automatic recovery: a session that was never
 // confirmed is re-established before the sync it was blocking.
+let resumePromise: Promise<void> | null = null
 async function resume() {
-  if (!tallpond || !local) return
-  if (!navigator.onLine) { setState({ phase: idlePhase() }); return }
-  if (!state.connected) {
+  resumePromise ??= (async () => {
+    if (!tallpond || !local) return
+    if (!navigator.onLine) { setState({ phase: idlePhase() }); return }
     try {
+      // Re-check even while connected. Cookies are shared by same-origin tabs,
+      // so another tab can replace this session without any event in this one.
       if (!await establishSession()) {
+        closeLiveSubscriptions()
         // A remembered login that will not establish has expired. That is a
         // "Reconnect", not a "you were never signed in", and it stays on screen
         // until an explicit reconnect clears it.
@@ -671,9 +696,14 @@ async function resume() {
         return
       }
     } catch (error) { reportFailure(error); return }
-  }
-  await fullSync()
+    await fullSync()
+  })().finally(() => { resumePromise = null })
+  return resumePromise
 }
+
+// Returning to a tab is the only browser signal available when a sibling tab
+// has replaced httpOnly session cookies. Revalidate before UI-side refreshes.
+export const refreshConnection = () => resume()
 
 export async function startSync(store: LocalStore, scopeChanged: (store: LocalStore) => void) {
   if (local) return
@@ -800,8 +830,7 @@ export async function signOut() {
   const scope = currentScope()
   try { await tallpond.auth.signOut() } catch { /* the local half still has to happen */ }
 
-  for (const subscription of liveSubscriptions) subscription.close()
-  liveSubscriptions = []
+  closeLiveSubscriptions()
   if (retryTimer !== null) { window.clearTimeout(retryTimer); retryTimer = null }
   if (flushTimer !== null) { window.clearTimeout(flushTimer); flushTimer = null }
 

@@ -8,7 +8,7 @@ import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscrib
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, requestAccess, restoreNoteTree, saveNote, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, requestAccess, restoreNoteTree, saveNote, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -1233,7 +1233,7 @@ export default function App() {
   useEffect(() => {
     if (!sync.connected) { setInvitations([]); setRequests([]); return }
     void loadInvitations()
-    const refresh = () => void loadInvitations()
+    const refresh = () => { void refreshConnection().then(loadInvitations) }
     window.addEventListener('focus', refresh)
     return () => window.removeEventListener('focus', refresh)
   }, [sync.connected, loadInvitations])
@@ -2020,7 +2020,7 @@ export default function App() {
   // slow enough to explain a wait, but no commentary on the per-page backfill
   // behind every page open. The footer still carries that.
   const headerBusy = useDelayedFlag(!syncNotice && heavySync, BUSY_DELAY_MS, BUSY_MIN_MS)
-  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())
+  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : refreshConnection())
   // Explicit navigation clears any pending deep-link/landing so it doesn't keep
   // covering the page the user just chose.
   const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
