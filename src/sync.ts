@@ -9,7 +9,7 @@ const clientId = import.meta.env.VITE_TALLPOND_CLIENT_ID as string | undefined
 const injectedConfig = typeof window === 'undefined' ? null : (window as Window & {
   __TALLPOND__?: { gatewayUrl?: string; clientId?: string }
 }).__TALLPOND__
-export const tallpond = (() => {
+const createTallpondClient = () => {
   try {
     // Hosted config must outrank build-time development variables. Tallpond
     // injects `/_osg` here; a production bundle built on a machine whose
@@ -21,7 +21,12 @@ export const tallpond = (() => {
       ? createClient({ gatewayUrl: import.meta.env.VITE_TALLPOND_GATEWAY_URL || 'https://api.tallpond.com', clientId })
       : createClient()
   } catch { return null }
-})()
+}
+
+// A client owns more than configuration: it also owns realtime socket pools,
+// reconnect timers, and identity-dependent membership snapshot state. Replace
+// it after logout so signing into another account cannot reuse any of those.
+export let tallpond = createTallpondClient()
 
 export type TallpondClient = NonNullable<typeof tallpond>
 
@@ -528,7 +533,8 @@ export async function reconcileAuthoritativeAbsence(store: LocalStore, seenBySco
 export async function fullSync() {
   fullSyncPromise ??= (async () => {
     try {
-      if (!tallpond || !local || !state.connected) return
+      const client = tallpond
+      if (!client || !local || !state.connected) return
       if (!navigator.onLine) { setState({ phase: 'offline' }); return }
       setState({ phase: 'syncing', error: null, fullSyncing: true })
 
@@ -542,10 +548,10 @@ export async function fullSync() {
       // no changes at all.
       const [privateRows, resources] = await Promise.all([
         selectAll((cursor) => {
-          const query = tallpond.table('notes').select()
+          const query = client.table('notes').select()
           return cursor ? query.after(cursor) : query
         }),
-        tallpond.resource.list({ type: 'shared_notes' })
+        client.resource.list({ type: 'shared_notes' })
       ])
 
       seenByScope.set('', new Set(privateRows.map((row) => String(row.noteId))))
@@ -557,7 +563,7 @@ export async function fullSync() {
       const sharedInventories = await Promise.all(resources.map(async (resource) => ({
         resource,
         rows: await selectAll((cursor) => {
-          const query = tallpond.resource(resource.id).table('member_notes').select()
+          const query = client.resource(resource.id).table('member_notes').select()
           return cursor ? query.after(cursor) : query
         })
       })))
@@ -600,11 +606,11 @@ export async function fullSync() {
         await local.removeShare(shareId)
       }
       setState({ roles })
-      subscribeLive(tallpond, resources.map((resource) => resource.id))
-      await drainOutbox(tallpond, local, deletedElsewhereIds)
+      subscribeLive(client, resources.map((resource) => resource.id))
+      await drainOutbox(client, local, deletedElsewhereIds)
       // After the drain, so a delete queued on this device reaches the server
       // before the purge decides whether that page's window has passed.
-      await purgeExpired(tallpond, local)
+      await purgeExpired(client, local)
       await settle()
     } catch (error) {
       reportFailure(error)
@@ -882,11 +888,22 @@ export async function signOut() {
     throw new Error(`${state.pending === 1 ? 'One change has' : `${state.pending} changes have`} not synced yet. Wait for syncing to finish, then sign out.`)
   }
   const scope = currentScope()
-  try { await tallpond.auth.signOut() } catch { /* the local half still has to happen */ }
 
+  // Stop every engine-owned transport before invalidating the cookie. If they
+  // remain alive during logout, a reconnect can mint/refresh against the old
+  // session while logout is rotating or clearing it. That race can leave the
+  // next login with a socket ticket from the account that just signed out.
   closeLiveSubscriptions()
   if (retryTimer !== null) { window.clearTimeout(retryTimer); retryTimer = null }
   if (flushTimer !== null) { window.clearTimeout(flushTimer); flushTimer = null }
+  setState({ connected: false, user: null })
+
+  const signedOutClient = tallpond
+  try { await signedOutClient.auth.signOut() } catch { /* the local half still has to happen */ }
+  // The SDK caches socket and membership identity state per client. A fresh
+  // client makes logout a hard session boundary even when the next login uses
+  // the same browser tab.
+  tallpond = createTallpondClient()
 
   clearStoredRoles(scope)
   localStorage.removeItem(USER_KEY)
