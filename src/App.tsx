@@ -1052,6 +1052,8 @@ export default function App() {
   const [inviteRole, setInviteRole] = useState<'reader' | 'writer'>('writer')
   const [members, setMembers] = useState<MemberInfo[]>([])
   const [membersLoading, setMembersLoading] = useState(false)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const membersRequest = useRef(0)
   const [inviteBusy, setInviteBusy] = useState(false)
   const [invitations, setInvitations] = useState<InvitationInfo[]>([])
   const [requests, setRequests] = useState<AccessRequest[]>([])
@@ -1688,14 +1690,31 @@ export default function App() {
   useMobileKeyboard({ toolbar: toolbarHost, main: mainEl, enabled: isMobile, noteId: activeNote?.id ?? null })
 
   const loadMembers = useCallback(async (shareId: string) => {
+    const request = ++membersRequest.current
     setMembersLoading(true)
-    try { setMembers(await listMembers(shareId)) }
-    catch { setMembers([]) }
-    finally { setMembersLoading(false) }
+    try {
+      const loaded = await listMembers(shareId)
+      if (request !== membersRequest.current) return
+      setMembers(loaded)
+      setShareError(null)
+    } catch (error) {
+      if (request !== membersRequest.current) return
+      // Keep the last successful roster on screen. Replacing it with an empty
+      // list made a failed refresh look as though sharing had been erased.
+      setShareError(error instanceof Error ? error.message : 'Could not load the people with access.')
+    } finally {
+      if (request === membersRequest.current) setMembersLoading(false)
+    }
   }, [])
 
   useEffect(() => {
-    if (!activeNote?.shareId || !sync.connected) { setMembers([]); setMembersLoading(false); return }
+    if (!activeNote?.shareId || !sync.connected) {
+      membersRequest.current += 1
+      setMembers([]); setMembersLoading(false); setShareError(null)
+      return
+    }
+    setMembers([])
+    setShareError(null)
     void loadMembers(activeNote.shareId)
   }, [activeNote?.shareId, sync.connected, loadMembers])
 
@@ -1941,11 +1960,17 @@ export default function App() {
   // behind and never re-homes a note the user only looked at.
   const invite = async () => {
     if (!store || !activeNote || !inviteHandle.trim() || inviteBusy) return
+    const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId))
+    if (!canManageMembers) {
+      setShareError('Only the owner or an admin can add people to this shared page.')
+      return
+    }
     const handle = inviteHandle.trim().replace(/^@/, '')
     const pendingId = `pending:${handle}`
     const pendingMember: MemberInfo = { userId: pendingId, role: inviteRole, state: 'inviting', kind: 'user', ownerId: null, ownerHandle: handle, ownerDisplayName: null }
     setInviteHandle('')
     setInviteBusy(true)
+    setShareError(null)
     setMembers((current) => [...current.filter((member) => member.userId !== pendingId), pendingMember])
     try {
       // First invite promotes the page to a shared resource.
@@ -1953,7 +1978,16 @@ export default function App() {
       const member = await inviteByHandle(shareId, handle, inviteRole)
       setMembers((current) => [...current.filter((candidate) => candidate.userId !== pendingId && candidate.userId !== member.userId), member])
     }
-    catch (error) { setMembers((current) => current.filter((member) => member.userId !== pendingId)); setActionError(error instanceof Error ? error.message : 'Could not invite that person') }
+    catch (error) {
+      setMembers((current) => current.filter((member) => member.userId !== pendingId))
+      const status = (error as { status?: number } | null)?.status
+      const message = status === 403
+        ? 'Only the owner or an admin can add people to this shared page.'
+        : status === 404 ? 'Tallpond user not found.'
+          : error instanceof Error ? error.message : 'Could not invite that person.'
+      setShareError(message)
+      setActionError(message)
+    }
     finally { setInviteBusy(false) }
   }
 
@@ -2331,6 +2365,9 @@ export default function App() {
     {flash && <div className="flash-toast" role="status">{flash}</div>}
     {recoverPrompt && createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setRecoverPrompt(null)}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="recover-title" onMouseDown={(event) => event.stopPropagation()}><strong id="recover-title">Recover this page to edit it?</strong><p>{`“${recoverPrompt.title || 'Untitled'}” is in Recently deleted, so it can be read but not changed. Recovering puts it back where it was.`}</p><div className="confirm-actions"><button className="confirm-cancel" disabled={recoverBusy} onClick={() => setRecoverPrompt(null)}>Keep reading</button><button className="new" disabled={recoverBusy || !canWriteNote(recoverPrompt)} onClick={() => void recover(recoverPrompt)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button></div></section></div>, document.body)}
     {attentionKind && createPortal(<div className="share-modal-backdrop adopt-backdrop" role="presentation"><AttentionDialog kind={attentionKind} count={attentionCount} onNotNow={deferAttention} onReview={() => { setTrashViewOpen(false); setIdentityOpen(false); openSidebar(); setReviewPreview(null); setReviewKind(attentionKind) }} /></div>, document.body)}
-    {shareOpen && activeNote && createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><div className="share-link-row"><span className="share-link-label">Anyone you add can open this page from its link</span><button className="copy-link" onClick={() => void copyPageLink()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1" /></svg>{copiedLink ? 'Copied' : 'Copy link'}</button></div><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => setInviteHandle(e.target.value)} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div>{membersLoading && members.length === 0 ? <div className="member-list"><span>Loading people…</span></div> : members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)}
+    {shareOpen && activeNote && (() => {
+      const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId))
+      return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><div className="share-link-row"><span className="share-link-label">Anyone you add can open this page from its link</span><button className="copy-link" onClick={() => void copyPageLink()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1" /></svg>{copiedLink ? 'Copied' : 'Copy link'}</button></div>{canManageMembers ? <div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => { setInviteHandle(e.target.value); setShareError(null) }} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div> : <p className="share-permission-note">Only the owner or an admin can add people.</p>}{shareError && <p className="share-error" role="alert">{shareError}</p>}{membersLoading && members.length === 0 && <div className="member-list"><span>Loading people…</span></div>}{!membersLoading && activeNote.shareId && members.length === 0 && !shareError && <p className="share-empty">No people to show yet.</p>}{members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)
+    })()}
   </div>
 }
