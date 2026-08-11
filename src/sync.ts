@@ -300,7 +300,12 @@ let flushQueued = false
 let retryTimer: number | null = null
 let retryAttempt = 0
 let fullSyncPromise: Promise<void> | null = null
+let sessionRefreshPromise: Promise<void> | null = null
 let flushTimer: number | null = null
+// membership.live() covers every resource type in the app, including retained
+// legacy types Motion no longer syncs. Remember confirmed non-Motion resources
+// so their initial snapshot rows cannot repeatedly trigger whole-tree syncs.
+const ignoredMembershipResources = new Set<string>()
 // In-memory on purpose. If the app closes before the question is answered the
 // outbox remains untouched, and the next complete sync discovers it again.
 const deletedElsewhereIds = new Set<string>()
@@ -426,11 +431,28 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
       : change.id.slice(0, change.id.lastIndexOf(':'))
     if (!resourceId) return
     emitMembershipChange(resourceId)
-    const role = 'role' in change ? change.role : null
-    const needsSync = 'state' in change
-      ? change.state === 'active' && state.roles[resourceId] !== role
-      : Boolean(state.roles[resourceId])
-    if (needsSync) void fullSync().finally(() => emitMembershipChange(resourceId))
+
+    if (!('state' in change)) {
+      // A deletion only matters to Motion if this was one of its known shares.
+      if (state.roles[resourceId]) void fullSync().finally(() => emitMembershipChange(resourceId))
+      return
+    }
+    if (change.state !== 'active' || state.roles[resourceId] === change.role) return
+    if (shareIds.includes(resourceId)) {
+      void fullSync().finally(() => emitMembershipChange(resourceId))
+      return
+    }
+    if (ignoredMembershipResources.has(resourceId)) return
+
+    // The app-wide membership feed also snapshots legacy resource types. An
+    // unknown active membership might be a newly accepted shared_notes invite,
+    // but blindly treating every unknown row as one creates an infinite loop:
+    // fullSync rebuilds the subscription, whose next legacy snapshot triggers
+    // fullSync again. Resolve the type once before widening Motion's scopes.
+    void client.resource(resourceId).get().then((info) => {
+      if (info.type !== 'shared_notes') { ignoredMembershipResources.add(resourceId); return }
+      return fullSync().finally(() => emitMembershipChange(resourceId))
+    }).catch(() => {})
   }
   const ownMembership = client.membership.live()
     .on('insert', refreshOwnMembership)
@@ -630,6 +652,12 @@ async function establishSession() {
   if (sessionUserId && sessionUserId !== currentScope()) {
     closeLiveSubscriptions()
     setState({ connected: false, user: null })
+  } else if (sessionUserId && state.connected && state.user?.id === sessionUserId) {
+    // The common focus check: the session endpoint confirms the same principal.
+    // The profile and scoped store are already established, so do not turn one
+    // cheap identity check into another user request and a whole-tree sync.
+    rememberLogin()
+    return true
   }
 
   // The identity is now on the critical path rather than a background nicety:
@@ -706,8 +734,30 @@ async function resume() {
 }
 
 // Returning to a tab is the only browser signal available when a sibling tab
-// has replaced httpOnly session cookies. Revalidate before UI-side refreshes.
-export const refreshConnection = () => resume()
+// has replaced httpOnly session cookies. Revalidate the identity, but only pull
+// the whole tree if the tab was disconnected or the account actually changed.
+// A healthy focus must remain one session request, not a sync/resubscribe cycle.
+export function refreshConnection() {
+  if (resumePromise) return resumePromise
+  sessionRefreshPromise ??= (async () => {
+    if (!tallpond || !local || !navigator.onLine) return
+    const wasConnected = state.connected
+    const previousScope = currentScope()
+    try {
+      if (!await establishSession()) {
+        closeLiveSubscriptions()
+        const expired = rememberedLogin()
+        setState({
+          phase: expired ? 'auth-required' : 'local', connected: false,
+          error: expired ? 'Your Tallpond session expired.' : null
+        })
+        return
+      }
+    } catch (error) { reportFailure(error); return }
+    if (!wasConnected || currentScope() !== previousScope) await fullSync()
+  })().finally(() => { sessionRefreshPromise = null })
+  return sessionRefreshPromise
+}
 
 export async function startSync(store: LocalStore, scopeChanged: (store: LocalStore) => void) {
   if (local) return

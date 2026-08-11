@@ -2020,7 +2020,7 @@ export default function App() {
   // slow enough to explain a wait, but no commentary on the per-page backfill
   // behind every page open. The footer still carries that.
   const headerBusy = useDelayedFlag(!syncNotice && heavySync, BUSY_DELAY_MS, BUSY_MIN_MS)
-  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : refreshConnection())
+  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())
   // Explicit navigation clears any pending deep-link/landing so it doesn't keep
   // covering the page the user just chose.
   const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
