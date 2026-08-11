@@ -662,6 +662,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      slid off the right. Matches .mobile-list main exactly. */
   .mobile-list .drawer-close-layer { transform: translateX(calc(100% + 34px)); }
   .drawer-dragging .drawer-close-layer, .no-slide .drawer-close-layer { transition: none; }
+  .drawer-dragging .drawer-grip, .drawer-dragging .drawer-close-layer { will-change: transform; }
   /* The two never cross-dissolve on top of each other: whichever is leaving goes
      first and quickly, and the one arriving waits until it has gone. Over the
      280ms the page is moving, that reads as a single button turning into the
@@ -679,7 +680,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      in the text and raised the keyboard against the wrong element. */
   .drawer-settling main { pointer-events: none; }
   /* Nothing eases while a finger is deciding: the panes are following it. */
-  .drawer-dragging aside, .drawer-dragging main { transition: none; }
+  .drawer-dragging aside, .drawer-dragging main { transition: none; will-change: transform; }
   /* The extra 34px parks the page's leading shadow past the edge of the screen,
      so it reads as separation while the two panes are moving and leaves no
      gradient down the side of the list once they settle. It must clear the

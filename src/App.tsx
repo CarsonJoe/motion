@@ -316,6 +316,7 @@ function useNoteDrag(options: {
     let active = false
     let holdTimer = 0
     let frame = 0
+    let targetDirty = false
 
     const blockScroll = (event: Event) => event.preventDefault()
     const cleanup = () => {
@@ -335,11 +336,18 @@ function useNoteDrag(options: {
     }
     const tick = () => {
       const box = latest.current.scrollRef.current
+      let scrolled = false
       if (box) {
         const rect = box.getBoundingClientRect()
+        const before = box.scrollTop
         if (last.y < rect.top + 44) box.scrollTop -= 10
         else if (last.y > rect.bottom - 44) box.scrollTop += 10
+        scrolled = box.scrollTop !== before
       }
+      // elementFromPoint can force a hit-test over the editor and sidebar. Do it
+      // at most once per painted frame, not once per raw pointer event. Scrolling
+      // also changes the row under a stationary finger, so refresh in that case.
+      if (targetDirty || scrolled) { targetDirty = false; update(last.x, last.y) }
       frame = window.requestAnimationFrame(tick)
     }
     const begin = () => {
@@ -352,13 +360,16 @@ function useNoteDrag(options: {
     }
     const onMove = (event: PointerEvent) => {
       last = { x: event.clientX, y: event.clientY }
-      if (active) { update(event.clientX, event.clientY); return }
+      if (active) { targetDirty = true; return }
       const travelled = Math.hypot(event.clientX - origin.x, event.clientY - origin.y)
       // Before a hold matures, movement means the finger is scrolling the list.
       if (hold) { if (travelled > 10) cleanup() }
       else if (travelled > 5) begin()
     }
     const onUp = () => {
+      // A move and release can happen before the next animation frame. Flush the
+      // final hit-test so the drop uses the row actually under the pointer.
+      if (active && targetDirty) { targetDirty = false; update(last.x, last.y) }
       const current = dragRef.current
       cleanup()
       if (active) {
@@ -594,6 +605,36 @@ function createFlingTracker(x: number) {
       const last = samples[samples.length - 1]
       const elapsed = last.t - first.t
       return elapsed > 0 ? (last.x - first.x) / elapsed : 0
+    },
+  }
+}
+
+// Pointer events can arrive several times between screen refreshes, especially
+// on high-refresh-rate phones. Updating an inherited custom property for every
+// one makes the browser repeatedly recalculate the editor's styles without ever
+// painting the intermediate values. Keep the newest position and write it once
+// per animation frame; flush() preserves the exact release position before the
+// settling transition begins.
+function createDrawerPainter(shell: HTMLElement, progress: number, exit: number) {
+  let nextProgress = progress
+  let nextExit = exit
+  let frame = 0
+  const paint = () => {
+    frame = 0
+    shell.style.setProperty('--drawer-progress', String(nextProgress))
+    shell.style.setProperty('--drawer-exit', String(nextExit))
+  }
+  return {
+    schedule(next: number, nextExitValue: number) {
+      nextProgress = next
+      nextExit = nextExitValue
+      if (!frame) frame = window.requestAnimationFrame(paint)
+    },
+    flush(next = nextProgress, nextExitValue = nextExit) {
+      nextProgress = next
+      nextExit = nextExitValue
+      if (frame) window.cancelAnimationFrame(frame)
+      paint()
     },
   }
 }
@@ -880,6 +921,7 @@ export default function App() {
     let engaged = false
     let progress = 1
     const fling = createFlingTracker(startX)
+    const painter = createDrawerPainter(shell, 1, 0)
     const stop = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('touchmove', onTouchMove)
@@ -921,7 +963,7 @@ export default function App() {
       if (move.cancelable) move.preventDefault()
       fling.add(move.clientX)
       progress = Math.min(1, Math.max(0, 1 - dx / travel))
-      shell.style.setProperty('--drawer-progress', String(progress))
+      painter.schedule(progress, 0)
     }
     // Cancel is treated as a release rather than a snap back: by the time we are
     // engaged the intent was unambiguous, and iOS raises one simply because
@@ -929,6 +971,7 @@ export default function App() {
     const onUp = () => {
       stop()
       if (!engaged) return
+      painter.flush(progress, 0)
       setDrawerDragging(false)
       // Still moving when it let go: follow the throw. Otherwise it goes to
       // whichever end it is nearer to.
@@ -965,19 +1008,20 @@ export default function App() {
     let exit = 0
     let moved = false
     const fling = createFlingTracker(startX)
+    const painter = createDrawerPainter(shell, 0, 0)
     const onMove = (move: PointerEvent) => {
       const travelled = startX - move.clientX
       if (Math.abs(travelled) > 4) moved = true
       fling.add(move.clientX)
       progress = travelled > 0 ? Math.min(1, travelled / travelBack) : 0
       exit = travelled < 0 ? Math.min(1, -travelled / travelOut) : 0
-      shell.style.setProperty('--drawer-progress', String(progress))
-      shell.style.setProperty('--drawer-exit', String(exit))
+      painter.schedule(progress, exit)
     }
     const onUp = () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onUp)
+      painter.flush(progress, exit)
       setDrawerDragging(false)
       // A tap on the strip means the same thing as dragging it all the way back.
       // It is also the only release that needs the guard, being the only one
