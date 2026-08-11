@@ -11,6 +11,9 @@ export const REMOTE_ORIGIN = Symbol('motion-remote')
 // what it consumed. Yjs updates merge idempotently, so a crash or a concurrent
 // compaction can only leave harmless duplicates, never lose state.
 const COMPACT_THRESHOLD = 64
+const PRESENCE_THROTTLE_MS = 1000
+const PRESENCE_HEARTBEAT_MS = 9000
+const PRESENCE_LEASE_MS = 30000
 
 export type CollaboratorPresence = {
   presenceId: string
@@ -242,12 +245,9 @@ export async function openNoteDoc(options: {
   if (note.shareId && online) {
     // One row per editing session, keyed on the session alone so the row stays
     // addressable for upsert and delete no matter what we learn about the user
-    // later. The identity written INTO the row is read fresh on every publish:
-    // `establishSession` flips `connected` before the profile fetch it kicks
-    // off resolves, and the document opens on that flip, so this device
-    // routinely does not know who it is yet. Capturing the name here is what
-    // published "Collaborator" — and a random per-session `userId`, which also
-    // cost the user their stable presence colour — for the life of the page.
+    // later. The identity written INTO the row is read fresh on every publish
+    // so a profile or session correction cannot leave stale attribution in a
+    // controller that was already open.
     const sessionId = crypto.randomUUID()
     const presenceId = sessionId
     const identity = () => {
@@ -257,6 +257,9 @@ export async function openNoteDoc(options: {
     let selection: Selection | null = null
     let inFlight = false
     let queued = false
+    let published = false
+    let lastPublishAt = 0
+    let publishTimer: number | null = null
     const rows = new Map<string, CollaboratorPresence>()
 
     const relative = (index: number) =>
@@ -283,10 +286,12 @@ export async function openNoteDoc(options: {
       })
       emitPresence()
     }
+    const activeSelection = () => Boolean(selection) && document.visibilityState !== 'hidden'
     const publishPresence = async () => {
       if (closed || !options.writable || !navigator.onLine) return
       if (inFlight) { queued = true; return }
       inFlight = true
+      lastPublishAt = Date.now()
       const { userId, displayName } = identity()
       try {
         await tallpond!.resource(note.shareId).table('member_presence').upsert({
@@ -295,45 +300,76 @@ export async function openNoteDoc(options: {
             userId, color: colorFor(userId),
             anchorRel: relative(selection?.anchor ?? 0),
             focusRel: relative(selection?.focus ?? 0),
-            active: Boolean(selection)
+            active: activeSelection()
           },
-          expiresAt: Date.now() + 30000
+          expiresAt: Date.now() + PRESENCE_LEASE_MS
         }, { onConflict: ['presenceId'] })
+        published = true
       } catch (error) { if (!isAuthError(error)) options.onError(error) }
       finally {
         inFlight = false
-        if (queued) { queued = false; void publishPresence() }
+        if (queued) { queued = false; schedulePresence() }
       }
+    }
+    // Selectionchange can fire on every caret movement and every keystroke.
+    // Presence is awareness, not document state: cap it at one write per second
+    // while keeping blur/hide transitions immediate so stale cursors disappear.
+    const schedulePresence = (immediate = false) => {
+      if (closed || !options.writable || !navigator.onLine) return
+      if (immediate && publishTimer !== null) {
+        window.clearTimeout(publishTimer)
+        publishTimer = null
+      }
+      const wait = immediate ? 0 : Math.max(0, PRESENCE_THROTTLE_MS - (Date.now() - lastPublishAt))
+      if (wait === 0) { void publishPresence(); return }
+      if (publishTimer !== null) return
+      publishTimer = window.setTimeout(() => {
+        publishTimer = null
+        void publishPresence()
+      }, wait)
     }
 
     presenceSubscription = tallpond!.resource(note.shareId).table('member_presence').select().eq('noteId', note.id).live()
       .on('insert', receivePresence).on('update', receivePresence).on('error', () => {})
-    void publishPresence()
     // The profile normally lands a round trip after the document opens. Republish
-    // the moment it does, so collaborators see a name within the second rather
-    // than at the next heartbeat. Sync state changes on every pending-count tick,
-    // so only an actual change of identity is worth a write.
+    // it only if this session has actually announced presence; opening a shared
+    // note without focusing its editor should cost no presence write at all.
     let publishedUserId = identity().userId
     const unsubscribeIdentity = subscribeSyncState(() => {
       const { userId } = identity()
       if (userId === publishedUserId) return
       publishedUserId = userId
-      void publishPresence()
+      if (published || activeSelection()) schedulePresence(true)
     })
-    const heartbeat = window.setInterval(() => void publishPresence(), 10000)
+    // A recent caret update already renewed the lease. Heartbeat only genuinely
+    // active presence, and stay below Tallpond's ~11s coordinator hibernation
+    // floor so sustained collaboration pays warm rather than cold publishes.
+    const heartbeat = window.setInterval(() => {
+      if (activeSelection() && Date.now() - lastPublishAt >= PRESENCE_HEARTBEAT_MS) schedulePresence()
+    }, PRESENCE_THROTTLE_MS)
     const expiry = window.setInterval(emitPresence, 5000)
+    const visibilityChanged = () => {
+      if (selection) schedulePresence(true)
+    }
+    document.addEventListener('visibilitychange', visibilityChanged)
     presenceCleanup = () => {
       unsubscribeIdentity()
+      document.removeEventListener('visibilitychange', visibilityChanged)
       window.clearInterval(heartbeat)
       window.clearInterval(expiry)
-      if (options.writable && navigator.onLine) {
+      if (publishTimer !== null) window.clearTimeout(publishTimer)
+      if (published && options.writable && navigator.onLine) {
         void Promise.resolve(tallpond!.resource(note.shareId).table('member_presence').delete().eq('presenceId', presenceId)).catch(() => {})
       }
     }
 
     return {
       setText: (value) => doc.transact(() => patchYText(text, value), LOCAL_ORIGIN),
-      setSelection: (value) => { selection = value; void publishPresence() },
+      setSelection: (value) => {
+        if (selection?.anchor === value?.anchor && selection?.focus === value?.focus) return
+        selection = value
+        schedulePresence(value === null)
+      },
       flushed: () => persistChain,
       close: () => {
         closed = true

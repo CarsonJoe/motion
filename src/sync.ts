@@ -309,7 +309,11 @@ const deletedElsewhereIds = new Set<string>()
 // merge per note inside the drain and metadata ops coalesce onto one stable
 // outbox key, so coalescing the flush itself costs nothing but a fraction of a
 // second of latency and removes the round trip per character.
-const FLUSH_DELAY_MS = 600
+// Local durability still happens on every edit; this delay only batches the
+// network publish. Keeping it comfortably below Tallpond's ~11s realtime
+// hibernation window avoids turning an active writing session into a sequence
+// of expensive cold coordinator wakes.
+const FLUSH_DELAY_MS = 2500
 const scheduleFlush = () => {
   if (flushTimer !== null) return
   flushTimer = window.setTimeout(() => { flushTimer = null; void flush() }, FLUSH_DELAY_MS)
