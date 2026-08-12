@@ -23,6 +23,9 @@ export type Note = {
   // Local provenance only; never sent to Tallpond. Undefined is treated as
   // unknown for databases created before absence reconciliation existed.
   remoteKnown?: boolean
+  // Per-user placement for a workspace root. Undefined means use canonical
+  // placement; an empty string explicitly mounts it at this user's top level.
+  localParentId?: string
 }
 
 export type UpdateOp = { id: string; kind: 'update'; noteId: string; shareId: string; roomId: string; payload: string; createdAt: number }
@@ -39,8 +42,9 @@ export type Op = UpdateOp | NoteOp
 // stored parentId is untouched, so gaining access later fills the gap without
 // reorganizing anything.
 export function visibleParentId(note: Note, notes: readonly Note[]) {
-  return note.parentId && notes.some((candidate) => candidate.id === note.parentId && !candidate.deletedAt)
-    ? note.parentId
+  const parentId = note.localParentId ?? note.parentId
+  return parentId && notes.some((candidate) => candidate.id === parentId && !candidate.deletedAt)
+    ? parentId
     : ''
 }
 
@@ -181,8 +185,13 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
           return false
         }
       }
-      await writeNote({ ...remote, remoteKnown: true })
+      await writeNote({ ...remote, ...(existing?.localParentId !== undefined ? { localParentId: existing.localParentId } : {}), remoteKnown: true })
       return true
+    },
+
+    setLocalParent: async (noteId: string, parentId: string | undefined) => {
+      const note = cache.get(noteId)
+      if (note) await writeNote({ ...note, localParentId: parentId })
     },
 
     markRemoteKnown: async (noteId: string, known = true) => {

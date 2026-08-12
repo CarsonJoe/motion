@@ -205,6 +205,13 @@ describe('visible hierarchy', () => {
     expect(child.parentId).toBe('hidden-parent')
   })
 
+  it('uses a personal mount without changing the canonical parent', () => {
+    const privateFolder = note({ id: 'mine' })
+    const root = note({ id: 'shared', parentId: 'canonical', shareId: 'resource', localParentId: privateFolder.id })
+    expect(visibleParentId(root, [privateFolder, root])).toBe(privateFolder.id)
+    expect(root.parentId).toBe('canonical')
+  })
+
   it('restores the canonical edge when the parent becomes visible', () => {
     const parent = note({ id: 'parent', shareId: 'resource' })
     const child = note({ id: 'child', parentId: parent.id, shareId: 'resource' })

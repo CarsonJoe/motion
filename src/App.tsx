@@ -8,7 +8,7 @@ import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscrib
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, createNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setMemberRole, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type ShareRole } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, createNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setMemberRole, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type ShareRole } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -1762,14 +1762,24 @@ export default function App() {
   // resource or room boundary.
   const moveNote = async (noteId: string, parentId: string) => {
     if (!store) return
+    const note = store.getNote(noteId)
+    if (!note) return
+    const parent = parentId ? store.getNote(parentId) : null
+    const canonicalParent = note.parentId ? store.getNote(note.parentId) : null
+    const workspaceRoot = Boolean(note.shareId) && canonicalParent?.shareId !== note.shareId
+    // Mounting a workspace root beneath one of this user's private pages is a
+    // personal sidebar operation. Collaborators retain the canonical structure.
+    if (workspaceRoot && (!parent || !parent.shareId)) {
+      try { await moveWorkspaceRoot(store, note, parentId) }
+      catch (error) { setActionError(error instanceof Error ? error.message : 'Could not move this shared page') }
+      return
+    }
     const blocked = moveBlockedBy(notes, noteId, parentId)
     if (blocked !== 'none') {
       if (blocked === 'cycle') setActionError('A page can’t be moved inside itself.')
       if (blocked === 'scope') setActionError('Pages can only move within the same shared space.')
       return
     }
-    const note = store.getNote(noteId)
-    if (!note) return
     if (note.shareId && !['writer', 'admin', 'owner'].includes(roleFor(note.shareId, note.roomId))) {
       setActionError('You need edit access to move this page.')
       return
@@ -1786,6 +1796,10 @@ export default function App() {
     canDrop: (noteId, targetId, fromScope) => {
       if (targetId === FAVORITES_DROP) return !favorites.has(noteId)
       if (targetId === '' && fromScope === 'fav') return favorites.has(noteId)
+      const note = notes.find((candidate) => candidate.id === noteId)
+      const target = targetId ? notes.find((candidate) => candidate.id === targetId) : null
+      const canonicalParent = note?.parentId ? notes.find((candidate) => candidate.id === note.parentId) : null
+      if (note?.shareId && canonicalParent?.shareId !== note.shareId && (!target || !target.shareId)) return true
       return moveBlockedBy(notes, noteId, targetId) === 'none'
     },
     onDrop: (noteId, targetId, fromScope) => {

@@ -210,6 +210,10 @@ const rowToNote = (row: Row, shareId: string): Note => ({
   updatedAt: Number(row.clientUpdatedAt ?? 0)
 })
 
+const rowToMount = (row: Row) => ({
+  noteId: String(row.noteId), parentId: String(row.parentId ?? ''), updatedAt: Number(row.clientUpdatedAt ?? 0)
+})
+
 // Resource reads without a room intentionally span every room the caller can
 // read. Writes must name the note's exact room, while an empty room id preserves
 // the existing default-room behavior.
@@ -612,9 +616,13 @@ export async function fullSync() {
       // Neither inventory depends on the other. Starting both together removes
       // a full gateway round trip from every startup, including an account with
       // no changes at all.
-      const [privateRows, resources] = await Promise.all([
+      const [privateRows, mountRows, resources] = await Promise.all([
         selectAll((cursor) => {
           const query = client.table('notes').select()
+          return cursor ? query.after(cursor) : query
+        }),
+        selectAll((cursor) => {
+          const query = client.table('workspace_mounts').select()
           return cursor ? query.after(cursor) : query
         }),
         client.resource.list({ type: 'shared_notes' })
@@ -651,6 +659,19 @@ export async function fullSync() {
         }
         seenByScope.set(resource.id, new Set(rows.map((row) => String(row.noteId))))
         for (const row of rows) await local.applyRemoteNote(rowToNote(row, resource.id))
+      }
+
+      // Mounts arrive independently from shared rows. Apply only after every
+      // workspace inventory is present, and only to roots this user can see.
+      const mounts = new Map(mountRows.map((row) => {
+        const mount = rowToMount(row)
+        return [mount.noteId, mount] as const
+      }))
+      for (const note of local.getSnapshot()) {
+        if (!note.shareId) continue
+        const mount = mounts.get(note.id)
+        if (mount) await local.setLocalParent(note.id, mount.parentId)
+        else if (note.localParentId !== undefined) await local.setLocalParent(note.id, undefined)
       }
 
       await reconcileAuthoritativeAbsence(local, seenByScope)
@@ -1015,6 +1036,16 @@ export function noteChanged() {
 // ---------------------------------------------------------------------------
 // Notes API used by the App.
 // ---------------------------------------------------------------------------
+
+export async function moveWorkspaceRoot(store: LocalStore, note: Note, parentId: string) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  if (!navigator.onLine) throw new Error('Reconnect to move this shared page.')
+  const existing = await tallpond.table('workspace_mounts').select('noteId').eq('noteId', note.id).maybeSingle()
+  const values = { parentId, clientUpdatedAt: Date.now() }
+  if (existing) await tallpond.table('workspace_mounts').update(values).eq('noteId', note.id)
+  else await tallpond.table('workspace_mounts').insert({ noteId: note.id, ...values })
+  await store.setLocalParent(note.id, parentId)
+}
 
 export async function saveNote(store: LocalStore, note: Note) {
   const current = store.getNote(note.id)

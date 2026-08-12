@@ -102,6 +102,16 @@ export default defineSchema({
       table.text('payload').notNull()
       table.timestamps()
       table.index(['noteId'])
+    },
+    // Per-user sidebar placement for shared workspace roots. This never changes
+    // the canonical hierarchy seen by collaborators; it only mounts an entry
+    // beneath one of this user's private notes (or at their top level).
+    workspace_mounts: (table) => {
+      table.text('noteId').notNull().unique()
+      table.text('parentId').notNull().default('')
+      table.bigint('clientUpdatedAt').notNull()
+      table.timestamps()
+      table.index(['noteId'])
     }
   },
   resources: {
