@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { deleteNoteTree, directRealtimeUrl, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -61,13 +61,6 @@ const note = (patch: Partial<Note>): Note => ({
 
 beforeEach(() => {
   globalThis.indexedDB = new IDBFactory()
-})
-
-describe('hosted realtime routing', () => {
-  it('routes only hosted _osg WebSocket upgrades to the gateway', () => {
-    expect(directRealtimeUrl('wss://motion.example/_osg/realtime/connect?scope=abc')).toBe('wss://api.tallpond.com/realtime/connect?scope=abc')
-    expect(directRealtimeUrl('wss://localhost/realtime/connect?scope=abc')).toBe('wss://localhost/realtime/connect?scope=abc')
-  })
 })
 
 const encodedInsert = (value: string) => {

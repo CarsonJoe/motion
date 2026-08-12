@@ -9,20 +9,6 @@ const clientId = import.meta.env.VITE_TALLPOND_CLIENT_ID as string | undefined
 const injectedConfig = typeof window === 'undefined' ? null : (window as Window & {
   __TALLPOND__?: { gatewayUrl?: string; clientId?: string }
 }).__TALLPOND__
-export const directRealtimeUrl = (value: string | URL) => {
-  const url = new URL(String(value))
-  // Tallpond's hosted `/_osg` edge handles HTTP and cookie auth but currently
-  // refuses WebSocket upgrades. Tickets are minted before the handshake and
-  // are valid at the gateway, so route only that upgrade directly; all ordinary
-  // requests remain same-origin and retain host-only session cookies.
-  if (url.pathname === '/_osg/realtime/connect') {
-    url.protocol = 'wss:'
-    url.host = 'api.tallpond.com'
-    url.pathname = '/realtime/connect'
-  }
-  return url.toString()
-}
-
 const createTallpondClient = () => {
   try {
     // Hosted config must outrank build-time development variables. Tallpond
@@ -30,14 +16,7 @@ const createTallpondClient = () => {
     // .env.local points at Vite's `/tallpond` proxy must not carry that local
     // route onto the hosted origin, where it is an app-shell path and returns
     // 405 for auth refreshes.
-    if (injectedConfig?.gatewayUrl && injectedConfig.clientId) {
-      class HostedWebSocket extends WebSocket {
-        constructor(url: string | URL, protocols?: string | string[]) {
-          super(directRealtimeUrl(url), protocols)
-        }
-      }
-      return createClient({ webSocket: HostedWebSocket })
-    }
+    if (injectedConfig?.gatewayUrl && injectedConfig.clientId) return createClient()
     return clientId
       ? createClient({ gatewayUrl: import.meta.env.VITE_TALLPOND_GATEWAY_URL || 'https://api.tallpond.com', clientId })
       : createClient()
