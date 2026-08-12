@@ -1235,7 +1235,7 @@ async function interruptedShare(client: TallpondClient, rootId: string) {
   return null
 }
 
-export async function migrateNoteTreeToShare(client: TallpondClient, store: LocalStore, root: Note, shareId: string) {
+export async function migrateNoteTreeToShare(client: TallpondClient, store: LocalStore, root: Note, shareId: string, roomId = '') {
   // A nested page already belonging to another share is a scope boundary, not
   // part of this promotion. This mirrors moveBlockedBy's cross-scope invariant.
   const eligible = store.getSnapshot().filter((note) =>
@@ -1255,10 +1255,10 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
   for (const note of tree) {
     const parentId = note.id === root.id ? rootParentId : note.parentId
     await store.removeOpsForNote(note.id)
-    await store.putNote({ ...note, parentId, shareId, roomId: '', remoteKnown: false })
+    await store.putNote({ ...note, parentId, shareId, roomId, remoteKnown: false })
     await store.enqueueNote(note.id)
     const body = await store.getDocState(note.id)
-    if (body) await store.enqueueUpdate(note.id, shareId, '', body)
+    if (body) await store.enqueueUpdate(note.id, shareId, roomId, body)
   }
 
   await drainOutbox(client, store)
@@ -1277,7 +1277,7 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
 
 // Sharing is an online operation: create (or recover) the resource, durably
 // re-home the subtree, drain its full state, and only then retire private rows.
-export async function shareNoteTree(store: LocalStore, root: Note) {
+export async function shareNoteTree(store: LocalStore, root: Note, destination?: { shareId: string; roomId: string }) {
   const client = tallpond
   if (!client) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to share this page.')
@@ -1285,9 +1285,11 @@ export async function shareNoteTree(store: LocalStore, root: Note) {
   const migrationKey = shareMigrationKey(root.id)
   if (root.shareId && localStorage.getItem(migrationKey) !== root.shareId) return root.shareId
 
-  let resource = root.shareId
-    ? await client.resource(root.shareId).get()
-    : await interruptedShare(client, root.id)
+  let resource = destination
+    ? await client.resource(destination.shareId).get()
+    : root.shareId
+      ? await client.resource(root.shareId).get()
+      : await interruptedShare(client, root.id)
   if (!resource) {
     resource = await client.resource.create('shared_notes', { name: root.title || 'Untitled Note', visibility: 'members' })
   }
@@ -1297,7 +1299,7 @@ export async function shareNoteTree(store: LocalStore, root: Note) {
   localStorage.setItem(roleKey(resource.id), role)
   setState({ roles: { ...state.roles, [resource.id]: role } })
 
-  await migrateNoteTreeToShare(client, store, root, resource.id)
+  await migrateNoteTreeToShare(client, store, root, resource.id, destination?.roomId ?? '')
   localStorage.removeItem(migrationKey)
   subscribeLiveForCurrentShares(store)
   return resource.id

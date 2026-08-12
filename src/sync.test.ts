@@ -101,6 +101,18 @@ describe('share promotion', () => {
     expect(store.getNote('private-parent')?.shareId).toBe('')
   })
 
+  it('can inherit a parent room when sharing a private child', async () => {
+    const store = await openLocalStore('user-a')
+    await store.putNote(note({ id: 'parent', shareId: 'share-1', roomId: 'room-1' }))
+    await store.putNote(note({ id: 'child', parentId: 'parent', updatedAt: 10 }))
+    const { client, calls } = fakeClient()
+
+    await migrateNoteTreeToShare(client, store, store.getNote('child')!, 'share-1', 'room-1')
+
+    expect(store.getNote('child')).toMatchObject({ shareId: 'share-1', roomId: 'room-1', parentId: 'parent' })
+    expect(calls.filter((call) => call.scope === 'share-1:room-1' && call.table === 'member_notes' && call.op === 'insert')).toHaveLength(1)
+  })
+
   it('drains the promoted state before retiring the private rows', async () => {
     const store = await openLocalStore('user-a')
     await store.putNote(note({ id: 'root', title: 'Plan', updatedAt: 10 }))

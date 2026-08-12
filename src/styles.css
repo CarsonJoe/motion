@@ -276,6 +276,13 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .invite-row .new { padding: 6px 12px; font-size: 12px; }
 .share-modal .share-permission-note, .share-modal .share-empty { margin: -4px 0 0; color: #888; font-size: 12px; }
 .share-modal .share-error { margin: -4px 0 0; padding: 8px 10px; border-radius: 6px; color: #f0a0a0; background: #2b1c1c; font-size: 12px; }
+.share-destination { display: grid; gap: 7px; }
+.share-destination label { display: flex; align-items: flex-start; gap: 8px; padding: 9px; border: 1px solid #353535; border-radius: 7px; cursor: pointer; }
+.share-destination input { margin-top: 2px; }
+.share-destination span { display: grid; gap: 2px; }
+.share-destination strong { font-size: 13px; }
+.share-destination small { color: #888; line-height: 1.35; }
+.share-destination i { color: #888; font-style: normal; cursor: help; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .member-list span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
 .member-list span button { padding: 0 2px; color: #888; background: transparent; font-size: 14px; line-height: 1; }
