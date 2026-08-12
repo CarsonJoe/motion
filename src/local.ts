@@ -1,5 +1,5 @@
 // The single local database. Three stores, one authority each:
-//   notes  — metadata mirror (title/parent/share/soft-delete), LWW by updatedAt
+//   notes  — metadata mirror (title/parent/share/room/soft-delete), LWW by updatedAt
 //   docs   — merged Yjs state per note body, rewritten as edits land
 //   outbox — operations not yet accepted by the gateway
 // Everything except the outbox and unsynced doc state is rebuildable from the
@@ -11,8 +11,11 @@ export type Note = {
   // Empty string parents a note at the root of the tree.
   parentId: string
   // Empty string means private. Otherwise the shared_notes resource id this
-  // note (and its subtree) belongs to.
+  // note belongs to.
   shareId: string
+  // Empty string is the resource's default room (and is always used for private
+  // notes). A nonempty id narrows this note to a per-note access scope.
+  roomId: string
   // 0 means alive. Soft deletes are durable: they out-vote any older metadata
   // row a stale device may push later.
   deletedAt: number
@@ -22,7 +25,7 @@ export type Note = {
   remoteKnown?: boolean
 }
 
-export type UpdateOp = { id: string; kind: 'update'; noteId: string; shareId: string; payload: string; createdAt: number }
+export type UpdateOp = { id: string; kind: 'update'; noteId: string; shareId: string; roomId: string; payload: string; createdAt: number }
 // Note ops carry no data: the drain reads the current local row, so repeated
 // edits coalesce into the one stable-keyed op. `rev` detects edits that land
 // while a flush is in flight.
@@ -46,15 +49,16 @@ export function subtreeIds(notes: Note[], rootId: string) {
 // Why a move is allowed or not. Dropping a note inside its own subtree would
 // detach that whole ring from the root, where nothing renders it and nothing
 // can drag it back, so the check is a hard invariant rather than a UI nicety.
-// Scope is checked here too: `shareId` belongs to a whole subtree, so a move
-// across scopes is a join/leave, not a reparent.
+// Scope is checked here too: resource and room placement determine who can see
+// the relationship, so crossing either boundary is an access change rather
+// than an ordinary reparent.
 export function moveBlockedBy(notes: Note[], noteId: string, parentId: string): 'none' | 'noop' | 'cycle' | 'scope' | 'missing' {
   const note = notes.find((candidate) => candidate.id === noteId)
   if (!note) return 'missing'
   const parent = parentId ? notes.find((candidate) => candidate.id === parentId) : null
   if (parentId && !parent) return 'missing'
   if (note.parentId === parentId) return 'noop'
-  if ((parent?.shareId ?? '') !== note.shareId) return 'scope'
+  if ((parent?.shareId ?? '') !== note.shareId || (parent?.roomId ?? '') !== note.roomId) return 'scope'
   if (parentId && subtreeIds(notes, noteId).has(parentId)) return 'cycle'
   return 'none'
 }
@@ -98,7 +102,9 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
 
   const cache = new Map<string, Note>()
   for (const note of await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)) {
-    cache.set(note.id, note)
+    // Databases written before room support have no roomId. Normalizing at the
+    // boundary keeps their existing shared rows in Tallpond's default room.
+    cache.set(note.id, { ...note, roomId: note.roomId ?? '' })
   }
 
   let snapshot: Note[] | null = null
@@ -185,9 +191,9 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
     },
     deleteDocState,
 
-    enqueueUpdate: async (noteId: string, shareId: string, payload: string) => {
+    enqueueUpdate: async (noteId: string, shareId: string, roomId: string, payload: string) => {
       const transaction = db.transaction('outbox', 'readwrite')
-      transaction.objectStore('outbox').put({ id: crypto.randomUUID(), kind: 'update', noteId, shareId, payload, createdAt: Date.now() } satisfies UpdateOp)
+      transaction.objectStore('outbox').put({ id: crypto.randomUUID(), kind: 'update', noteId, shareId, roomId, payload, createdAt: Date.now() } satisfies UpdateOp)
       await done(transaction)
     },
     enqueueNote: async (noteId: string) => {
@@ -197,7 +203,10 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
     },
     listOps: async () => {
       const transaction = db.transaction('outbox')
-      return asPromise(transaction.objectStore('outbox').index('createdAt').getAll() as IDBRequest<Op[]>)
+      const ops = await asPromise(transaction.objectStore('outbox').index('createdAt').getAll() as IDBRequest<Op[]>)
+      // As with notes, queued updates from pre-room databases target the default
+      // room. Normalize without rewriting so merely opening offline stays cheap.
+      return ops.map((op) => op.kind === 'update' ? { ...op, roomId: op.roomId ?? '' } : op)
     },
     countOps: async () => asPromise(db.transaction('outbox').objectStore('outbox').count()),
     removeOps: async (ids: string[]) => {
@@ -400,7 +409,7 @@ export async function adoptScope(
       if (!current) continue
       await target.enqueueNote(note.id)
       const state = await target.getDocState(note.id)
-      if (state) await target.enqueueUpdate(note.id, current.shareId, state)
+      if (state) await target.enqueueUpdate(note.id, current.shareId, current.roomId, state)
     }
   } finally { db.close() }
   await dropScope(fromScope)

@@ -21,7 +21,7 @@ const { openNoteDoc } = await import('./doc')
 import type { Note } from './local'
 
 const note = (patch: Partial<Note> = {}): Note => ({
-  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', deletedAt: 0, updatedAt: 0, ...patch
+  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
 })
 
 beforeEach(() => {

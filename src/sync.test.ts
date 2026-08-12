@@ -53,7 +53,7 @@ function fakeClient(existingByTable: Record<string, Record<string, unknown> | nu
 }
 
 const note = (patch: Partial<Note>): Note => ({
-  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', deletedAt: 0, updatedAt: 0, ...patch
+  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
 })
 
 beforeEach(() => {
@@ -81,8 +81,8 @@ describe('share promotion', () => {
 
     await expect(migrateNoteTreeToShare(failing, store, store.getNote('root')!, 'share-1')).rejects.toThrow('network interrupted')
 
-    expect(store.getNote('root')).toMatchObject({ shareId: 'share-1', parentId: '', remoteKnown: false })
-    expect(store.getNote('child')).toMatchObject({ shareId: 'share-1', parentId: 'root', remoteKnown: false })
+    expect(store.getNote('root')).toMatchObject({ shareId: 'share-1', roomId: '', parentId: '', remoteKnown: false })
+    expect(store.getNote('child')).toMatchObject({ shareId: 'share-1', roomId: '', parentId: 'root', remoteKnown: false })
     expect(await store.countOps()).toBeGreaterThan(0)
   })
 
@@ -107,15 +107,16 @@ describe('saveNote', () => {
     const shareId = crypto.randomUUID()
     const beforeSharing = note({ id, title: 'draft', updatedAt: 10 })
     await store.putNote(beforeSharing)
-    // The note is shared (and could equally have been deleted) after the UI
-    // captured `beforeSharing` for a title edit.
-    await store.putNote({ ...beforeSharing, shareId })
+    // The note is shared and assigned to a room (and could equally have been
+    // deleted) after the UI captured `beforeSharing` for a title edit.
+    await store.putNote({ ...beforeSharing, shareId, roomId: 'room-1' })
 
     await saveNote(store, { ...beforeSharing, title: 'renamed', updatedAt: 20 })
 
     const current = store.getNote(id)
     expect(current?.title).toBe('renamed')
     expect(current?.shareId).toBe(shareId)
+    expect(current?.roomId).toBe('room-1')
     expect(current?.deletedAt).toBe(0)
   })
 
@@ -353,9 +354,9 @@ describe('drainOutbox', () => {
 
   it('merges content updates per note into one insert against the right scope', async () => {
     const store = await openLocalStore()
-    await store.enqueueUpdate('n1', '', encodedInsert('hello'))
-    await store.enqueueUpdate('n1', '', encodedInsert('world'))
-    await store.enqueueUpdate('n2', 'share-1', encodedInsert('shared'))
+    await store.enqueueUpdate('n1', '', '', encodedInsert('hello'))
+    await store.enqueueUpdate('n1', '', '', encodedInsert('world'))
+    await store.enqueueUpdate('n2', 'share-1', '', encodedInsert('shared'))
 
     const { client, calls } = fakeClient()
     await drainOutbox(client, store)
@@ -429,7 +430,7 @@ describe('drainOutbox', () => {
   // server has never seen it — so it has to survive a rejection.
   it('keeps a permanently rejected content update queued instead of discarding it', async () => {
     const store = await openLocalStore()
-    await store.enqueueUpdate('n1', 'share-1', encodedInsert('precious'))
+    await store.enqueueUpdate('n1', 'share-1', '', encodedInsert('precious'))
 
     const rejecting = {
       table: () => { throw new Error('private table not expected') },
@@ -454,7 +455,7 @@ describe('drainOutbox', () => {
 
   it('still clears a content update the gateway accepts', async () => {
     const store = await openLocalStore()
-    await store.enqueueUpdate('n1', 'share-1', encodedInsert('sent'))
+    await store.enqueueUpdate('n1', 'share-1', '', encodedInsert('sent'))
     const { client } = fakeClient()
     await drainOutbox(client, store)
     expect(await store.countOps()).toBe(0)

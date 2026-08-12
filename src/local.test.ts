@@ -3,7 +3,7 @@ import { IDBFactory } from 'fake-indexeddb'
 import { adoptScope, ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, type Note, type NoteOp } from './local'
 
 const note = (patch: Partial<Note>): Note => ({
-  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', deletedAt: 0, updatedAt: 0, ...patch
+  id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
 })
 
 beforeEach(() => {
@@ -90,10 +90,11 @@ describe('outbox', () => {
 
   it('orders ops by creation and removes by id', async () => {
     const store = await openLocalStore()
-    await store.enqueueUpdate('n1', '', 'a')
-    await store.enqueueUpdate('n2', 's', 'b')
+    await store.enqueueUpdate('n1', '', '', 'a')
+    await store.enqueueUpdate('n2', 's', 'room-1', 'b')
     const ops = await store.listOps()
     expect(ops).toHaveLength(2)
+    expect(ops[1]).toMatchObject({ shareId: 's', roomId: 'room-1' })
     await store.removeOps(ops.map((op) => op.id))
     expect(await store.countOps()).toBe(0)
   })
@@ -108,7 +109,7 @@ describe('leaving a share', () => {
     await store.putNote(shared)
     await store.putNote(kept)
     await store.putDocState(shared.id, 'body')
-    await store.enqueueUpdate(shared.id, shareId, 'x')
+    await store.enqueueUpdate(shared.id, shareId, '', 'x')
     await store.enqueueNote(shared.id)
     await store.enqueueNote(kept.id)
 
@@ -183,7 +184,8 @@ describe('moveBlockedBy', () => {
   const other = note({ id: 'x' })
   const shared = note({ id: 's', shareId: 'resource' })
   const sharedChild = note({ id: 'sc', parentId: 's', shareId: 'resource' })
-  const notes = [a, b, c, other, shared, sharedChild]
+  const roomNote = note({ id: 'room-note', shareId: 'resource', roomId: 'private-room' })
+  const notes = [a, b, c, other, shared, sharedChild, roomNote]
 
   it('allows a reparent onto an unrelated note or the root', () => {
     expect(moveBlockedBy(notes, 'b', 'x')).toBe('none')
@@ -193,10 +195,12 @@ describe('moveBlockedBy', () => {
     expect(moveBlockedBy(notes, 'a', 'c')).toBe('cycle')
     expect(moveBlockedBy(notes, 'a', 'a')).toBe('cycle')
   })
-  it('refuses a move that would cross a share boundary in either direction', () => {
+  it('refuses a move that would cross a resource or room boundary', () => {
     expect(moveBlockedBy(notes, 'x', 's')).toBe('scope')
     expect(moveBlockedBy(notes, 's', 'x')).toBe('scope')
     expect(moveBlockedBy(notes, 'sc', '')).toBe('scope')
+    expect(moveBlockedBy(notes, 'room-note', 's')).toBe('scope')
+    expect(moveBlockedBy(notes, 's', 'room-note')).toBe('scope')
   })
   it('reports a move that changes nothing', () => {
     expect(moveBlockedBy(notes, 'b', 'a')).toBe('noop')

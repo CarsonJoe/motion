@@ -1196,7 +1196,7 @@ export default function App() {
       }
 
       const note: Note = {
-        id: uid(), title: 'Getting Started', parentId: '', shareId: '',
+        id: uid(), title: 'Getting Started', parentId: '', shareId: '', roomId: '',
         deletedAt: 0, updatedAt: Date.now()
       }
       await saveNote(currentStore, note)
@@ -1469,7 +1469,7 @@ export default function App() {
         const host = parent && activeId ? byId.get(activeId) ?? null : null
         if (parent && !host) return null
         if (host?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(host.shareId))) return null
-        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: host?.id ?? '', shareId: host?.shareId ?? '', deletedAt: 0, updatedAt: Date.now() }
+        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: host?.id ?? '', shareId: host?.shareId ?? '', roomId: host?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
         await saveNote(store, note)
         if (host) setExpandedIds((current) => new Set(current).add(`pages:${host.id}`))
         return note.id
@@ -1738,7 +1738,7 @@ export default function App() {
       setActionError('You need edit access to add a subpage.')
       return
     }
-    const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', shareId: parent?.shareId ?? '', deletedAt: 0, updatedAt: Date.now() }
+    const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', shareId: parent?.shareId ?? '', roomId: parent?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
     await saveNote(store, note)
     setLanding(null)
     setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current)
@@ -2171,7 +2171,7 @@ export default function App() {
     try {
       for (const file of files) {
         const { title, body } = fromImportMarkdown(await file.text(), file.name)
-        const note: Note = { id: uid(), title, parentId, shareId: parent?.shareId ?? '', deletedAt: 0, updatedAt: Date.now() }
+        const note: Note = { id: uid(), title, parentId, shareId: parent?.shareId ?? '', roomId: parent?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
         await saveNote(store, note)
         await seedNoteBody(store, note, body)
         opened ??= note.id

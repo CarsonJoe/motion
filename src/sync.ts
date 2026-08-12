@@ -181,6 +181,7 @@ const rowToNote = (row: Row, shareId: string): Note => ({
   title: String(row.title ?? ''),
   parentId: String(row.parentId ?? ''),
   shareId,
+  roomId: shareId ? String(row.roomId ?? '') : '',
   deletedAt: Number(row.deletedAt ?? 0),
   updatedAt: Number(row.clientUpdatedAt ?? 0)
 })
@@ -221,7 +222,7 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore, blo
     const updates = new Map<string, UpdateOp[]>()
     for (const op of ops) {
       if (op.kind !== 'update' || blockedNoteIds.has(op.noteId)) continue
-      const key = `${op.shareId}:${op.noteId}`
+      const key = `${op.shareId}:${op.roomId}:${op.noteId}`
       updates.set(key, [...updates.get(key) ?? [], op])
     }
     for (const group of updates.values()) {
@@ -844,14 +845,14 @@ export async function keepDeletedElsewhere() {
     const id = newIds.get(note.id)!
     const parentId = newIds.get(note.parentId) ?? ''
     const recovered: Note = {
-      ...note, id, parentId, shareId: '', deletedAt: 0,
+      ...note, id, parentId, shareId: '', roomId: '', deletedAt: 0,
       updatedAt: now, remoteKnown: false
     }
     await local.putNote(recovered)
     const body = await local.getDocState(note.id)
     if (body) {
       await local.putDocState(id, body)
-      await local.enqueueUpdate(id, '', body)
+      await local.enqueueUpdate(id, '', '', body)
     }
     await local.enqueueNote(id)
   }
@@ -944,7 +945,9 @@ export async function saveNote(store: LocalStore, note: Note) {
   // only sharing and deleting may change them, and both write directly.
   // Explicit false distinguishes a new offline page from legacy rows whose
   // provenance predates authoritative-absence reconciliation.
-  const merged = current ? { ...note, shareId: current.shareId, deletedAt: current.deletedAt } : { ...note, remoteKnown: note.remoteKnown ?? false }
+  const merged = current
+    ? { ...note, shareId: current.shareId, roomId: current.roomId, deletedAt: current.deletedAt }
+    : { ...note, remoteKnown: note.remoteKnown ?? false }
   await store.putNote(merged)
   await store.enqueueNote(merged.id)
   noteChanged()
@@ -1101,10 +1104,10 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
   for (const note of tree) {
     const parentId = note.id === root.id ? '' : note.parentId
     await store.removeOpsForNote(note.id)
-    await store.putNote({ ...note, parentId, shareId, remoteKnown: false })
+    await store.putNote({ ...note, parentId, shareId, roomId: '', remoteKnown: false })
     await store.enqueueNote(note.id)
     const body = await store.getDocState(note.id)
-    if (body) await store.enqueueUpdate(note.id, shareId, body)
+    if (body) await store.enqueueUpdate(note.id, shareId, '', body)
   }
 
   await drainOutbox(client, store)

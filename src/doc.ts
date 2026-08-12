@@ -165,7 +165,7 @@ export async function openNoteDoc(options: {
     if (origin !== LOCAL_ORIGIN) { void persistState(); return }
     const payload = toBase64(update)
     track(persistState().then(async () => {
-      await store.enqueueUpdate(note.id, note.shareId, payload)
+      await store.enqueueUpdate(note.id, note.shareId, note.roomId, payload)
       noteChanged()
     }).catch(options.onError))
   }
@@ -221,7 +221,7 @@ export async function openNoteDoc(options: {
           ? Y.encodeStateAsUpdate(doc, Y.encodeStateVectorFromUpdate(merged))
           : Y.encodeStateAsUpdate(doc)
         if (diff.length > 2) {
-          await store.enqueueUpdate(note.id, note.shareId, toBase64(diff))
+          await store.enqueueUpdate(note.id, note.shareId, note.roomId, toBase64(diff))
           noteChanged()
         }
       }

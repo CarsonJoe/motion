@@ -76,5 +76,5 @@ export async function seedNoteBody(store: LocalStore, note: Note, body: string) 
   const state = toBase64(Y.encodeStateAsUpdate(doc))
   doc.destroy()
   await store.putDocState(note.id, state)
-  await store.enqueueUpdate(note.id, note.shareId, state)
+  await store.enqueueUpdate(note.id, note.shareId, note.roomId, state)
 }
