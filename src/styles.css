@@ -95,6 +95,7 @@ nav { overflow: visible; }
 .page-tree-item { position: relative; }
 .page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
 .page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; text-decoration: none; cursor: pointer; }
+.resource-root-icon { width: 15px; height: 15px; flex: none; fill: none; stroke: #8ea9d0; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Sits in the row exactly where `.page-link` was, so renaming does not reflow
    the tree around it. */
@@ -290,6 +291,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .workspace-member-picks button:hover { color: #eee; background: #303030; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .member-list span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
+.member-list span select { padding: 2px 3px; border: 0; border-radius: 4px; color: #aaa; background: #333; font: inherit; font-size: 11px; }
 .member-list span button { padding: 0 2px; color: #888; background: transparent; font-size: 14px; line-height: 1; }
 .member-list span button:hover { color: #eee; }
 

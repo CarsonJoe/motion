@@ -87,6 +87,7 @@ const clearStoredRoles = (scope: string) => {
   }
 }
 const ROOM_ROLE_KEY = 'motion-room-role:'
+const PENDING_ROOM_GRANT_KEY = 'motion-pending-room-grant:'
 const roomRolePrefix = (scope: string) => `${ROOM_ROLE_KEY}${scope}:`
 export const roomAccessKey = (shareId: string, roomId: string) => `${shareId}:${roomId}`
 const storedRoomRoles = (scope: string) => {
@@ -101,6 +102,11 @@ const storedRoomRoles = (scope: string) => {
 const clearStoredRoomRoles = (scope: string) => {
   const prefix = roomRolePrefix(scope)
   for (const key of Object.keys(localStorage).filter((candidate) => candidate.startsWith(prefix))) localStorage.removeItem(key)
+}
+const pendingGrantPrefix = (resourceId: string) => `${PENDING_ROOM_GRANT_KEY}${currentScope()}:${resourceId}:`
+const pendingGrantKey = (resourceId: string, userId: string) => `${pendingGrantPrefix(resourceId)}${userId}`
+const rememberPendingGrant = (resourceId: string, userId: string, roomId: string, role: ShareRole) => {
+  localStorage.setItem(pendingGrantKey(resourceId, userId), JSON.stringify({ roomId, role }))
 }
 
 // "This device has signed in before" — presentation only. It decides whether a
@@ -514,11 +520,26 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
   // new access requests, invite acceptance/rejection, removals, and role edits.
   const managedMemberships = shareIds
     .filter((shareId) => ['owner', 'admin'].includes(state.roles[shareId]))
-    .map((shareId) => client.resource(shareId).members.live()
-      .on('insert', () => emitMembershipChange(shareId))
-      .on('update', () => emitMembershipChange(shareId))
-      .on('delete', () => emitMembershipChange(shareId))
-      .on('error', onError))
+    .map((shareId) => {
+      const changed = (member: MembershipChange | { id: string }) => {
+        emitMembershipChange(shareId)
+        if (!('state' in member) || member.state !== 'active') return
+        const key = pendingGrantKey(shareId, member.userId)
+        const pending = localStorage.getItem(key)
+        if (!pending) return
+        try {
+          const { roomId, role } = JSON.parse(pending) as { roomId: string; role: ShareRole }
+          void client.resource(shareId).room(roomId).grants.set(member.userId, role)
+            .then(() => { localStorage.removeItem(key); emitMembershipChange(shareId) })
+            .catch(() => {})
+        } catch { localStorage.removeItem(key) }
+      }
+      return client.resource(shareId).members.live()
+        .on('insert', changed)
+        .on('update', changed)
+        .on('delete', () => emitMembershipChange(shareId))
+        .on('error', onError)
+    })
 
   liveSubscriptions = [...notes, ownMembership, ownRooms, ...managedMemberships]
 }
@@ -1377,11 +1398,22 @@ export async function inviteByHandle(shareId: string, handle: string, role: Shar
   if (!profile.id) throw new Error('Tallpond user not found.')
   const resource = tallpond.resource(shareId)
   if (roomId) {
-    const member = (await resource.members.list()).find((candidate) => candidate.userId === profile.id && candidate.state === 'active')
-    if (!member) throw new Error('Add this person to the shared parent page before granting access here.')
-    await resource.room(roomId).grants.set(profile.id, role)
+    const member = (await resource.members.list()).find((candidate) => candidate.userId === profile.id)
+    if (member?.state === 'active') {
+      await resource.room(roomId).grants.set(profile.id, role)
+      return {
+        userId: profile.id, role, state: 'active', kind: 'user',
+        ownerId: null, ownerHandle: profile.handle, ownerDisplayName: profile.displayName
+      }
+    }
+    // Tallpond grants require active membership. Present one invitation to the
+    // user and complete its room grant from the admin's live roster when they
+    // accept. Persisting locally makes this survive a reload on this device.
+    rememberPendingGrant(shareId, profile.id, roomId, role)
+    try { await resource.members.invite(profile.id, { role }) }
+    catch (error) { localStorage.removeItem(pendingGrantKey(shareId, profile.id)); throw error }
     return {
-      userId: profile.id, role, state: 'active', kind: 'user',
+      userId: profile.id, role, state: 'invited', kind: 'user',
       ownerId: null, ownerHandle: profile.handle, ownerDisplayName: profile.displayName
     }
   }
@@ -1421,9 +1453,18 @@ export async function denyRequest(resourceId: string, userId: string) {
   await tallpond.resource(resourceId).members.reject(userId)
 }
 
-export async function removeRoomAccess(shareId: string, roomId: string, userId: string) {
+export async function setMemberRole(shareId: string, roomId: string, userId: string, role: ShareRole) {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
-  await tallpond.resource(shareId).room(roomId).grants.remove(userId)
+  const resource = tallpond.resource(shareId)
+  if (roomId) await resource.room(roomId).grants.set(userId, role)
+  else await resource.members.setRole(userId, role)
+}
+
+export async function removeMemberAccess(shareId: string, roomId: string, userId: string) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  const resource = tallpond.resource(shareId)
+  if (roomId) await resource.room(roomId).grants.remove(userId)
+  else await resource.members.remove(userId)
 }
 
 export async function listMembers(shareId: string, roomId = ''): Promise<MemberInfo[]> {
