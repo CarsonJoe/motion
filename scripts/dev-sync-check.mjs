@@ -45,7 +45,7 @@ const run = async () => {
 
     // Both sides of membership realtime: the recipient's app-wide feed sees
     // invites/acceptance, while the owner's resource feed sees member changes.
-    const writerMembership = writer.membership.live()
+    const writerMembership = writer.resources.live()
     const ownerMembership = owner.resource(resourceId).members.live()
     await Promise.all([
       timeout(new Promise((resolve) => writerMembership.on('status', (status) => { if (status === 'live') resolve() })), 'writer membership connect'),

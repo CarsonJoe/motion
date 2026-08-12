@@ -307,7 +307,7 @@ let retryAttempt = 0
 let fullSyncPromise: Promise<void> | null = null
 let sessionRefreshPromise: Promise<void> | null = null
 let flushTimer: number | null = null
-// membership.live() covers every resource type in the app, including retained
+// resources.live() covers every resource type in the app, including retained
 // legacy types Motion no longer syncs. Remember confirmed non-Motion resources
 // so their initial snapshot rows cannot repeatedly trigger whole-tree syncs.
 const ignoredMembershipResources = new Set<string>()
@@ -459,7 +459,7 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
       return fullSync().finally(() => emitMembershipChange(resourceId))
     }).catch(() => {})
   }
-  const ownMembership = client.membership.live()
+  const ownMembership = client.resources.live()
     .on('insert', refreshOwnMembership)
     .on('update', refreshOwnMembership)
     .on('delete', refreshOwnMembership)
