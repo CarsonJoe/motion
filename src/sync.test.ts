@@ -89,6 +89,18 @@ describe('share promotion', () => {
     expect(await store.countOps()).toBeGreaterThan(0)
   })
 
+  it('preserves a private canonical parent when sharing a nested subtree', async () => {
+    const store = await openLocalStore('user-a')
+    await store.putNote(note({ id: 'private-parent', title: 'Work' }))
+    await store.putNote(note({ id: 'root', title: 'Plan', parentId: 'private-parent', updatedAt: 10 }))
+    const { client } = fakeClient()
+
+    await migrateNoteTreeToShare(client, store, store.getNote('root')!, 'share-1')
+
+    expect(store.getNote('root')).toMatchObject({ shareId: 'share-1', parentId: 'private-parent' })
+    expect(store.getNote('private-parent')?.shareId).toBe('')
+  })
+
   it('drains the promoted state before retiring the private rows', async () => {
     const store = await openLocalStore('user-a')
     await store.putNote(note({ id: 'root', title: 'Plan', updatedAt: 10 }))

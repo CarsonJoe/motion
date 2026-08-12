@@ -1,7 +1,7 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
-import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, type LocalStore, type Note } from './local'
+import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, visibleParentId, type LocalStore, type Note } from './local'
 import { openNoteDoc, readNoteText, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
 import { setPageLinkServices, type PageOption } from './pageLinkServices'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
@@ -418,7 +418,7 @@ function RenameInput({ title, onSubmit, onCancel }: { title: string; onSubmit: (
 function NoteTreeNode({ note, depth, ...shared }: NoteTreeShared & { note: Note; depth: number }) {
   const { scope, notes, activeId, onOpen, menuKey, onToggleMenu, expandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled, onDragStart, clickSuppressed, renamingKey, onRenameSubmit, onRenameCancel } = shared
   const key = `${scope}:${note.id}`
-  const hasChildren = notes.some((child) => child.parentId === note.id)
+  const hasChildren = notes.some((child) => visibleParentId(child, notes) === note.id)
   const expanded = expandedIds.has(key)
   // The whole subtree greys out: the children travel with the row being moved.
   const dragging = dimmedIds?.has(note.id)
@@ -435,7 +435,7 @@ function NoteTree({ parentId, depth, ...shared }: NoteTreeShared & { parentId: s
   // Nested lines hang off the parent row; the top level has no row to hang off,
   // so it draws its own against the nav.
   const rootPreview = parentId === '' && shared.previewParentId === ''
-  return <>{rootPreview && <DropLine depth={depth} />}{shared.notes.filter((note) => note.parentId === parentId && !hidden?.has(note.id)).sort(byRecency(shared.recency)).map((note) => <NoteTreeNode key={note.id} {...shared} note={note} depth={depth} />)}</>
+  return <>{rootPreview && <DropLine depth={depth} />}{shared.notes.filter((note) => visibleParentId(note, shared.notes) === parentId && !hidden?.has(note.id)).sort(byRecency(shared.recency)).map((note) => <NoteTreeNode key={note.id} {...shared} note={note} depth={depth} />)}</>
 }
 
 function PageMenu({ anchor, note, canDelete, isFavorite, onToggleFavorite, onCreateChild, onRename, onDownload, onDelete, onClose }: { anchor: HTMLElement; note: Note; canDelete: boolean; isFavorite: boolean; onToggleFavorite: (id: string) => void; onCreateChild: (note: Note) => void; onRename: (note: Note) => void; onDownload: (note: Note) => void; onDelete: (note: Note) => void; onClose: () => void }) {

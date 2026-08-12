@@ -1228,12 +1228,17 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
   const ids = subtreeIds(eligible, root.id)
   const tree = eligible.filter((note) => ids.has(note.id))
   if (!tree.some((note) => note.id === root.id)) throw new Error('This page belongs to a different shared space.')
+  // The selected page is the resource entry for collaborators, but its
+  // canonical parent may remain private or belong to another resource. Keep
+  // that edge: viewers without the parent project this page as a root, while an
+  // owner who can see both retains one coherent hierarchy.
+  const rootParentId = root.parentId
 
   // Persist the complete destination before making another remote write. The
   // outbox is rebuilt from full local state, so old private-scope operations
   // cannot race the promotion and a restart can safely resume it.
   for (const note of tree) {
-    const parentId = note.id === root.id ? '' : note.parentId
+    const parentId = note.id === root.id ? rootParentId : note.parentId
     await store.removeOpsForNote(note.id)
     await store.putNote({ ...note, parentId, shareId, roomId: '', remoteKnown: false })
     await store.enqueueNote(note.id)

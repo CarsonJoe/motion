@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { adoptScope, ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, type Note, type NoteOp } from './local'
+import { adoptScope, ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, type Note, type NoteOp } from './local'
 
 const note = (patch: Partial<Note>): Note => ({
   id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
@@ -195,6 +195,20 @@ describe('losing access to a share', () => {
     expect((await store.listOps()).some((op) => op.noteId === orphan.id)).toBe(false)
     expect(store.getNote(kept.id)).not.toBeNull()
     expect(store.getNote(privateNote.id)).not.toBeNull()
+  })
+})
+
+describe('visible hierarchy', () => {
+  it('projects a note with an inaccessible parent as a root without changing its canonical parent', () => {
+    const child = note({ id: 'child', parentId: 'hidden-parent', shareId: 'resource' })
+    expect(visibleParentId(child, [child])).toBe('')
+    expect(child.parentId).toBe('hidden-parent')
+  })
+
+  it('restores the canonical edge when the parent becomes visible', () => {
+    const parent = note({ id: 'parent', shareId: 'resource' })
+    const child = note({ id: 'child', parentId: parent.id, shareId: 'resource' })
+    expect(visibleParentId(child, [parent, child])).toBe(parent.id)
   })
 })
 

@@ -34,6 +34,16 @@ export type Op = UpdateOp | NoteOp
 
 // A note's subtree is itself plus every note reachable through parentId.
 // Deleting and sharing both operate on whole subtrees.
+// The canonical parent can be outside the viewer's accessible working set. In
+// that case the first visible descendant is projected as a sidebar root; its
+// stored parentId is untouched, so gaining access later fills the gap without
+// reorganizing anything.
+export function visibleParentId(note: Note, notes: readonly Note[]) {
+  return note.parentId && notes.some((candidate) => candidate.id === note.parentId && !candidate.deletedAt)
+    ? note.parentId
+    : ''
+}
+
 export function subtreeIds(notes: Note[], rootId: string) {
   const ids = new Set([rootId])
   let changed = true
