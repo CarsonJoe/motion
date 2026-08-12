@@ -108,6 +108,22 @@ const pendingGrantKey = (resourceId: string, userId: string) => `${pendingGrantP
 const rememberPendingGrant = (resourceId: string, userId: string, roomId: string, role: ShareRole) => {
   localStorage.setItem(pendingGrantKey(resourceId, userId), JSON.stringify({ roomId, role }))
 }
+async function completePendingGrants(client: TallpondClient, resourceId: string) {
+  const prefix = pendingGrantPrefix(resourceId)
+  const entries = Object.keys(localStorage).filter((key) => key.startsWith(prefix))
+  if (!entries.length) return
+  const active = new Set((await client.resource(resourceId).members.list())
+    .filter((member) => member.state === 'active').map((member) => member.userId))
+  for (const key of entries) {
+    const userId = key.slice(prefix.length)
+    if (!active.has(userId)) continue
+    try {
+      const { roomId, role } = JSON.parse(localStorage.getItem(key) ?? '') as { roomId: string; role: ShareRole }
+      await client.resource(resourceId).room(roomId).grants.set(userId, role)
+      localStorage.removeItem(key)
+    } catch { /* keep a valid pending grant for the next authoritative sync */ }
+  }
+}
 
 // "This device has signed in before" — presentation only. It decides whether a
 // failure reads as *offline* or as *signed out*, and is never treated as proof
@@ -347,6 +363,12 @@ let flushTimer: number | null = null
 // legacy types Motion no longer syncs. Remember confirmed non-Motion resources
 // so their initial snapshot rows cannot repeatedly trigger whole-tree syncs.
 const ignoredMembershipResources = new Set<string>()
+// Only the workspace containing the open page gets a resource-scoped socket.
+// Private notes plus app-wide membership/grant feeds share the one private
+// socket; document updates and presence join this active resource's pooled
+// socket. Other workspaces catch up through authoritative pulls when opened.
+let activeLiveShareId = ''
+const knownLiveShareIds = new Set<string>()
 // In-memory on purpose. If the app closes before the question is answered the
 // outbox remains untouched, and the next complete sync discovers it again.
 const deletedElsewhereIds = new Set<string>()
@@ -455,10 +477,10 @@ const applyRemoteRow = (shareId: string) => (row: Row) => {
   }).catch(() => {})
 }
 
-function subscribeLive(client: TallpondClient, shareIds: string[]) {
+function subscribeLive(client: TallpondClient, activeShareId: string) {
   closeLiveSubscriptions()
   const onError = (error: unknown) => { if (isAuthError(error)) reportFailure(error) }
-  const notes = ['', ...shareIds].map((shareId) => notesTable(client, shareId).select().live()
+  const notes = ['', ...(activeShareId ? [activeShareId] : [])].map((shareId) => notesTable(client, shareId).select().live()
     .on('insert', applyRemoteRow(shareId))
     .on('update', applyRemoteRow(shareId))
     .on('error', onError))
@@ -479,7 +501,7 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
       return
     }
     if (change.state !== 'active' || state.roles[resourceId] === change.role) return
-    if (shareIds.includes(resourceId)) {
+    if (knownLiveShareIds.has(resourceId)) {
       void fullSync().finally(() => emitMembershipChange(resourceId))
       return
     }
@@ -506,7 +528,7 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
   // trigger another full sync forever.
   const refreshOwnRoom = (change: RoomChange | { id: string }) => {
     const resourceId = 'resourceId' in change ? change.resourceId : undefined
-    if (!resourceId || !shareIds.includes(resourceId)) return
+    if (!resourceId || !knownLiveShareIds.has(resourceId)) return
     const roomId = 'roomId' in change ? change.roomId : change.id.slice(0, change.id.lastIndexOf(':'))
     if (!roomId) return
     const key = roomAccessKey(resourceId, roomId)
@@ -522,8 +544,8 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
 
   // Admins additionally receive changes for every member of their resources:
   // new access requests, invite acceptance/rejection, removals, and role edits.
-  const managedMemberships = shareIds
-    .filter((shareId) => ['owner', 'admin'].includes(state.roles[shareId]))
+  const managedMemberships = activeShareId && ['owner', 'admin'].includes(state.roles[activeShareId])
+    ? [activeShareId]
     .map((shareId) => {
       const changed = (member: MembershipChange | { id: string }) => {
         emitMembershipChange(shareId)
@@ -544,6 +566,7 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
         .on('delete', () => emitMembershipChange(shareId))
         .on('error', onError)
     })
+    : []
 
   liveSubscriptions = [...notes, ownMembership, ownRooms, ...managedMemberships]
 }
@@ -705,7 +728,18 @@ export async function fullSync() {
       clearStoredRoomRoles(currentScope())
       for (const [key, role] of Object.entries(roomRoles)) localStorage.setItem(`${roomRolePrefix(currentScope())}${key}`, role)
       setState({ roles, roomRoles })
-      subscribeLive(client, resources.map((resource) => resource.id))
+      // Admins may have closed the app before an invite was accepted. Resolve
+      // durable pending room grants during every pull, not only from a roster
+      // socket that exists while that workspace is open.
+      await Promise.all(resources
+        .filter((resource) => ['owner', 'admin'].includes(resource.currentMember?.role ?? ''))
+        .map((resource) => completePendingGrants(client, resource.id)))
+      knownLiveShareIds.clear()
+      for (const resource of resources) knownLiveShareIds.add(resource.id)
+      // Keep the selected workspace if it remains accessible; otherwise the
+      // private socket stays live and no resource socket is opened.
+      if (activeLiveShareId && !knownLiveShareIds.has(activeLiveShareId)) activeLiveShareId = ''
+      subscribeLive(client, activeLiveShareId)
       await drainOutbox(client, local, deletedElsewhereIds)
       // After the drain, so a delete queued on this device reaches the server
       // before the purge decides whether that page's window has passed.
@@ -1359,8 +1393,19 @@ export async function shareNoteTree(store: LocalStore, root: Note, destination?:
 
 function subscribeLiveForCurrentShares(store: LocalStore) {
   if (!tallpond || !state.connected) return
-  const shareIds = [...new Set(store.getSnapshot().map((note) => note.shareId).filter(Boolean))]
-  subscribeLive(tallpond, shareIds)
+  knownLiveShareIds.clear()
+  for (const shareId of store.getSnapshot().map((note) => note.shareId).filter(Boolean)) knownLiveShareIds.add(shareId)
+  subscribeLive(tallpond, activeLiveShareId)
+}
+
+export async function setActiveLiveShare(shareId: string) {
+  if (activeLiveShareId === shareId) return
+  activeLiveShareId = shareId
+  if (!tallpond || !local || !state.connected) return
+  // Switching workspaces closes the previous resource socket immediately.
+  // Pull first so a workspace idle in the background is current before its
+  // live tail begins; fullSync rebuilds exactly the new active subscription.
+  await fullSync()
 }
 
 export async function leaveShare(store: LocalStore, shareId: string) {
