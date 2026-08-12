@@ -1758,8 +1758,8 @@ export default function App() {
 
   // Reparenting is a one-field write: the tree is derived from parentId, so the
   // dragged note's children follow without being touched. moveBlockedBy holds
-  // the invariants (no cycles, no cross-share moves — a share covers a whole
-  // subtree, so leaving one is a join/leave rather than a move).
+  // the invariants: no cycles and no implicit access migration across a
+  // resource or room boundary.
   const moveNote = async (noteId: string, parentId: string) => {
     if (!store) return
     const blocked = moveBlockedBy(notes, noteId, parentId)

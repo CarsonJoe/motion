@@ -170,10 +170,12 @@ export default defineSchema({
         table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'writer' })
       })
     },
-    // One shared resource is one shared root note plus every note nested
-    // beneath it. Members see the same two-table model as the private scope;
-    // the member_ prefix exists because resource tables share a namespace
-    // with top-level tables.
+    // A shared resource is a collaboration/membership boundary. Notes retain
+    // canonical parent ids even when the parent is private or belongs to a
+    // different resource; clients project the first accessible descendant as
+    // a root. Rooms narrow access for subtrees inside this boundary.
+    // The member_ prefix exists because resource tables share a namespace with
+    // top-level tables.
     shared_notes: (resource) => {
       resource.visibility('members')
       resource.defaultRole('reader')

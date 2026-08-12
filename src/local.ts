@@ -59,8 +59,8 @@ export function subtreeIds(notes: Note[], rootId: string) {
 // Why a move is allowed or not. Dropping a note inside its own subtree would
 // detach that whole ring from the root, where nothing renders it and nothing
 // can drag it back, so the check is a hard invariant rather than a UI nicety.
-// Scope is checked here too: resource and room placement determine who can see
-// the relationship, so crossing either boundary is an access change rather
+// Scope is checked here too: moving within one resource/room is canonical for
+// every collaborator. Crossing either boundary is an access migration rather
 // than an ordinary reparent.
 export function moveBlockedBy(notes: Note[], noteId: string, parentId: string): 'none' | 'noop' | 'cycle' | 'scope' | 'missing' {
   const note = notes.find((candidate) => candidate.id === noteId)
