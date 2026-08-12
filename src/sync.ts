@@ -1345,9 +1345,11 @@ export async function rejectInvitation(resourceId: string) {
   await tallpond.resource(resourceId).members.reject()
 }
 
+export type ShareRole = 'reader' | 'writer' | 'admin'
+
 // Resolving the handle first means a typo costs nothing: an unshared note is
 // still unshared, with no empty resource left behind.
-export async function inviteByHandle(shareId: string, handle: string, role: 'reader' | 'writer', roomId = ''): Promise<MemberInfo> {
+export async function inviteByHandle(shareId: string, handle: string, role: ShareRole, roomId = ''): Promise<MemberInfo> {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   const profile = await tallpond.users.byHandle(handle.replace(/^@/, ''))
   if (!profile.id) throw new Error('Tallpond user not found.')
