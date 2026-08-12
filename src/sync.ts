@@ -1,4 +1,4 @@
-import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type RoomInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
+import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type RoomChange, type RoomInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
 import { mergeBase64Updates } from './codec'
 import { adoptScope, ANON_SCOPE, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
 
@@ -39,8 +39,10 @@ export type SyncState = {
   connected: boolean
   error: string | null
   user: { id: string; name: string } | null
-  // shareId -> role, refreshed on every full sync and cached for offline UI.
+  // Resource roles and narrower per-room grants, refreshed on every full sync
+  // and cached for offline permission checks.
   roles: Record<string, string>
+  roomRoles: Record<string, string>
   pending: number
   // Set when signing in found work in the anonymous scope. Purely a question
   // for the user: nothing is moved or dropped until they answer it.
@@ -84,6 +86,22 @@ const clearStoredRoles = (scope: string) => {
     localStorage.removeItem(key)
   }
 }
+const ROOM_ROLE_KEY = 'motion-room-role:'
+const roomRolePrefix = (scope: string) => `${ROOM_ROLE_KEY}${scope}:`
+export const roomAccessKey = (shareId: string, roomId: string) => `${shareId}:${roomId}`
+const storedRoomRoles = (scope: string) => {
+  const prefix = roomRolePrefix(scope)
+  const roles: Record<string, string> = {}
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index)
+    if (key?.startsWith(prefix)) roles[key.slice(prefix.length)] = localStorage.getItem(key) ?? ''
+  }
+  return roles
+}
+const clearStoredRoomRoles = (scope: string) => {
+  const prefix = roomRolePrefix(scope)
+  for (const key of Object.keys(localStorage).filter((candidate) => candidate.startsWith(prefix))) localStorage.removeItem(key)
+}
 
 // "This device has signed in before" — presentation only. It decides whether a
 // failure reads as *offline* or as *signed out*, and is never treated as proof
@@ -117,7 +135,7 @@ const restoreRoute = () => {
 // Until startSync has checked connectivity and the remembered session, neither
 // “Connect” nor “Offline” is known to be true. Keeping that brief startup state
 // explicit prevents either status flashing before the real answer arrives.
-let state: SyncState = { phase: 'checking', connected: false, error: null, user: null, roles: storedRoles(storedScope()), pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null }
+let state: SyncState = { phase: 'checking', connected: false, error: null, user: null, roles: storedRoles(storedScope()), roomRoles: storedRoomRoles(storedScope()), pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null }
 const listeners = new Set<() => void>()
 const setState = (patch: Partial<SyncState>) => {
   state = { ...state, ...patch }
@@ -301,6 +319,7 @@ let local: LocalStore | null = null
 let onScopeChange: ((store: LocalStore) => void) | null = null
 const currentScope = () => local?.scope ?? storedScope()
 const roleKey = (shareId: string) => `${rolePrefix(currentScope())}${shareId}`
+const roomRoleKey = (shareId: string, roomId: string) => `${roomRolePrefix(currentScope())}${roomAccessKey(shareId, roomId)}`
 let liveSubscriptions: Array<{ close: () => void }> = []
 const closeLiveSubscriptions = () => {
   for (const subscription of liveSubscriptions) subscription.close()
@@ -472,6 +491,25 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
     .on('delete', refreshOwnMembership)
     .on('error', onError)
 
+  // Room grants are the per-note half of access. Snapshot rows already present
+  // in state are ignored so rebuilding subscriptions after a full sync cannot
+  // trigger another full sync forever.
+  const refreshOwnRoom = (change: RoomChange | { id: string }) => {
+    const resourceId = 'resourceId' in change ? change.resourceId : undefined
+    if (!resourceId || !shareIds.includes(resourceId)) return
+    const roomId = 'roomId' in change ? change.roomId : change.id.slice(0, change.id.lastIndexOf(':'))
+    if (!roomId) return
+    const key = roomAccessKey(resourceId, roomId)
+    if ('role' in change && state.roomRoles[key] === change.role) return
+    if (!('role' in change) && !state.roomRoles[key]) return
+    void fullSync().finally(() => emitMembershipChange(resourceId))
+  }
+  const ownRooms = client.rooms.live()
+    .on('insert', refreshOwnRoom)
+    .on('update', refreshOwnRoom)
+    .on('delete', refreshOwnRoom)
+    .on('error', onError)
+
   // Admins additionally receive changes for every member of their resources:
   // new access requests, invite acceptance/rejection, removals, and role edits.
   const managedMemberships = shareIds
@@ -482,7 +520,7 @@ function subscribeLive(client: TallpondClient, shareIds: string[]) {
       .on('delete', () => emitMembershipChange(shareId))
       .on('error', onError))
 
-  liveSubscriptions = [...notes, ownMembership, ...managedMemberships]
+  liveSubscriptions = [...notes, ownMembership, ownRooms, ...managedMemberships]
 }
 
 // Does the server agree this user has lost access to a resource? Only a
@@ -567,18 +605,28 @@ export async function fullSync() {
       // Shared resources are independent scopes too. Fetch them concurrently;
       // applying their rows remains ordered below so IndexedDB writes stay
       // simple and deterministic.
-      const sharedInventories = await Promise.all(resources.map(async (resource) => ({
-        resource,
-        rows: await selectAll((cursor) => {
-          const query = client.resource(resource.id).table('member_notes').select()
-          return cursor ? query.after(cursor) : query
-        })
-      })))
+      const sharedInventories = await Promise.all(resources.map(async (resource) => {
+        const handle = client.resource(resource.id)
+        const [rows, rooms] = await Promise.all([
+          selectAll((cursor) => {
+            const query = handle.table('member_notes').select()
+            return cursor ? query.after(cursor) : query
+          }),
+          handle.rooms.list()
+        ])
+        return { resource, rows, rooms }
+      }))
       const roles = { ...state.roles }
-      for (const { resource, rows } of sharedInventories) {
+      const roomRoles: Record<string, string> = {}
+      for (const { resource, rows, rooms } of sharedInventories) {
         if (resource.currentMember?.role) {
           roles[resource.id] = resource.currentMember.role
           localStorage.setItem(roleKey(resource.id), resource.currentMember.role)
+        }
+        for (const room of rooms) {
+          if (room.isDefault || !room.currentGrant?.role) continue
+          const key = roomAccessKey(resource.id, room.id)
+          roomRoles[key] = room.currentGrant.role
         }
         seenByScope.set(resource.id, new Set(rows.map((row) => String(row.noteId))))
         for (const row of rows) await local.applyRemoteNote(rowToNote(row, resource.id))
@@ -612,7 +660,9 @@ export async function fullSync() {
         delete roles[shareId]
         await local.removeShare(shareId)
       }
-      setState({ roles })
+      clearStoredRoomRoles(currentScope())
+      for (const [key, role] of Object.entries(roomRoles)) localStorage.setItem(`${roomRolePrefix(currentScope())}${key}`, role)
+      setState({ roles, roomRoles })
       subscribeLive(client, resources.map((resource) => resource.id))
       await drainOutbox(client, local, deletedElsewhereIds)
       // After the drain, so a delete queued on this device reaches the server
@@ -703,7 +753,7 @@ async function applyScope(userId: string) {
   deletedElsewhereIds.clear()
   previous.close()
   onScopeChange?.(scoped)
-  setState({ roles: storedRoles(userId), deletedElsewhere: null })
+  setState({ roles: storedRoles(userId), roomRoles: storedRoomRoles(userId), deletedElsewhere: null })
   await refreshPending()
 
   // Whatever the previous scope held is now untouched by the running app, so
@@ -913,6 +963,7 @@ export async function signOut() {
   tallpond = createTallpondClient()
 
   clearStoredRoles(scope)
+  clearStoredRoomRoles(scope)
   localStorage.removeItem(USER_KEY)
   localStorage.removeItem(CONNECTED_KEY)
 
@@ -928,7 +979,7 @@ export async function signOut() {
   onScopeChange?.(anonymous)
 
   deletedElsewhereIds.clear()
-  setState({ phase: 'local', connected: false, error: null, user: null, roles: {}, pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null })
+  setState({ phase: 'local', connected: false, error: null, user: null, roles: {}, roomRoles: {}, pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null })
 }
 
 // Local mutation entry point: App persists the note + op, then calls this to
@@ -1136,6 +1187,10 @@ export async function createNoteRoom(store: LocalStore, root: Note): Promise<Roo
     // sufficient to manage this page and move it again later.
     await resource.room(room.id).grants.set(userId, 'admin')
     await moveNoteTreeToRoom(tallpond, store, root, room.id)
+    const key = roomAccessKey(root.shareId, room.id)
+    localStorage.setItem(roomRoleKey(root.shareId, room.id), 'admin')
+    setState({ roomRoles: { ...state.roomRoles, [key]: 'admin' } })
+    subscribeLiveForCurrentShares(store)
     return room
   } catch (error) {
     // This succeeds only while the room is empty. If a partial remote move made
@@ -1241,7 +1296,10 @@ export async function leaveShare(store: LocalStore, shareId: string) {
   localStorage.removeItem(roleKey(shareId))
   const roles = { ...state.roles }
   delete roles[shareId]
-  setState({ roles })
+  const roomRoles = Object.fromEntries(Object.entries(state.roomRoles).filter(([key]) => !key.startsWith(`${shareId}:`)))
+  clearStoredRoomRoles(currentScope())
+  for (const [key, role] of Object.entries(roomRoles)) localStorage.setItem(`${roomRolePrefix(currentScope())}${key}`, role)
+  setState({ roles, roomRoles })
   await store.removeShare(shareId)
   subscribeLiveForCurrentShares(store)
 }

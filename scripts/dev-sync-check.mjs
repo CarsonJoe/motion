@@ -71,6 +71,9 @@ const run = async () => {
     writerMembership.close()
     ownerMembership.close()
 
+    const writerRooms = writer.rooms.live()
+    await timeout(new Promise((resolve) => writerRooms.on('status', (status) => { if (status === 'live') resolve() })), 'writer room grants connect')
+
     const sharedNoteId = crypto.randomUUID()
     await owner.resource(resourceId).table('member_notes').insert({ noteId: sharedNoteId, title: 'Shared transport check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
     const sharedUpdateId = crypto.randomUUID()
@@ -102,7 +105,12 @@ const run = async () => {
     }
     if (!deniedBeforeGrant) throw new Error('Room note was visible before its grant')
 
+    const roomGrantSeen = timeout(new Promise((resolve) => writerRooms.on('insert', (grant) => {
+      if (grant.resourceId === resourceId && grant.roomId === roomId && grant.role === 'writer') resolve(grant)
+    })), 'room grant realtime')
     await owner.resource(resourceId).room(roomId).grants.set(writerSession.user_id, 'writer')
+    await roomGrantSeen
+    writerRooms.close()
     const roomRows = await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', roomNoteId)
     if (roomRows.length !== 1) throw new Error('Room note was not visible after its grant')
 

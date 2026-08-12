@@ -1435,13 +1435,15 @@ export default function App() {
     if (!activeId) return
     pagesNavRef.current?.querySelector('.page-row.active')?.scrollIntoView({ block: 'nearest' })
   }, [activeId, effectiveExpandedIds])
-  const roleFor =(shareId: string) => sync.roles[shareId] ?? ''
-  const canWriteNote = (note: Note) => !note.shareId || ['writer', 'admin', 'owner'].includes(roleFor(note.shareId))
+  const roleFor = (shareId: string, roomId = '') => roomId
+    ? sync.roomRoles[`${shareId}:${roomId}`] ?? ''
+    : sync.roles[shareId] ?? ''
+  const canWriteNote = (note: Note) => !note.shareId || ['writer', 'admin', 'owner'].includes(roleFor(note.shareId, note.roomId))
   // A page in the trash is read-only for everyone. Editing it would push
   // content updates for a page the purge is counting down on, and would leave
   // the writing somewhere the user cannot see it.
   const canEditActiveNote = Boolean(activeNote) && !activeTrashed && canWriteNote(activeNote!)
-  const canDeleteNote = (note: Note) => !note.shareId || ['admin', 'owner'].includes(roleFor(note.shareId))
+  const canDeleteNote = (note: Note) => !note.shareId || ['admin', 'owner'].includes(roleFor(note.shareId, note.roomId))
 
   // Publish the services the editor's page links need: resolving live titles,
   // navigating, searching pages, and spawning a subpage from the `[[` picker.
@@ -1468,7 +1470,7 @@ export default function App() {
       createPage: async (title, parent) => {
         const host = parent && activeId ? byId.get(activeId) ?? null : null
         if (parent && !host) return null
-        if (host?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(host.shareId))) return null
+        if (host?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(host.shareId, host.roomId))) return null
         const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: host?.id ?? '', shareId: host?.shareId ?? '', roomId: host?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
         await saveNote(store, note)
         if (host) setExpandedIds((current) => new Set(current).add(`pages:${host.id}`))
@@ -1734,7 +1736,7 @@ export default function App() {
 
   const createNote = async (parent: Note | null = null) => {
     if (!store) return
-    if (parent?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId))) {
+    if (parent?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId, parent.roomId))) {
       setActionError('You need edit access to add a subpage.')
       return
     }
@@ -1759,7 +1761,7 @@ export default function App() {
     }
     const note = store.getNote(noteId)
     if (!note) return
-    if (note.shareId && !['writer', 'admin', 'owner'].includes(roleFor(note.shareId))) {
+    if (note.shareId && !['writer', 'admin', 'owner'].includes(roleFor(note.shareId, note.roomId))) {
       setActionError('You need edit access to move this page.')
       return
     }
@@ -1960,7 +1962,7 @@ export default function App() {
   // behind and never re-homes a note the user only looked at.
   const invite = async () => {
     if (!store || !activeNote || !inviteHandle.trim() || inviteBusy) return
-    const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId))
+    const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId, activeNote.roomId))
     if (!canManageMembers) {
       setShareError('Only the owner or an admin can add people to this shared page.')
       return
@@ -2163,7 +2165,7 @@ export default function App() {
     if (!store || !files.length) return
     const parent = parentId ? notes.find((note) => note.id === parentId) ?? null : null
     if (parentId && !parent) return
-    if (parent?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId))) {
+    if (parent?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId, parent.roomId))) {
       setActionError('You need edit access to import into that page.')
       return
     }
@@ -2366,7 +2368,7 @@ export default function App() {
     {recoverPrompt && createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setRecoverPrompt(null)}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="recover-title" onMouseDown={(event) => event.stopPropagation()}><strong id="recover-title">Recover this page to edit it?</strong><p>{`“${recoverPrompt.title || 'Untitled'}” is in Recently deleted, so it can be read but not changed. Recovering puts it back where it was.`}</p><div className="confirm-actions"><button className="confirm-cancel" disabled={recoverBusy} onClick={() => setRecoverPrompt(null)}>Keep reading</button><button className="new" disabled={recoverBusy || !canWriteNote(recoverPrompt)} onClick={() => void recover(recoverPrompt)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button></div></section></div>, document.body)}
     {attentionKind && createPortal(<div className="share-modal-backdrop adopt-backdrop" role="presentation"><AttentionDialog kind={attentionKind} count={attentionCount} onNotNow={deferAttention} onReview={() => { setTrashViewOpen(false); setIdentityOpen(false); openSidebar(); setReviewPreview(null); setReviewKind(attentionKind) }} /></div>, document.body)}
     {shareOpen && activeNote && (() => {
-      const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId))
+      const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId, activeNote.roomId))
       return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Subpages inherit access.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><div className="share-link-row"><span className="share-link-label">Anyone you add can open this page from its link</span><button className="copy-link" onClick={() => void copyPageLink()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1" /></svg>{copiedLink ? 'Copied' : 'Copy link'}</button></div>{canManageMembers ? <div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => { setInviteHandle(e.target.value); setShareError(null) }} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'reader' | 'writer')}><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div> : <p className="share-permission-note">Only the owner or an admin can add people.</p>}{shareError && <p className="share-error" role="alert">{shareError}</p>}{membersLoading && members.length === 0 && <div className="member-list"><span>Loading people…</span></div>}{!membersLoading && activeNote.shareId && members.length === 0 && !shareError && <p className="share-empty">No people to show yet.</p>}{members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)} · {member.role}{member.state !== 'active' ? ` · ${member.state}` : ''}</span>)}</div>}</section></div>, document.body)
     })()}
   </div>
