@@ -1347,11 +1347,21 @@ export async function rejectInvitation(resourceId: string) {
 
 // Resolving the handle first means a typo costs nothing: an unshared note is
 // still unshared, with no empty resource left behind.
-export async function inviteByHandle(shareId: string, handle: string, role: 'reader' | 'writer'): Promise<MemberInfo> {
+export async function inviteByHandle(shareId: string, handle: string, role: 'reader' | 'writer', roomId = ''): Promise<MemberInfo> {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   const profile = await tallpond.users.byHandle(handle.replace(/^@/, ''))
   if (!profile.id) throw new Error('Tallpond user not found.')
-  const invitation = await tallpond.resource(shareId).members.invite(profile.id, { role })
+  const resource = tallpond.resource(shareId)
+  if (roomId) {
+    const member = (await resource.members.list()).find((candidate) => candidate.userId === profile.id && candidate.state === 'active')
+    if (!member) throw new Error('Add this person to the shared parent page before granting access here.')
+    await resource.room(roomId).grants.set(profile.id, role)
+    return {
+      userId: profile.id, role, state: 'active', kind: 'user',
+      ownerId: null, ownerHandle: profile.handle, ownerDisplayName: profile.displayName
+    }
+  }
+  const invitation = await resource.members.invite(profile.id, { role })
   return {
     userId: profile.id, role, state: invitation.state, kind: 'user',
     ownerId: null, ownerHandle: profile.handle, ownerDisplayName: profile.displayName
@@ -1387,9 +1397,20 @@ export async function denyRequest(resourceId: string, userId: string) {
   await tallpond.resource(resourceId).members.reject(userId)
 }
 
-export async function listMembers(shareId: string): Promise<MemberInfo[]> {
+export async function removeRoomAccess(shareId: string, roomId: string, userId: string) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  await tallpond.resource(shareId).room(roomId).grants.remove(userId)
+}
+
+export async function listMembers(shareId: string, roomId = ''): Promise<MemberInfo[]> {
   if (!tallpond) return []
-  const members = await tallpond.resource(shareId).members.list()
+  const resource = tallpond.resource(shareId)
+  const members: MemberInfo[] = roomId
+    ? (await resource.room(roomId).grants.list()).map((grant) => ({
+      userId: grant.principalId, role: grant.role, state: 'active', kind: 'user',
+      ownerId: null, ownerHandle: null, ownerDisplayName: null
+    }))
+    : await resource.members.list()
   if (!members.length) return members
   try {
     const profiles = await tallpond.users(members.map((member) => member.userId)).profiles()

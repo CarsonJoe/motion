@@ -277,7 +277,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .share-modal .share-permission-note, .share-modal .share-empty { margin: -4px 0 0; color: #888; font-size: 12px; }
 .share-modal .share-error { margin: -4px 0 0; padding: 8px 10px; border-radius: 6px; color: #f0a0a0; background: #2b1c1c; font-size: 12px; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
-.member-list span { padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
+.member-list span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
+.member-list span button { padding: 0 2px; color: #888; background: transparent; font-size: 14px; line-height: 1; }
+.member-list span button:hover { color: #eee; }
 
 .adopt-modal { width: min(420px, 100%); gap: 14px; }
 .adopt-body { margin: -5px 0 0; color: #aaa; line-height: 1.45; }
