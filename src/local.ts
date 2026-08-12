@@ -159,7 +159,11 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
       if (existing) {
         if (existing.shareId && !remote.shareId) return false
         const claims = Boolean(remote.shareId) && !existing.shareId
-        if (!claims && remote.updatedAt <= existing.updatedAt) {
+        // Room placement is platform-managed rather than part of the client's
+        // LWW metadata revision. A move therefore has to win even when title
+        // and parent timestamps are unchanged.
+        const changesRoom = Boolean(remote.shareId) && remote.shareId === existing.shareId && remote.roomId !== existing.roomId
+        if (!claims && !changesRoom && remote.updatedAt <= existing.updatedAt) {
           // Even an older row proves this id exists remotely. Preserve the
           // newer local value while recording that provenance for a later
           // authoritative-absence check.
@@ -221,6 +225,31 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
       const keys = store.index('noteId').getAllKeys(noteId)
       keys.onsuccess = () => { for (const key of keys.result) store.delete(key) }
       await done(transaction)
+    },
+    // Room placement is local routing state as well as remote access state.
+    // Rewrite notes and queued body updates in one transaction so a restart can
+    // never send an old-room operation after remembering the new placement.
+    moveNotesToRoom: async (noteIds: ReadonlySet<string>, roomId: string) => {
+      if (!noteIds.size) return
+      const transaction = db.transaction(['notes', 'outbox'], 'readwrite')
+      const notes = transaction.objectStore('notes')
+      const outbox = transaction.objectStore('outbox')
+      for (const id of noteIds) {
+        const note = cache.get(id)
+        if (note) notes.put({ ...note, roomId })
+      }
+      const queued = outbox.getAll()
+      queued.onsuccess = () => {
+        for (const op of queued.result as Op[]) {
+          if (op.kind === 'update' && noteIds.has(op.noteId)) outbox.put({ ...op, roomId })
+        }
+      }
+      await done(transaction)
+      for (const id of noteIds) {
+        const note = cache.get(id)
+        if (note) cache.set(id, { ...note, roomId })
+      }
+      emit()
     },
     // A note op only leaves the outbox if no edit bumped its revision while
     // the flush that pushed it was in flight. Reports whether it left, so the

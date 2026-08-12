@@ -1,4 +1,4 @@
-import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
+import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type RoomInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
 import { mergeBase64Updates } from './codec'
 import { adoptScope, ANON_SCOPE, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
 
@@ -1072,6 +1072,76 @@ async function purgeExpired(client: TallpondClient, store: LocalStore) {
       await notesTable(client, note.shareId, note.roomId).delete().eq('noteId', note.id)
     } catch { continue }
     await store.removeNote(note.id)
+  }
+}
+
+// Moves one access-homogeneous subtree between rooms. Body rows move first, so
+// destination readers never observe metadata for a page whose content is still
+// inaccessible. Local placement changes only after both remote tables confirm;
+// a crash before then is repaired by the next authoritative pull.
+async function rowIdsForNotes(table: () => TableQuery, noteIds: string[]) {
+  const ids: string[] = []
+  for (let index = 0; index < noteIds.length; index += 100) {
+    const chunk = noteIds.slice(index, index + 100)
+    const rows = await selectAll((cursor) => {
+      const query = table().select('id').in('noteId', chunk)
+      return cursor ? query.after(cursor) : query
+    })
+    ids.push(...rows.map((row) => String(row.id)))
+  }
+  return ids
+}
+
+export async function moveNoteTreeToRoom(client: TallpondClient, store: LocalStore, root: Note, destinationRoomId: string) {
+  if (!root.shareId) throw new Error('Share this page before changing its access scope.')
+  if (root.roomId === destinationRoomId) return
+
+  // A nested room is an access boundary and is not inherited by a move of its
+  // ancestor. Only the contiguous subtree in the root's current scope moves.
+  const eligible = store.getSnapshot().filter((note) =>
+    !note.deletedAt && note.shareId === root.shareId && note.roomId === root.roomId)
+  const ids = subtreeIds(eligible, root.id)
+  const tree = eligible.filter((note) => ids.has(note.id))
+  if (!tree.some((note) => note.id === root.id)) throw new Error('This page belongs to a different access scope.')
+
+  await drainOutbox(client, store)
+  const noteIds = tree.map((note) => note.id)
+  const sourceNotes = () => resourceTable(client, root.shareId, root.roomId, 'member_notes')
+  const sourceUpdates = () => resourceTable(client, root.shareId, root.roomId, 'member_note_updates')
+  const [metadataRowIds, updateRowIds] = await Promise.all([
+    rowIdsForNotes(sourceNotes, noteIds),
+    rowIdsForNotes(sourceUpdates, noteIds)
+  ])
+  if (metadataRowIds.length !== noteIds.length) throw new Error('Not every page was ready to move. Sync and try again.')
+
+  // Tallpond names the default room with the resource id at the move boundary;
+  // locally it remains the empty string for backwards-compatible routing.
+  const destination = destinationRoomId || root.shareId
+  if (updateRowIds.length) await sourceUpdates().moveRoom(updateRowIds, destination)
+  await sourceNotes().moveRoom(metadataRowIds, destination)
+  await store.moveNotesToRoom(ids, destinationRoomId)
+}
+
+export async function createNoteRoom(store: LocalStore, root: Note): Promise<RoomInfo> {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  if (!navigator.onLine) throw new Error('Reconnect to change access for this page.')
+  if (!root.shareId) throw new Error('Share this page before changing its access scope.')
+  const userId = state.user?.id
+  if (!userId) throw new Error('Reconnect before changing access for this page.')
+
+  const resource = tallpond.resource(root.shareId)
+  const room = await resource.rooms.create({ name: root.title || 'Untitled Note' })
+  try {
+    // Room grants narrow resource roles and cannot confer ownership. Admin is
+    // sufficient to manage this page and move it again later.
+    await resource.room(room.id).grants.set(userId, 'admin')
+    await moveNoteTreeToRoom(tallpond, store, root, room.id)
+    return room
+  } catch (error) {
+    // This succeeds only while the room is empty. If a partial remote move made
+    // it nonempty, retaining it is safer than concealing those rows.
+    await resource.room(room.id).delete().catch(() => {})
+    throw error
   }
 }
 

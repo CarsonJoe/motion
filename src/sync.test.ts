@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -100,6 +100,58 @@ describe('share promotion', () => {
     expect(await store.countOps()).toBe(0)
     expect(calls.filter((call) => call.scope === 'share-1' && call.table === 'member_notes' && call.op === 'insert')).toHaveLength(2)
     expect(calls.filter((call) => call.scope === 'private' && call.table === 'notes' && call.op === 'update')).toHaveLength(2)
+  })
+})
+
+describe('room moves', () => {
+  it('moves body rows before metadata and leaves nested room boundaries alone', async () => {
+    const store = await openLocalStore('user-a')
+    const root = note({ id: 'root', shareId: 'share-1' })
+    const child = note({ id: 'child', parentId: root.id, shareId: root.shareId })
+    const nested = note({ id: 'nested', parentId: child.id, shareId: root.shareId, roomId: 'existing-room' })
+    for (const value of [root, child, nested]) await store.putNote(value)
+
+    const rows = {
+      member_notes: [
+        { id: 'meta-root', noteId: root.id },
+        { id: 'meta-child', noteId: child.id },
+        { id: 'meta-nested', noteId: nested.id }
+      ],
+      member_note_updates: [
+        { id: 'update-root', noteId: root.id },
+        { id: 'update-child', noteId: child.id },
+        { id: 'update-nested', noteId: nested.id }
+      ]
+    } as Record<string, Array<Record<string, unknown>>>
+    const moves: Array<{ table: string; ids: string[]; destination: string }> = []
+    const table = (name: string) => {
+      let noteIds: string[] = []
+      const query: Record<string, unknown> = {
+        select: () => query,
+        in: (column: string, values: string[]) => { if (column === 'noteId') noteIds = values; return query },
+        after: () => query,
+        limit: () => query,
+        page: () => Promise.resolve({ rows: (rows[name] ?? []).filter((row) => noteIds.includes(String(row.noteId))), nextCursor: null }),
+        moveRoom: (ids: string[], destination: string) => { moves.push({ table: name, ids, destination }); return Promise.resolve() }
+      }
+      return query
+    }
+    const client = {
+      resource: () => ({
+        table,
+        room: () => ({ table })
+      })
+    } as unknown as TallpondClient
+
+    await moveNoteTreeToRoom(client, store, root, 'room-1')
+
+    expect(moves).toEqual([
+      { table: 'member_note_updates', ids: ['update-root', 'update-child'], destination: 'room-1' },
+      { table: 'member_notes', ids: ['meta-root', 'meta-child'], destination: 'room-1' }
+    ])
+    expect(store.getNote(root.id)?.roomId).toBe('room-1')
+    expect(store.getNote(child.id)?.roomId).toBe('room-1')
+    expect(store.getNote(nested.id)?.roomId).toBe('existing-room')
   })
 })
 

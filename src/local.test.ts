@@ -30,6 +30,16 @@ describe('remote metadata apply', () => {
     expect(store.getNote(id)?.deletedAt).toBe(20)
   })
 
+  it('accepts authoritative room placement without requiring a metadata edit', async () => {
+    const store = await openLocalStore()
+    const id = crypto.randomUUID()
+    const shareId = crypto.randomUUID()
+    await store.applyRemoteNote(note({ id, shareId, roomId: '', updatedAt: 10 }))
+
+    expect(await store.applyRemoteNote(note({ id, shareId, roomId: 'room-1', updatedAt: 10 }))).toBe(true)
+    expect(store.getNote(id)?.roomId).toBe('room-1')
+  })
+
   it('never lets a private row replace a note that moved into a shared scope', async () => {
     const store = await openLocalStore()
     const id = crypto.randomUUID()
@@ -97,6 +107,27 @@ describe('outbox', () => {
     expect(ops.find((op) => op.noteId === 'n2')).toMatchObject({ shareId: 's', roomId: 'room-1' })
     await store.removeOps(ops.map((op) => op.id))
     expect(await store.countOps()).toBe(0)
+  })
+})
+
+describe('room placement', () => {
+  it('moves notes and their queued body updates together', async () => {
+    const store = await openLocalStore()
+    const first = note({ id: 'first', shareId: 'share-1' })
+    const second = note({ id: 'second', shareId: 'share-1' })
+    await store.putNote(first)
+    await store.putNote(second)
+    await store.enqueueNote(first.id)
+    await store.enqueueUpdate(first.id, first.shareId, '', 'body')
+    await store.enqueueUpdate(second.id, second.shareId, '', 'other')
+
+    await store.moveNotesToRoom(new Set([first.id]), 'room-1')
+
+    expect(store.getNote(first.id)?.roomId).toBe('room-1')
+    expect(store.getNote(second.id)?.roomId).toBe('')
+    const ops = await store.listOps()
+    expect(ops.find((op) => op.kind === 'update' && op.noteId === first.id)).toMatchObject({ roomId: 'room-1' })
+    expect(ops.find((op) => op.kind === 'update' && op.noteId === second.id)).toMatchObject({ roomId: '' })
   })
 })
 
