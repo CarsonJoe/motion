@@ -186,11 +186,17 @@ const rowToNote = (row: Row, shareId: string): Note => ({
   updatedAt: Number(row.clientUpdatedAt ?? 0)
 })
 
-const notesTable = (client: TallpondClient, shareId: string) =>
-  shareId ? client.resource(shareId).table('member_notes') : client.table('notes')
+// Resource reads without a room intentionally span every room the caller can
+// read. Writes must name the note's exact room, while an empty room id preserves
+// the existing default-room behavior.
+export const resourceTable = (client: TallpondClient, shareId: string, roomId: string, table: string) =>
+  roomId ? client.resource(shareId).room(roomId).table(table) : client.resource(shareId).table(table)
 
-export const updatesTable = (client: TallpondClient, shareId: string) =>
-  shareId ? client.resource(shareId).table('member_note_updates') : client.table('note_updates')
+const notesTable = (client: TallpondClient, shareId: string, roomId = '') =>
+  shareId ? resourceTable(client, shareId, roomId, 'member_notes') : client.table('notes')
+
+export const updatesTable = (client: TallpondClient, shareId: string, roomId = '') =>
+  shareId ? resourceTable(client, shareId, roomId, 'member_note_updates') : client.table('note_updates')
 
 // ---------------------------------------------------------------------------
 // Outbox drain. Serialized: one flush at a time, re-running while new work
@@ -226,9 +232,9 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore, blo
       updates.set(key, [...updates.get(key) ?? [], op])
     }
     for (const group of updates.values()) {
-      const { noteId, shareId } = group[0]
+      const { noteId, shareId, roomId } = group[0]
       try {
-        await updatesTable(client, shareId).insert({
+        await updatesTable(client, shareId, roomId).insert({
           updateId: crypto.randomUUID(),
           noteId,
           payload: mergeBase64Updates(group.map((op) => op.payload))
@@ -275,7 +281,7 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore, blo
 async function pushNoteRow(client: TallpondClient, store: LocalStore, op: NoteOp) {
   const note = store.getNote(op.noteId)
   if (!note) { await store.removeOps([op.id]); return true }
-  const table = () => notesTable(client, note.shareId)
+  const table = () => notesTable(client, note.shareId, note.roomId)
   const values = { title: note.title, parentId: note.parentId, deletedAt: note.deletedAt, clientUpdatedAt: note.updatedAt }
   const updated = await table().update(values).eq('noteId', note.id).lte('clientUpdatedAt', note.updatedAt)
   if (!updated.length && !await table().select('noteId').eq('noteId', note.id).maybeSingle()) {
@@ -1062,8 +1068,8 @@ async function purgeExpired(client: TallpondClient, store: LocalStore) {
     try {
       // Bodies first: a note row removed while its updates survived would leave
       // rows keyed to a note nothing can ever reach again.
-      await updatesTable(client, note.shareId).delete().eq('noteId', note.id)
-      await notesTable(client, note.shareId).delete().eq('noteId', note.id)
+      await updatesTable(client, note.shareId, note.roomId).delete().eq('noteId', note.id)
+      await notesTable(client, note.shareId, note.roomId).delete().eq('noteId', note.id)
     } catch { continue }
     await store.removeNote(note.id)
   }

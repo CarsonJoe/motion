@@ -47,7 +47,10 @@ function fakeClient(existingByTable: Record<string, Record<string, unknown> | nu
   }
   const client = {
     table: (name: string) => makeQuery('private', name),
-    resource: (id: string) => ({ table: (name: string) => makeQuery(id, name) })
+    resource: (id: string) => ({
+      table: (name: string) => makeQuery(id, name),
+      room: (roomId: string) => ({ table: (name: string) => makeQuery(`${id}:${roomId}`, name) })
+    })
   } as unknown as TallpondClient
   return { client, calls }
 }
@@ -356,7 +359,7 @@ describe('drainOutbox', () => {
     const store = await openLocalStore()
     await store.enqueueUpdate('n1', '', '', encodedInsert('hello'))
     await store.enqueueUpdate('n1', '', '', encodedInsert('world'))
-    await store.enqueueUpdate('n2', 'share-1', '', encodedInsert('shared'))
+    await store.enqueueUpdate('n2', 'share-1', 'room-1', encodedInsert('shared'))
 
     const { client, calls } = fakeClient()
     await drainOutbox(client, store)
@@ -373,8 +376,20 @@ describe('drainOutbox', () => {
     expect(textValue).toContain('world')
 
     const sharedInsert = inserts.find((call) => call.table === 'member_note_updates')!
-    expect(sharedInsert.scope).toBe('share-1')
+    expect(sharedInsert.scope).toBe('share-1:room-1')
     expect(await store.countOps()).toBe(0)
+  })
+
+  it('routes shared metadata writes to the note room', async () => {
+    const store = await openLocalStore()
+    const shared = note({ id: 'room-note', shareId: 'share-1', roomId: 'room-1', updatedAt: 50 })
+    await store.putNote(shared)
+    await store.enqueueNote(shared.id)
+
+    const { client, calls } = fakeClient({ member_notes: null })
+    await drainOutbox(client, store)
+
+    expect(calls.filter((call) => call.table === 'member_notes').every((call) => call.scope === 'share-1:room-1')).toBe(true)
   })
 
   it('pushes metadata with an LWW guard and inserts only when the row is absent', async () => {

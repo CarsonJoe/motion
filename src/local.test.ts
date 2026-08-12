@@ -94,7 +94,7 @@ describe('outbox', () => {
     await store.enqueueUpdate('n2', 's', 'room-1', 'b')
     const ops = await store.listOps()
     expect(ops).toHaveLength(2)
-    expect(ops[1]).toMatchObject({ shareId: 's', roomId: 'room-1' })
+    expect(ops.find((op) => op.noteId === 'n2')).toMatchObject({ shareId: 's', roomId: 'room-1' })
     await store.removeOps(ops.map((op) => op.id))
     expect(await store.countOps()).toBe(0)
   })

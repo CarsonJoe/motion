@@ -2,7 +2,7 @@ import * as Y from 'yjs'
 import type { Row } from '@tallpond/sdk'
 import { fromBase64, patchYText, toBase64 } from './codec'
 import type { LocalStore, Note } from './local'
-import { getSyncState, isAuthError, noteChanged, subscribeSyncState, tallpond, updatesTable } from './sync'
+import { getSyncState, isAuthError, noteChanged, resourceTable, subscribeSyncState, tallpond, updatesTable } from './sync'
 
 export const LOCAL_ORIGIN = Symbol('motion-local')
 export const REMOTE_ORIGIN = Symbol('motion-remote')
@@ -42,11 +42,11 @@ export type NoteDocController = {
 const presenceColors = ['#ff6b6b', '#f59f00', '#51cf66', '#22b8cf', '#748ffc', '#b197fc', '#f06595']
 const colorFor = (value: string) => presenceColors[[...value].reduce((total, char) => total + char.charCodeAt(0), 0) % presenceColors.length]
 
-async function fetchAllUpdates(shareId: string, noteId: string) {
+async function fetchAllUpdates(shareId: string, roomId: string, noteId: string) {
   const rows: Row[] = []
   let cursor: string | undefined
   do {
-    let query = updatesTable(tallpond!, shareId).select().eq('noteId', noteId).limit(200)
+    let query = updatesTable(tallpond!, shareId, roomId).select().eq('noteId', noteId).limit(200)
     if (cursor) query = query.after(cursor)
     const page = await query.page()
     rows.push(...page.rows)
@@ -191,7 +191,7 @@ export async function openNoteDoc(options: {
       })
       if (updates.length) Y.applyUpdate(doc, Y.mergeUpdates(updates), REMOTE_ORIGIN)
     }
-    liveSubscription = updatesTable(tallpond!, note.shareId).select().eq('noteId', note.id).live()
+    liveSubscription = updatesTable(tallpond!, note.shareId, note.roomId).select().eq('noteId', note.id).live()
       .on('insert', (row) => { if (bootstrap) bootstrap.push(row); else applyRows([row]) })
       .on('status', (status) => {
         if (closed) return
@@ -202,7 +202,7 @@ export async function openNoteDoc(options: {
       .on('error', options.onError)
 
     void (async () => {
-      const rows = await fetchAllUpdates(note.shareId, note.id)
+      const rows = await fetchAllUpdates(note.shareId, note.roomId, note.id)
       if (closed) return
       const payloads = rows.flatMap((row) => {
         try { return row.payload ? [fromBase64(String(row.payload))] : [] } catch { return [] }
@@ -227,12 +227,12 @@ export async function openNoteDoc(options: {
       }
 
       if (options.writable && rows.length > COMPACT_THRESHOLD && merged) {
-        await updatesTable(tallpond!, note.shareId).insert({
+        await updatesTable(tallpond!, note.shareId, note.roomId).insert({
           updateId: crypto.randomUUID(), noteId: note.id, payload: toBase64(merged)
         })
         const ids = rows.map((row) => String(row.updateId))
         for (let index = 0; index < ids.length; index += 100) {
-          await updatesTable(tallpond!, note.shareId).delete().in('updateId', ids.slice(index, index + 100))
+          await updatesTable(tallpond!, note.shareId, note.roomId).delete().in('updateId', ids.slice(index, index + 100))
         }
       }
     })().catch((error) => { if (!isAuthError(error)) options.onError(error) })
@@ -294,7 +294,7 @@ export async function openNoteDoc(options: {
       lastPublishAt = Date.now()
       const { userId, displayName } = identity()
       try {
-        await tallpond!.resource(note.shareId).table('member_presence').upsert({
+        await resourceTable(tallpond!, note.shareId, note.roomId, 'member_presence').upsert({
           presenceId, noteId: note.id, displayName,
           data: {
             userId, color: colorFor(userId),
@@ -329,7 +329,7 @@ export async function openNoteDoc(options: {
       }, wait)
     }
 
-    presenceSubscription = tallpond!.resource(note.shareId).table('member_presence').select().eq('noteId', note.id).live()
+    presenceSubscription = resourceTable(tallpond!, note.shareId, note.roomId, 'member_presence').select().eq('noteId', note.id).live()
       .on('insert', receivePresence).on('update', receivePresence).on('error', () => {})
     // The profile normally lands a round trip after the document opens. Republish
     // it only if this session has actually announced presence; opening a shared
@@ -359,7 +359,7 @@ export async function openNoteDoc(options: {
       window.clearInterval(expiry)
       if (publishTimer !== null) window.clearTimeout(publishTimer)
       if (published && options.writable && navigator.onLine) {
-        void Promise.resolve(tallpond!.resource(note.shareId).table('member_presence').delete().eq('presenceId', presenceId)).catch(() => {})
+        void Promise.resolve(resourceTable(tallpond!, note.shareId, note.roomId, 'member_presence').delete().eq('presenceId', presenceId)).catch(() => {})
       }
     }
 

@@ -30,6 +30,7 @@ const run = async () => {
   const privateNoteId = crypto.randomUUID()
   const privateUpdateId = crypto.randomUUID()
   let resourceId = null
+  let roomId = null
 
   try {
     await owner.table('notes').insert({ noteId: privateNoteId, title: 'Transport check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
@@ -85,6 +86,26 @@ const run = async () => {
     const rows = await owner.resource(resourceId).table('member_note_updates').select().eq('updateId', writerUpdateId)
     if (rows.length !== 1) throw new Error('Writer update was not visible to the owner')
 
+    // A room narrows access inside the resource. Metadata and CRDT writes use
+    // the same room handle Motion uses for per-note access scopes.
+    const privateRoom = await owner.resource(resourceId).rooms.create({ name: 'Motion private note check' })
+    roomId = privateRoom.id
+    await owner.resource(resourceId).room(roomId).grants.set(ownerSession.user_id, 'admin')
+    const roomNoteId = crypto.randomUUID()
+    await owner.resource(resourceId).room(roomId).table('member_notes').insert({ noteId: roomNoteId, title: 'Room transport check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
+
+    let deniedBeforeGrant = false
+    try { await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', roomNoteId) }
+    catch (error) {
+      if (error?.status !== 403) throw error
+      deniedBeforeGrant = true
+    }
+    if (!deniedBeforeGrant) throw new Error('Room note was visible before its grant')
+
+    await owner.resource(resourceId).room(roomId).grants.set(writerSession.user_id, 'writer')
+    const roomRows = await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', roomNoteId)
+    if (roomRows.length !== 1) throw new Error('Room note was not visible after its grant')
+
     // Soft delete travels as an ordinary metadata update.
     await owner.resource(resourceId).table('member_notes').update({ deletedAt: Date.now(), clientUpdatedAt: Date.now() }).eq('noteId', sharedNoteId)
 
@@ -92,7 +113,7 @@ const run = async () => {
     const writerResources = await writer.resource.list({ type: 'shared_notes' })
     if (writerResources.some((candidate) => candidate.id === resourceId)) throw new Error('Left resource remained in the writer membership list')
 
-    console.log('dev sync transport passed: private realtime, shared realtime, membership realtime, writer permissions, soft delete, leave membership')
+    console.log('dev sync transport passed: private realtime, shared realtime, membership realtime, room isolation, writer permissions, soft delete, leave membership')
   } finally {
     await Promise.resolve(owner.table('note_updates').delete().eq('noteId', privateNoteId)).catch(() => {})
     await Promise.resolve(owner.table('notes').delete().eq('noteId', privateNoteId)).catch(() => {})
@@ -100,6 +121,11 @@ const run = async () => {
     // tables so repeated dev checks leave no note data behind; dev resources
     // themselves disappear on the next environment reset.
     if (resourceId) {
+      if (roomId) {
+        await Promise.resolve(owner.resource(resourceId).room(roomId).table('member_note_updates').delete().gte('createdAt', '1970-01-01')).catch(() => {})
+        await Promise.resolve(owner.resource(resourceId).room(roomId).table('member_notes').delete().gte('createdAt', '1970-01-01')).catch(() => {})
+        await Promise.resolve(owner.resource(resourceId).room(roomId).delete()).catch(() => {})
+      }
       await Promise.resolve(owner.resource(resourceId).table('member_note_updates').delete().gte('createdAt', '1970-01-01')).catch(() => {})
       await Promise.resolve(owner.resource(resourceId).table('member_notes').delete().gte('createdAt', '1970-01-01')).catch(() => {})
     }
