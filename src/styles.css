@@ -283,6 +283,11 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .share-destination strong { font-size: 13px; }
 .share-destination small { color: #888; line-height: 1.35; }
 .share-destination i { color: #888; font-style: normal; cursor: help; }
+.workspace-member-picks { display: grid; gap: 6px; }
+.workspace-member-picks small { color: #888; }
+.workspace-member-picks div { display: flex; flex-wrap: wrap; gap: 6px; }
+.workspace-member-picks button { padding: 5px 8px; border-radius: 6px; color: #bbb; background: #282828; font-size: 12px; }
+.workspace-member-picks button:hover { color: #eee; background: #303030; }
 .member-list { display: flex; flex-wrap: wrap; gap: 6px; }
 .member-list span { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 5px; color: #c5c5c5; background: #282828; }
 .member-list span button { padding: 0 2px; color: #888; background: transparent; font-size: 14px; line-height: 1; }
