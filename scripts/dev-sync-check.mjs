@@ -114,6 +114,18 @@ const run = async () => {
     const roomRows = await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', roomNoteId)
     if (roomRows.length !== 1) throw new Error('Room note was not visible after its grant')
 
+    // Move a complete note from the default room into the restricted room using
+    // the managed row ids, exactly as Motion's resumable subtree move does.
+    const movingNoteId = crypto.randomUUID()
+    await owner.resource(resourceId).table('member_notes').insert({ noteId: movingNoteId, title: 'Room move check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
+    await owner.resource(resourceId).table('member_note_updates').insert({ updateId: crypto.randomUUID(), noteId: movingNoteId, payload: payload('room move') })
+    const [movingMetadata] = await owner.resource(resourceId).table('member_notes').select('id').eq('noteId', movingNoteId)
+    const movingUpdates = await owner.resource(resourceId).table('member_note_updates').select('id').eq('noteId', movingNoteId)
+    await owner.resource(resourceId).table('member_note_updates').moveRoom(movingUpdates.map((row) => row.id), roomId)
+    await owner.resource(resourceId).table('member_notes').moveRoom([movingMetadata.id], roomId)
+    const movedRows = await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', movingNoteId)
+    if (movedRows.length !== 1) throw new Error('Moved room note was not visible in its destination')
+
     // Soft delete travels as an ordinary metadata update.
     await owner.resource(resourceId).table('member_notes').update({ deletedAt: Date.now(), clientUpdatedAt: Date.now() }).eq('noteId', sharedNoteId)
 
