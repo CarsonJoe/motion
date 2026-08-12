@@ -66,6 +66,23 @@ export function subtreeIds(notes: Note[], rootId: string) {
 // Scope is checked here too: moving within one resource/room is canonical for
 // every collaborator. Crossing either boundary is an access migration rather
 // than an ordinary reparent.
+export function workspaceMountBlockedBy(notes: Note[], noteId: string, parentId: string): 'none' | 'noop' | 'cycle' | 'scope' | 'missing' {
+  const note = notes.find((candidate) => candidate.id === noteId)
+  if (!note) return 'missing'
+  const canonicalParent = note.parentId ? notes.find((candidate) => candidate.id === note.parentId) : null
+  // Only the top boundary of a resource is personally placeable. Content
+  // inside it retains one canonical structure for every collaborator.
+  if (!note.shareId || canonicalParent?.shareId === note.shareId) return 'scope'
+  const parent = parentId ? notes.find((candidate) => candidate.id === parentId) : null
+  if (parentId && !parent) return 'missing'
+  if (parent?.shareId) return 'scope'
+  if ((note.localParentId ?? visibleParentId(note, notes)) === parentId) return 'noop'
+  // A private child may canonically hang beneath the workspace root. Mounting
+  // the root beneath that child would create a cycle in this user's projection.
+  if (parentId && subtreeIds(notes, noteId).has(parentId)) return 'cycle'
+  return 'none'
+}
+
 export function moveBlockedBy(notes: Note[], noteId: string, parentId: string): 'none' | 'noop' | 'cycle' | 'scope' | 'missing' {
   const note = notes.find((candidate) => candidate.id === noteId)
   if (!note) return 'missing'

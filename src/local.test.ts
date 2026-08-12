@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { adoptScope, ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, type Note, type NoteOp } from './local'
+import { adoptScope, ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, workspaceMountBlockedBy, type Note, type NoteOp } from './local'
 
 const note = (patch: Partial<Note>): Note => ({
   id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
@@ -226,6 +226,25 @@ describe('subtreeIds', () => {
     const c = note({ id: 'c', parentId: 'b' })
     const other = note({ id: 'x' })
     expect([...subtreeIds([a, b, c, other], 'a')].sort()).toEqual(['a', 'b', 'c'])
+  })
+})
+
+describe('workspace root mounts', () => {
+  const localFolder = note({ id: 'local' })
+  const root = note({ id: 'root', parentId: 'hidden', shareId: 'resource' })
+  const sharedChild = note({ id: 'shared-child', parentId: root.id, shareId: root.shareId })
+  const privateChild = note({ id: 'private-child', parentId: root.id })
+  const notes = [localFolder, root, sharedChild, privateChild]
+
+  it('allows a workspace root beneath a private page or at top level', () => {
+    expect(workspaceMountBlockedBy(notes, root.id, localFolder.id)).toBe('none')
+    expect(workspaceMountBlockedBy(notes, root.id, '')).toBe('noop')
+  })
+
+  it('rejects shared targets, inner workspace pages, and projected cycles', () => {
+    expect(workspaceMountBlockedBy(notes, root.id, sharedChild.id)).toBe('scope')
+    expect(workspaceMountBlockedBy(notes, sharedChild.id, localFolder.id)).toBe('scope')
+    expect(workspaceMountBlockedBy(notes, root.id, privateChild.id)).toBe('cycle')
   })
 })
 

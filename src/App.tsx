@@ -1,7 +1,7 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
-import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, visibleParentId, type LocalStore, type Note } from './local'
+import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, visibleParentId, workspaceMountBlockedBy, type LocalStore, type Note } from './local'
 import { openNoteDoc, readNoteText, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
 import { setPageLinkServices, type PageOption } from './pageLinkServices'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
@@ -1768,16 +1768,13 @@ export default function App() {
     if (!store) return
     const note = store.getNote(noteId)
     if (!note) return
-    const parent = parentId ? store.getNote(parentId) : null
-    const canonicalParent = note.parentId ? store.getNote(note.parentId) : null
-    const workspaceRoot = Boolean(note.shareId) && canonicalParent?.shareId !== note.shareId
-    // Mounting a workspace root beneath one of this user's private pages is a
-    // personal sidebar operation. Collaborators retain the canonical structure.
-    if (workspaceRoot && (!parent || !parent.shareId)) {
+    const mountBlocked = workspaceMountBlockedBy(notes, noteId, parentId)
+    if (mountBlocked === 'none') {
       try { await moveWorkspaceRoot(store, note, parentId) }
       catch (error) { setActionError(error instanceof Error ? error.message : 'Could not move this shared page') }
       return
     }
+    if (mountBlocked === 'cycle') { setActionError('A page can’t be moved inside itself.'); return }
     const blocked = moveBlockedBy(notes, noteId, parentId)
     if (blocked !== 'none') {
       if (blocked === 'cycle') setActionError('A page can’t be moved inside itself.')
@@ -1800,10 +1797,7 @@ export default function App() {
     canDrop: (noteId, targetId, fromScope) => {
       if (targetId === FAVORITES_DROP) return !favorites.has(noteId)
       if (targetId === '' && fromScope === 'fav') return favorites.has(noteId)
-      const note = notes.find((candidate) => candidate.id === noteId)
-      const target = targetId ? notes.find((candidate) => candidate.id === targetId) : null
-      const canonicalParent = note?.parentId ? notes.find((candidate) => candidate.id === note.parentId) : null
-      if (note?.shareId && canonicalParent?.shareId !== note.shareId && (!target || !target.shareId)) return true
+      if (workspaceMountBlockedBy(notes, noteId, targetId) === 'none') return true
       return moveBlockedBy(notes, noteId, targetId) === 'none'
     },
     onDrop: (noteId, targetId, fromScope) => {
