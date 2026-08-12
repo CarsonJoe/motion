@@ -8,7 +8,7 @@ import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscrib
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, createNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeRoomAccess, requestAccess, restoreNoteTree, saveNote, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type ShareRole } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, createEmptyNoteRoom, createNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeRoomAccess, requestAccess, restoreNoteTree, saveNote, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type ShareRole } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -438,7 +438,7 @@ function NoteTree({ parentId, depth, ...shared }: NoteTreeShared & { parentId: s
   return <>{rootPreview && <DropLine depth={depth} />}{shared.notes.filter((note) => visibleParentId(note, shared.notes) === parentId && !hidden?.has(note.id)).sort(byRecency(shared.recency)).map((note) => <NoteTreeNode key={note.id} {...shared} note={note} depth={depth} />)}</>
 }
 
-function PageMenu({ anchor, note, canDelete, isFavorite, onToggleFavorite, onCreateChild, onRename, onDownload, onDelete, onClose }: { anchor: HTMLElement; note: Note; canDelete: boolean; isFavorite: boolean; onToggleFavorite: (id: string) => void; onCreateChild: (note: Note) => void; onRename: (note: Note) => void; onDownload: (note: Note) => void; onDelete: (note: Note) => void; onClose: () => void }) {
+function PageMenu({ anchor, note, canDelete, isFavorite, onToggleFavorite, onCreateChild, onRename, onDownload, onDelete, onClose }: { anchor: HTMLElement; note: Note; canDelete: boolean; isFavorite: boolean; onToggleFavorite: (id: string) => void; onCreateChild: (note: Note, access: 'inherit' | 'private') => void; onRename: (note: Note) => void; onDownload: (note: Note) => void; onDelete: (note: Note) => void; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   useLayoutEffect(() => {
@@ -462,7 +462,8 @@ function PageMenu({ anchor, note, canDelete, isFavorite, onToggleFavorite, onCre
     <div ref={ref} className="page-menu" role="menu" style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
       <button role="menuitem" onClick={() => onToggleFavorite(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true" fill={isFavorite ? 'currentColor' : 'none'}><path d="m12 3 2.7 5.5 6 .9-4.35 4.24 1.03 6-5.38-2.83L6.62 19.6l1.03-6L3.3 9.4l6-.9z" /></svg>{isFavorite ? 'Remove from favorites' : 'Add to favorites'}</button>
       <button role="menuitem" onClick={() => onRename(note)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 20h4l10-10-4-4L4 16z" /><path d="M14 6l4 4" /></svg>Rename</button>
-      <button role="menuitem" onClick={() => onCreateChild(note)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 6v12M6 12h12" /></svg>New subpage</button>
+      <button role="menuitem" onClick={() => onCreateChild(note, 'inherit')}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 6v12M6 12h12" /></svg>New subpage</button>
+      {note.shareId && <button role="menuitem" onClick={() => onCreateChild(note, 'private')}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>New private subpage</button>}
       <button role="menuitem" onClick={() => onDownload(note)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 4v11m0 0 4-4m-4 4-4-4" /><path d="M5 19h14" /></svg>Download</button>
       <button role="menuitem" className="danger" onClick={() => onDelete(note)}>{canDelete
         ? <><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>Delete page</>
@@ -1734,17 +1735,25 @@ export default function App() {
     return () => window.cancelAnimationFrame(frame)
   }, [shareOpen])
 
-  const createNote = async (parent: Note | null = null) => {
+  const createNote = async (parent: Note | null = null, access: 'inherit' | 'private' = 'inherit') => {
     if (!store) return
     if (parent?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(parent.shareId, parent.roomId))) {
       setActionError('You need edit access to add a subpage.')
       return
     }
-    const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', shareId: parent?.shareId ?? '', roomId: parent?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
-    await saveNote(store, note)
-    setLanding(null)
-    setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current)
-    setActiveId(note.id)
+    let roomId = parent?.roomId ?? ''
+    try {
+      if (access === 'private' && parent?.shareId) {
+        roomId = (await createEmptyNoteRoom(parent.shareId, 'Untitled Note')).id
+      }
+      const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', shareId: parent?.shareId ?? '', roomId, deletedAt: 0, updatedAt: Date.now() }
+      await saveNote(store, note)
+      setLanding(null)
+      setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current)
+      setActiveId(note.id)
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not create this page.')
+    }
   }
 
   // Reparenting is a one-field write: the tree is derived from parentId, so the
@@ -2389,7 +2398,7 @@ export default function App() {
       onDownload={downloadMarkdown}
       onClose={() => setHeaderMenuOpen(false)}
     />}
-    {noteMenuId && menuAnchor && (() => { const scope = noteMenuId.slice(0, noteMenuId.indexOf(':')); const menuNote = notes.find((note) => note.id === noteMenuId.slice(noteMenuId.indexOf(':') + 1)); return menuNote ? <PageMenu anchor={menuAnchor} note={menuNote} canDelete={canDeleteNote(menuNote)} isFavorite={favorites.has(menuNote.id)} onToggleFavorite={(id) => { setNoteMenuId(null); toggleFavorite(id) }} onCreateChild={(note) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(`${scope}:${note.id}`)); void createNote(note) }} onRename={(note) => { setNoteMenuId(null); setRenamingKey(`${scope}:${note.id}`) }} onDownload={(note) => void downloadNote(note)} onDelete={(note) => { setNoteMenuId(null); setPendingDelete(note) }} onClose={() => setNoteMenuId(null)} /> : null })()}
+    {noteMenuId && menuAnchor && (() => { const scope = noteMenuId.slice(0, noteMenuId.indexOf(':')); const menuNote = notes.find((note) => note.id === noteMenuId.slice(noteMenuId.indexOf(':') + 1)); return menuNote ? <PageMenu anchor={menuAnchor} note={menuNote} canDelete={canDeleteNote(menuNote)} isFavorite={favorites.has(menuNote.id)} onToggleFavorite={(id) => { setNoteMenuId(null); toggleFavorite(id) }} onCreateChild={(note, access) => { setNoteMenuId(null); setExpandedIds((current) => new Set(current).add(`${scope}:${note.id}`)); void createNote(note, access) }} onRename={(note) => { setNoteMenuId(null); setRenamingKey(`${scope}:${note.id}`) }} onDownload={(note) => void downloadNote(note)} onDelete={(note) => { setNoteMenuId(null); setPendingDelete(note) }} onClose={() => setNoteMenuId(null)} /> : null })()}
     {pendingDelete && (() => { const target = pendingDelete; const leaving = !!target.shareId && !canDeleteNote(target); const childCount = subtreeIds(notes, target.id).size - 1; const title = target.title || 'Untitled'; return createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setPendingDelete(null)}><section className="confirm-modal" role="alertdialog" aria-modal="true" aria-labelledby="confirm-delete-title" onMouseDown={(event) => event.stopPropagation()}><strong id="confirm-delete-title">{leaving ? `Leave “${title}”?` : `Delete “${title}”?`}</strong><p>{leaving ? 'You’ll lose access until someone shares it with you again.' : childCount > 0 ? `This also deletes ${childCount} subpage${childCount === 1 ? '' : 's'}. This can’t be undone.` : 'This can’t be undone.'}</p><div className="confirm-actions"><button className="confirm-cancel" onClick={() => setPendingDelete(null)}>Cancel</button><button className="confirm-delete" onClick={() => void removeNote(target)}>{leaving ? 'Leave' : 'Delete'}</button></div></section></div>, document.body) })()}
     {flash && <div className="flash-toast" role="status">{flash}</div>}
     {recoverPrompt && createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setRecoverPrompt(null)}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="recover-title" onMouseDown={(event) => event.stopPropagation()}><strong id="recover-title">Recover this page to edit it?</strong><p>{`“${recoverPrompt.title || 'Untitled'}” is in Recently deleted, so it can be read but not changed. Recovering puts it back where it was.`}</p><div className="confirm-actions"><button className="confirm-cancel" disabled={recoverBusy} onClick={() => setRecoverPrompt(null)}>Keep reading</button><button className="new" disabled={recoverBusy || !canWriteNote(recoverPrompt)} onClick={() => void recover(recoverPrompt)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button></div></section></div>, document.body)}

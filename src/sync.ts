@@ -1173,29 +1173,44 @@ export async function moveNoteTreeToRoom(client: TallpondClient, store: LocalSto
   await store.moveNotesToRoom(ids, destinationRoomId)
 }
 
+export async function createEmptyNoteRoom(shareId: string, name: string): Promise<RoomInfo> {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  if (!navigator.onLine) throw new Error('Reconnect to create a private page here.')
+  const userId = state.user?.id
+  if (!userId) throw new Error('Reconnect before changing access for this page.')
+  const resource = tallpond.resource(shareId)
+  const room = await resource.rooms.create({ name: name || 'Untitled Note' })
+  try {
+    await resource.room(room.id).grants.set(userId, 'admin')
+    const key = roomAccessKey(shareId, room.id)
+    localStorage.setItem(roomRoleKey(shareId, room.id), 'admin')
+    setState({ roomRoles: { ...state.roomRoles, [key]: 'admin' } })
+    return room
+  } catch (error) {
+    await resource.room(room.id).delete().catch(() => {})
+    throw error
+  }
+}
+
 export async function createNoteRoom(store: LocalStore, root: Note): Promise<RoomInfo> {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to change access for this page.')
   if (!root.shareId) throw new Error('Share this page before changing its access scope.')
-  const userId = state.user?.id
-  if (!userId) throw new Error('Reconnect before changing access for this page.')
-
   const resource = tallpond.resource(root.shareId)
-  const room = await resource.rooms.create({ name: root.title || 'Untitled Note' })
+  const room = await createEmptyNoteRoom(root.shareId, root.title || 'Untitled Note')
   try {
-    // Room grants narrow resource roles and cannot confer ownership. Admin is
-    // sufficient to manage this page and move it again later.
-    await resource.room(room.id).grants.set(userId, 'admin')
     await moveNoteTreeToRoom(tallpond, store, root, room.id)
-    const key = roomAccessKey(root.shareId, room.id)
-    localStorage.setItem(roomRoleKey(root.shareId, room.id), 'admin')
-    setState({ roomRoles: { ...state.roomRoles, [key]: 'admin' } })
     subscribeLiveForCurrentShares(store)
     return room
   } catch (error) {
     // This succeeds only while the room is empty. If a partial remote move made
     // it nonempty, retaining it is safer than concealing those rows.
     await resource.room(room.id).delete().catch(() => {})
+    const key = roomAccessKey(root.shareId, room.id)
+    localStorage.removeItem(roomRoleKey(root.shareId, room.id))
+    const roomRoles = { ...state.roomRoles }
+    delete roomRoles[key]
+    setState({ roomRoles })
     throw error
   }
 }
