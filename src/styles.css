@@ -96,7 +96,9 @@ nav { overflow: visible; }
 .page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
 .page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; text-decoration: none; cursor: grab; -webkit-user-drag: none; }
 .dragging-page .page-link { cursor: grabbing; }
-.resource-root-icon { width: 15px; height: 15px; flex: none; fill: none; stroke: #8ea9d0; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.resource-root-icon { display: grid; width: 28px; height: 28px; flex: none; place-items: center; color: #777; }
+.resource-root-icon svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.page-row:hover .resource-root-icon, .resource-root-icon + .page-menu-button.menu-open { opacity: 0; }
 .page-link-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Sits in the row exactly where `.page-link` was, so renaming does not reflow
    the tree around it. */
@@ -115,7 +117,10 @@ nav { overflow: visible; }
 /* Revealing this on hover alone would strand it on any touch device — including
    iPad, which reports `hover: none` at a desktop width and so never matched the
    mobile breakpoint that used to un-hide it. Without a pointer, show it always. */
-@media (hover: none) { .page-menu-button { opacity: 1; } }
+@media (hover: none) {
+  .page-menu-button { opacity: 1; }
+  .resource-root-icon { opacity: 0; }
+}
 /* :focus-visible, not :focus — a tap focuses the button and plain :focus would
    keep it revealed after the menu closes. */
 .page-menu-button:focus-visible, .page-menu-button.menu-open { opacity: 1; }
