@@ -8,6 +8,9 @@
 export type Note = {
   id: string
   title: string
+  // Durable author identity for creator-only onboarding. Undefined identifies
+  // rows created before this metadata existed.
+  creatorId?: string
   // Empty string parents a note at the root of the tree.
   parentId: string
   // Empty string means private. Otherwise the shared_notes resource id this

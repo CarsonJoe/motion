@@ -85,6 +85,9 @@ export default defineSchema({
     notes: (table) => {
       table.text('noteId').notNull().unique()
       table.text('title').notNull().default('')
+      // Set by current clients. Nullable keeps pre-creator production rows
+      // readable; those rows simply do not show creator-only onboarding.
+      table.text('creatorId')
       // Empty string means the note sits at the root of the tree.
       table.text('parentId').notNull().default('')
       // 0 means alive. A nonzero value is the client ms timestamp of deletion.
@@ -193,6 +196,7 @@ export default defineSchema({
       resource.owns('member_notes', (table) => {
         table.text('noteId').notNull().unique()
         table.text('title').notNull().default('')
+        table.text('creatorId')
         table.text('parentId').notNull().default('')
         table.bigint('deletedAt').notNull().default(0)
         table.bigint('clientUpdatedAt').notNull()

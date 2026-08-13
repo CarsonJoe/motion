@@ -227,6 +227,7 @@ async function selectAll(build: (cursor?: string) => TableQuery) {
 const rowToNote = (row: Row, shareId: string): Note => ({
   id: String(row.noteId),
   title: String(row.title ?? ''),
+  creatorId: row.creatorId ? String(row.creatorId) : undefined,
   parentId: String(row.parentId ?? ''),
   shareId,
   roomId: shareId ? String(row.roomId ?? '') : '',
@@ -334,7 +335,7 @@ async function pushNoteRow(client: TallpondClient, store: LocalStore, op: NoteOp
   const note = store.getNote(op.noteId)
   if (!note) { await store.removeOps([op.id]); return true }
   const table = () => notesTable(client, note.shareId, note.roomId)
-  const values = { title: note.title, parentId: note.parentId, deletedAt: note.deletedAt, clientUpdatedAt: note.updatedAt }
+  const values = { title: note.title, creatorId: note.creatorId || state.user?.id || null, parentId: note.parentId, deletedAt: note.deletedAt, clientUpdatedAt: note.updatedAt }
   const updated = await table().update(values).eq('noteId', note.id).lte('clientUpdatedAt', note.updatedAt)
   if (!updated.length && !await table().select('noteId').eq('noteId', note.id).maybeSingle()) {
     await table().insert({ noteId: note.id, ...values })
@@ -1394,7 +1395,7 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
   for (const note of tree) {
     const parentId = note.id === root.id ? rootParentId : note.parentId
     await store.removeOpsForNote(note.id)
-    await store.putNote({ ...note, parentId, shareId, roomId, remoteKnown: false })
+    await store.putNote({ ...note, creatorId: note.creatorId || state.user?.id, parentId, shareId, roomId, remoteKnown: false })
     await store.enqueueNote(note.id)
     const body = await store.getDocState(note.id)
     if (body) await store.enqueueUpdate(note.id, shareId, roomId, body)

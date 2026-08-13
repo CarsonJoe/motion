@@ -317,6 +317,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .access-choice > span { display: grid; flex: 1; gap: 1px; }
 .access-choice:disabled { opacity: .6; cursor: not-allowed; }
 .custom-member-list { display: grid; gap: 2px; padding: 6px; border-radius: 8px; background: #121212; }
+.custom-member-search { width: 100%; margin-bottom: 4px; padding: 8px; border: 1px solid #333; border-radius: 6px; color: #ddd; background: #191919; font: inherit; font-size: 12px; outline: none; }
+.custom-member-search:focus { border-color: #4a83bd; }
 .custom-member-list > button { display: flex; align-items: center; gap: 8px; padding: 7px; border: 0; border-radius: 6px; color: #bbb; background: transparent; text-align: left; }
 .custom-member-list > button:hover { background: #202020; }
 .custom-member-list > button > i { display: grid; width: 17px; height: 17px; place-items: center; border: 1px solid #555; border-radius: 4px; color: #fff; font-size: 11px; font-style: normal; }
