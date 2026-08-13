@@ -2,129 +2,98 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Motion — sharing flow mockup</title>
 <style>
-:root { --bg:#fff; --side:#f7f7f5; --text:#37352f; --muted:#78746e; --faint:#aaa69f; --line:#e7e5e1; --hover:#efeeeb; --blue:#2878d0; --blue-soft:#edf5ff; --warn:#fff8e8; --warn-line:#ead7a4; --shadow:0 18px 55px rgba(0,0,0,.16); }
-* { box-sizing:border-box } body { margin:0; color:var(--text); background:var(--bg); font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif } button,input,select { font:inherit } button { color:inherit; cursor:pointer }
-.demo-bar { min-height:52px; padding:9px 16px; border-bottom:1px solid var(--line); background:#fafafa; display:flex; align-items:center; gap:8px; flex-wrap:wrap }
-.demo-bar strong { margin-right:8px }.demo-bar button { border:1px solid var(--line); background:#fff; border-radius:7px; padding:7px 11px }.demo-bar button.active { color:#fff; background:var(--text); border-color:var(--text) }.demo-hint { color:var(--muted); margin-left:auto }
-.app { height:calc(100vh - 52px); display:grid; grid-template-columns:250px 1fr }.sidebar { background:var(--side); border-right:1px solid var(--line); padding:14px 8px }.sidebar-head { display:flex; justify-content:space-between; align-items:center; padding:3px 8px 14px; font-weight:600 }.new { border:0; background:transparent; font-size:20px }.label { color:var(--faint); font-size:11px; font-weight:650; letter-spacing:.05em; padding:12px 9px 5px }.page { width:100%; border:0; background:transparent; border-radius:6px; text-align:left; padding:7px 9px; display:flex; align-items:center; gap:7px }.page:hover,.page.active { background:var(--hover) }.indent { padding-left:28px }.icon { width:17px; color:var(--muted); text-align:center }.access-mark { margin-left:auto; font-size:12px; color:var(--muted) }
-.main { min-width:0; overflow:auto }.top { height:48px; display:flex; justify-content:flex-end; align-items:center; padding:0 22px; gap:8px }.pill { border:0; background:transparent; border-radius:7px; padding:7px 10px }.pill:hover { background:var(--hover) }.share { border:1px solid var(--line); background:#fff }.doc { max-width:760px; padding:52px 40px 120px; margin:auto }.doc h1 { font-size:38px; line-height:1.15; margin:0 0 18px }.doc p { color:var(--muted); font-size:16px }.banner { display:none; align-items:center; gap:16px; margin:0 0 24px; padding:12px 14px; border:1px solid var(--warn-line); background:var(--warn); border-radius:9px }.banner.show { display:flex }.banner-text { flex:1 }.banner-text strong,.banner-text span { display:block }.banner-text span { color:var(--muted); font-size:13px }.banner button { border:0; background:transparent; color:var(--blue); white-space:nowrap }.banner .primary-small { background:var(--text); color:#fff; border-radius:6px; padding:7px 10px }
-.scrim { display:none; position:fixed; inset:52px 0 0; background:rgba(0,0,0,.3); align-items:center; justify-content:center; padding:20px }.scrim.show { display:flex }.modal { width:min(520px,100%); max-height:calc(100vh - 90px); overflow:auto; background:#fff; border-radius:12px; box-shadow:var(--shadow) }.modal-head { padding:20px 22px 14px; display:flex; gap:15px }.modal-head div { flex:1 }.modal-head strong { display:block; font-size:18px }.modal-head span { color:var(--muted); font-size:13px }.close { border:0; background:transparent; font-size:22px; color:var(--muted); align-self:flex-start }.section { border-top:1px solid var(--line); padding:16px 22px }.section-title { display:block; font-size:12px; color:var(--muted); margin-bottom:9px }.access-summary { display:flex; align-items:center; gap:12px }.access-summary .people { flex:1 }.access-summary strong,.access-summary span { display:block }.access-summary span { color:var(--muted); font-size:12.5px }.avatars { display:flex }.avatar { width:28px; height:28px; border-radius:50%; border:2px solid #fff; margin-left:-6px; display:grid; place-items:center; color:#fff; font-size:10px; font-weight:650 }.avatar:first-child { margin-left:0 }.a1{background:#4279c5}.a2{background:#a45c91}.a3{background:#478e70}.a4{background:#9d7440}
-.invite { display:flex; gap:7px }.invite input { flex:1; min-width:0; border:1px solid var(--line); border-radius:7px; padding:9px 10px }.invite select { border:1px solid var(--line); border-radius:7px; background:#fff }.primary { border:0; color:#fff; background:var(--blue); border-radius:7px; padding:9px 13px }.link-row,.setting-row { display:flex; align-items:center; justify-content:space-between; gap:12px }.link-row button,.text-button { border:1px solid var(--line); background:#fff; border-radius:7px; padding:7px 10px }.advanced { width:100%; border:0; background:transparent; color:var(--muted); text-align:left; padding:0 }.advanced-panel { display:none; padding-top:13px }.advanced-panel.show { display:block }.explain { background:#f7f7f5; border-radius:8px; padding:12px; color:var(--muted); font-size:13px }.explain strong { color:var(--text) }.choice { margin-top:9px; padding:10px; border:1px solid var(--line); border-radius:8px; display:flex; align-items:center; gap:10px }.choice span { flex:1 }.choice small { display:block; color:var(--muted) }.danger { color:#bd3b32 }.member { display:flex; align-items:center; padding:9px 0; gap:10px }.member + .member { border-top:1px solid var(--line) }.member-name { flex:1 }.member-name small { display:block;color:var(--muted) }.notice { padding:10px 12px; background:var(--blue-soft); border-radius:8px; color:#436a96; font-size:13px; margin-bottom:12px }
-.workspace-modal .tabs { display:flex; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:0 22px; gap:20px }.workspace-modal .tabs button { border:0; border-bottom:2px solid transparent; background:transparent; padding:11px 0; color:var(--muted) }.workspace-modal .tabs .active { color:var(--text); border-color:var(--text) }
-@media(max-width:700px){.demo-bar{height:52px;min-height:52px;flex-wrap:nowrap;overflow-x:auto;padding:8px 10px;scrollbar-width:none}.demo-bar::-webkit-scrollbar{display:none}.demo-bar>strong,.demo-hint{display:none}.demo-bar button{flex:none;white-space:nowrap;padding:7px 10px}.app{grid-template-columns:1fr}.sidebar{display:none}.doc{padding:38px 22px}.banner{align-items:flex-start;flex-wrap:wrap;gap:8px}.banner-text{flex-basis:100%}.banner button{flex:1}.scrim{inset:52px 0 auto;height:calc(100dvh - 52px);align-items:stretch;padding:0}.modal{width:100%;height:100%;max-height:none;border-radius:0;padding-bottom:env(safe-area-inset-bottom)}.modal-head{position:sticky;top:0;z-index:2;background:#fff;border-bottom:1px solid var(--line);padding:18px 18px 13px}.section{padding:14px 18px}.invite{flex-wrap:wrap}.invite input{flex-basis:100%}.invite select{flex:1;min-width:0;padding-left:7px}.workspace-modal .tabs{padding:0 18px;gap:16px;overflow-x:auto}.workspace-modal .tabs button{white-space:nowrap}}
+:root{--bg:#fff;--side:#f7f7f5;--text:#37352f;--muted:#78746e;--faint:#aaa69f;--line:#e7e5e1;--hover:#efeeeb;--blue:#2878d0;--blue-soft:#edf5ff;--warn:#fff8e8;--warn-line:#ead7a4;--shadow:0 18px 55px #00000029}*{box-sizing:border-box}html,body{margin:0;min-height:100%;color:var(--text);background:var(--bg);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input,select{font:inherit;color:inherit}button{cursor:pointer}.demo-bar{height:52px;padding:8px 14px;border-bottom:1px solid var(--line);background:#fafafa;display:flex;align-items:center;gap:8px}.demo-bar strong{margin-right:7px}.demo-bar button,.outline{border:1px solid var(--line);background:#fff;border-radius:7px;padding:7px 11px;white-space:nowrap}.demo-bar button.active{color:#fff;background:var(--text);border-color:var(--text)}.hint{color:var(--muted);margin-left:auto}.app{height:calc(100vh - 52px);display:grid;grid-template-columns:250px 1fr}.sidebar{background:var(--side);border-right:1px solid var(--line);padding:14px 8px}.sidebar-head{display:flex;justify-content:space-between;padding:3px 8px 14px;font-weight:600}.new{border:0;background:transparent;font-size:20px}.label{color:var(--faint);font-size:11px;font-weight:650;letter-spacing:.05em;padding:12px 9px 5px}.page{width:100%;border:0;background:transparent;border-radius:6px;text-align:left;padding:7px 9px;display:flex;align-items:center;gap:7px}.page:hover,.page.active{background:var(--hover)}.indent{padding-left:28px}.icon{width:17px;color:var(--muted);text-align:center}.access-mark{margin-left:auto;color:var(--muted)}.main{min-width:0;overflow:auto}.top{height:48px;display:flex;justify-content:flex-end;align-items:center;padding:0 22px;gap:8px}.pill{border:0;background:transparent;border-radius:7px;padding:7px 10px}.pill:hover{background:var(--hover)}.share{border:1px solid var(--line);background:#fff}.doc{max-width:760px;padding:52px 40px 120px;margin:auto}.doc h1{font-size:38px;line-height:1.15;margin:0 0 18px}.doc p{color:var(--muted);font-size:16px}.banner{display:none;align-items:center;gap:16px;margin:0 0 24px;padding:13px 14px;border:1px solid var(--warn-line);background:var(--warn);border-radius:9px}.banner.show{display:flex}.banner-text{flex:1}.banner-text strong,.banner-text span{display:block}.banner-text span{color:var(--muted);font-size:13px}.banner button{border:0;background:transparent;color:var(--blue);white-space:nowrap}.banner .dark{background:var(--text);color:#fff;border-radius:6px;padding:7px 10px}.scrim{display:none;position:fixed;inset:52px 0 0;background:#0000004d;align-items:center;justify-content:center;padding:20px}.scrim.show{display:flex}.modal{width:min(530px,100%);max-height:calc(100vh - 90px);overflow:auto;background:#fff;border-radius:12px;box-shadow:var(--shadow)}.modal.wide{width:min(650px,100%)}.modal-head{padding:20px 22px 15px;display:flex;gap:15px}.modal-head>div{flex:1}.modal-head strong{display:block;font-size:18px}.modal-head span{color:var(--muted);font-size:13px}.close{border:0;background:transparent;font-size:22px;color:var(--muted);align-self:flex-start}.section{border-top:1px solid var(--line);padding:16px 22px}.section-title{display:block;font-size:11px;font-weight:650;letter-spacing:.04em;color:var(--muted);margin-bottom:9px}.choice{width:100%;margin-top:9px;padding:12px;border:1px solid var(--line);background:#fff;border-radius:9px;display:flex;align-items:center;gap:11px;text-align:left}.choice:hover{background:#fafafa}.choice.selected{border-color:#8ab7ea;background:#f7fbff}.choice .radio{width:17px;height:17px;border:1.5px solid var(--faint);border-radius:50%;display:grid;place-items:center;flex:none}.choice.selected .radio:after{content:"";width:9px;height:9px;border-radius:50%;background:var(--blue)}.choice>span:nth-child(2){flex:1}.choice strong,.choice small{display:block}.choice small{color:var(--muted);margin-top:1px}.primary{border:0;color:#fff;background:var(--blue);border-radius:7px;padding:9px 13px}.footer-actions{display:flex;justify-content:flex-end;gap:8px}.footer-actions .primary{min-width:90px}.workspace-list .choice:first-child{margin-top:0}.custom-panel{display:none;margin-top:12px;padding:12px;background:#f7f7f5;border-radius:9px}.custom-panel.show{display:block}.search{width:100%;border:1px solid var(--line);border-radius:7px;background:#fff;padding:9px 10px;margin-bottom:7px}.pick{width:100%;border:0;background:transparent;padding:8px 5px;display:flex;align-items:center;gap:9px;text-align:left;border-radius:6px}.pick:hover{background:var(--hover)}.pick .name{flex:1}.pick small{display:block;color:var(--muted)}.check{width:18px;height:18px;border:1px solid var(--faint);border-radius:4px}.pick.chosen .check{background:var(--blue);border-color:var(--blue);color:white;text-align:center}.pick.chosen .check:after{content:"✓";font-size:12px}.avatar{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;color:#fff;font-size:10px;font-weight:650;flex:none}.a1{background:#4279c5}.a2{background:#a45c91}.a3{background:#478e70}.group-avatar{background:#7559aa}.tabs{display:flex;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding:0 22px;gap:22px}.tabs button{border:0;border-bottom:2px solid transparent;background:transparent;padding:11px 0;color:var(--muted)}.tabs button.active{color:var(--text);border-color:var(--text)}.tab-panel{display:none}.tab-panel.active{display:block}.invite{display:flex;gap:7px}.invite input{flex:1;min-width:0;border:1px solid var(--line);border-radius:7px;padding:9px 10px}.invite select{border:1px solid var(--line);border-radius:7px;background:#fff}.member{display:flex;align-items:center;padding:9px 0;gap:10px}.member+.member{border-top:1px solid var(--line)}.member-name{flex:1}.member-name small{display:block;color:var(--muted)}.notice{padding:10px 12px;background:var(--blue-soft);border-radius:8px;color:#436a96;font-size:13px;margin-bottom:12px}.group-card{padding:12px 0;display:flex;gap:10px;align-items:center}.group-card+.group-card{border-top:1px solid var(--line)}.group-card>.group-info{flex:1}.group-card small{display:block;color:var(--muted)}.setting-label{font-weight:600}.setting-copy{display:block;color:var(--muted);font-size:13px;margin-bottom:10px}.create-form{display:none}.create-form.show{display:block}.create-form input{width:100%;border:1px solid var(--line);border-radius:7px;padding:10px}.back{border:0;background:transparent;color:var(--blue);padding:0 0 12px}
+@media(max-width:700px){.demo-bar{overflow-x:auto;padding:8px 10px;scrollbar-width:none}.demo-bar::-webkit-scrollbar{display:none}.demo-bar>strong,.hint{display:none}.app{grid-template-columns:1fr}.sidebar{display:none}.doc{padding:38px 22px}.banner{align-items:flex-start;flex-wrap:wrap;gap:8px}.banner-text{flex-basis:100%}.banner button{flex:1}.scrim{inset:52px 0 auto;height:calc(100dvh - 52px);align-items:stretch;padding:0}.modal,.modal.wide{width:100%;height:100%;max-height:none;border-radius:0;padding-bottom:env(safe-area-inset-bottom)}.modal-head{position:sticky;top:0;z-index:3;background:#fff;border-bottom:1px solid var(--line);padding:18px 18px 13px}.section{padding:14px 18px}.tabs{padding:0 18px;gap:18px;overflow-x:auto;position:sticky;top:72px;z-index:2;background:#fff}.tabs button{white-space:nowrap}.invite{flex-wrap:wrap}.invite input{flex-basis:100%}.invite select{flex:1;min-width:0}.footer-actions{position:sticky;bottom:0;background:#fff}.choice{padding:11px}}
 </style>
 </head>
 <body>
 <div class="demo-bar">
   <strong>Sharing UX mockup</strong>
-  <button data-demo="private" class="active">1. Initial share</button>
-  <button data-demo="shared">2. Page already shared</button>
-  <button data-demo="mismatch">3. Private subpage</button>
-  <button data-demo="manage">4. Manage workspace</button>
-  <span class="demo-hint">Click controls—the mockup is interactive</span>
+  <button data-demo="initial" class="active">1. Initial share</button>
+  <button data-demo="shared">2. Page access</button>
+  <button data-demo="banner">3. First-open banner</button>
+  <button data-demo="manage">4. Workspace admin</button>
+  <span class="hint">Click controls—the mockup is interactive</span>
 </div>
 <div class="app">
   <aside class="sidebar">
     <div class="sidebar-head"><span>Carson’s pages</span><button class="new">＋</button></div>
     <div class="label">PAGES</div>
-    <button class="page"><span class="icon">▾</span><span>Product</span><span class="access-mark" id="parent-mark" title="Shared"></span></button>
-    <button class="page indent active"><span class="icon">□</span><span id="tree-title">Launch plan</span><span class="access-mark" id="tree-mark"></span></button>
+    <button class="page"><span class="icon">▾</span><span>Product</span><span class="access-mark">♟</span></button>
+    <button class="page active" id="launch-row"><span class="icon">□</span><span>Launch plan</span><span class="access-mark" id="tree-mark"></span></button>
     <button class="page indent"><span class="icon">□</span><span>Research</span></button>
     <button class="page"><span class="icon">□</span><span>Personal notes</span></button>
   </aside>
   <main class="main">
     <div class="top"><button class="pill">•••</button><button class="pill share" id="share-button">Share</button></div>
     <article class="doc">
-      <div class="banner" id="private-banner">
-        <div class="banner-text"><strong>This page is private</strong><span>People who can access “Product” can’t see it.</span></div>
-        <button id="keep-private">Keep private</button><button class="primary-small" id="inherit-access">Share with the same people</button>
-      </div>
-      <h1 id="doc-title">Launch plan</h1>
-      <p id="doc-copy">Notes for launch milestones, responsibilities, and open questions.</p>
+      <div class="banner" id="scope-banner"><div class="banner-text"><strong>This page uses its parent’s access</strong><span>It’s shared with Product’s “Launch team” group. New subpages will inherit this access.</span></div><button id="dismiss-banner">Got it</button><button class="dark" id="review-access">Review access</button></div>
+      <h1>Launch plan</h1><p>Notes for launch milestones, responsibilities, and open questions.</p>
     </article>
   </main>
 </div>
 
-<div class="scrim" id="share-scrim">
-  <section class="modal" role="dialog" aria-modal="true" aria-labelledby="share-title">
-    <header class="modal-head"><div><strong id="share-title">Share “Launch plan”</strong><span id="share-subtitle">Invite people to this page and its subpages.</span></div><button class="close" data-close>×</button></header>
-    <div class="section" id="current-access" style="display:none">
-      <span class="section-title">WHO HAS ACCESS</span>
-      <div class="access-summary"><div class="avatars"><i class="avatar a1">C</i><i class="avatar a2">M</i><i class="avatar a3">J</i><i class="avatar a4">+5</i></div><div class="people"><strong>Same access as Product</strong><span>8 people can access this page</span></div></div>
+<div class="scrim" id="initial-scrim">
+  <section class="modal" role="dialog" aria-modal="true">
+    <header class="modal-head"><div><strong>Share “Launch plan”</strong><span>Choose where this page and its subpages should live.</span></div><button class="close" data-close>×</button></header>
+    <div class="section workspace-list">
+      <button class="choice" id="show-workspaces"><span class="radio"></span><span><strong>Add to an existing workspace</strong><small>Choose from workspaces you manage or contribute to.</small></span><span>›</span></button>
+      <button class="choice" id="show-create"><span class="radio"></span><span><strong>Create a new workspace</strong><small>Start a separate space for these pages and collaborators.</small></span><span>›</span></button>
     </div>
-    <div class="section">
-      <div class="invite"><input placeholder="Name or Tallpond handle"><select><option>Can edit</option><option>Can view</option><option>Can manage</option></select><button class="primary" id="invite-button">Invite</button></div>
-      <div class="notice" id="workspace-invite-note" style="display:none;margin-top:12px;margin-bottom:0">This person will also be able to access other shared pages under Product.</div>
-    </div>
-    <div class="section link-row"><span>Anyone with access can use this link</span><button id="copy-link">Copy link</button></div>
-    <div class="section">
-      <button class="advanced" id="advanced-toggle">Advanced options <span style="float:right">⌄</span></button>
-      <div class="advanced-panel" id="advanced-panel">
-        <div class="explain" id="workspace-explain"><strong>About workspaces</strong><br>A workspace keeps related shared pages and their people together. This page will create a workspace when you send the first invitation. Subpages stay in the same workspace automatically.</div>
-        <div class="choice" id="existing-choice"><span><strong>Add to an existing workspace</strong><small>Use the same people as another set of shared pages.</small></span><button class="text-button" id="choose-workspace">Choose…</button></div>
-        <div class="choice" id="restrict-choice" style="display:none"><span><strong>Restrict this page</strong><small>Only selected workspace members will keep access to this page and its subpages.</small></span><button class="text-button">Restrict…</button></div>
-        <div class="choice" id="manage-choice" style="display:none"><span><strong>Product workspace</strong><small>Manage people, roles, and workspace settings.</small></span><button class="text-button" id="open-manage">Manage</button></div>
-      </div>
-    </div>
+    <div class="section create-form" id="create-form"><button class="back" id="create-back">← Back</button><span class="section-title">NEW WORKSPACE</span><input value="Launch plan" aria-label="Workspace name"><div class="footer-actions" style="margin-top:12px"><button class="primary" id="create-workspace">Create & share</button></div></div>
   </section>
 </div>
 
 <div class="scrim" id="workspace-picker">
-  <section class="modal"><header class="modal-head"><div><strong>Add to a workspace</strong><span>The page and its subpages will use that workspace’s access.</span></div><button class="close" data-close>×</button></header>
-    <div class="section"><div class="choice"><span><strong>Product</strong><small>8 people · You’re an owner</small></span><button class="primary" id="pick-product">Add</button></div><div class="choice"><span><strong>Motion</strong><small>3 people · You can manage</small></span><button class="text-button">Add</button></div></div>
+  <section class="modal"><header class="modal-head"><div><strong>Add to a workspace</strong><span>The page and its subpages will stay together in this workspace.</span></div><button class="close" data-close>×</button></header>
+    <div class="section workspace-list"><div class="choice"><span class="radio"></span><span><strong>Product</strong><small>8 people · Owner</small></span><button class="primary" id="pick-product">Add</button></div><div class="choice"><span class="radio"></span><span><strong>Motion</strong><small>3 people · Admin</small></span><button class="outline">Add</button></div></div>
+  </section>
+</div>
+
+<div class="scrim" id="access-scrim">
+  <section class="modal" role="dialog" aria-modal="true">
+    <header class="modal-head"><div><strong>Access for “Launch plan”</strong><span>Choose who in Product can access this page and its subpages.</span></div><button class="close" data-close>×</button></header>
+    <div class="section" id="scope-choices">
+      <button class="choice" data-scope="workspace"><span class="radio"></span><span><strong>Workspace</strong><small>Everyone in Product</small></span><span>8 people</span></button>
+      <button class="choice selected" data-scope="parent"><span class="radio"></span><span><strong>Parent</strong><small>Same access as the parent page</small></span><span>Launch team</span></button>
+      <button class="choice" data-scope="custom"><span class="radio"></span><span><strong>Custom</strong><small>Choose workspace groups and people</small></span><span>›</span></button>
+      <div class="custom-panel" id="custom-panel"><input class="search" placeholder="Find a group or person in Product"><button class="pick chosen"><span class="avatar group-avatar">G</span><span class="name"><strong>Launch team</strong><small>Group · 4 people</small></span><span class="check"></span></button><button class="pick"><span class="avatar a2">M</span><span class="name"><strong>Maya</strong><small>@maya · Workspace member</small></span><span class="check"></span></button><button class="pick"><span class="avatar a3">J</span><span class="name"><strong>Jordan</strong><small>@jordan · Workspace member</small></span><span class="check"></span></button><div class="notice" style="margin:9px 0 0">Need someone else? A workspace admin must add them to Product first.</div></div>
+      <button class="choice" data-scope="private"><span class="radio"></span><span><strong>Private</strong><small>Only you can access this page</small></span><span>🔒</span></button>
+    </div>
+    <div class="section footer-actions"><button class="outline" data-close>Cancel</button><button class="primary" id="save-access">Save</button></div>
   </section>
 </div>
 
 <div class="scrim" id="manage-scrim">
-  <section class="modal workspace-modal"><header class="modal-head"><div><strong>Product workspace</strong><span>Shared pages and the people who collaborate on them.</span></div><button class="close" data-close>×</button></header>
-    <nav class="tabs"><button class="active">People</button><button>Pages & access</button><button>Settings</button></nav>
-    <div class="section"><div class="invite"><input placeholder="Invite by Tallpond handle"><select><option>Can edit</option><option>Can view</option><option>Can manage</option></select><button class="primary">Invite</button></div></div>
-    <div class="section"><span class="section-title">8 PEOPLE</span>
-      <div class="member"><i class="avatar a1">C</i><div class="member-name"><strong>Carson</strong><small>@carson · Owner</small></div><span>Owner</span></div>
-      <div class="member"><i class="avatar a2">M</i><div class="member-name"><strong>Maya</strong><small>@maya</small></div><select><option>Can manage</option><option>Can edit</option><option>Can view</option></select></div>
-      <div class="member"><i class="avatar a3">J</i><div class="member-name"><strong>Jordan</strong><small>@jordan</small></div><select><option>Can edit</option><option>Can view</option><option>Can manage</option></select></div>
+  <section class="modal wide"><header class="modal-head"><div><strong>Product workspace</strong><span>Manage workspace membership, groups, and page defaults.</span></div><button class="close" data-close>×</button></header>
+    <nav class="tabs"><button class="active" data-tab="people">People</button><button data-tab="groups">Groups</button><button data-tab="defaults">Page defaults</button></nav>
+    <div class="tab-panel active" data-panel="people">
+      <div class="section"><div class="notice">Add people to the workspace here. Page access can then use these people or groups.</div><div class="invite"><input placeholder="Invite by Tallpond handle"><select><option>Can edit</option><option>Can view</option><option>Can manage</option></select><button class="primary">Invite</button></div></div>
+      <div class="section"><span class="section-title">8 WORKSPACE MEMBERS</span><div class="member"><span class="avatar a1">C</span><div class="member-name"><strong>Carson</strong><small>@carson</small></div><span>Owner</span></div><div class="member"><span class="avatar a2">M</span><div class="member-name"><strong>Maya</strong><small>@maya</small></div><select><option>Can manage</option><option>Can edit</option><option>Can view</option></select></div><div class="member"><span class="avatar a3">J</span><div class="member-name"><strong>Jordan</strong><small>@jordan</small></div><select><option>Can edit</option><option>Can view</option><option>Can manage</option></select></div></div>
     </div>
-    <div class="section setting-row"><span><strong>Advanced workspace settings</strong><br><small style="color:var(--muted)">Name, ownership, requests, and leaving</small></span><button class="text-button">Open</button></div>
+    <div class="tab-panel" data-panel="groups">
+      <div class="section"><div class="notice">Groups make the same set of workspace members reusable across page access.</div><button class="primary" id="new-group">New group</button></div>
+      <div class="section"><span class="section-title">GROUPS</span><div class="group-card"><span class="avatar group-avatar">G</span><span class="group-info"><strong>Launch team</strong><small>Maya, Jordan, Alex + 1</small></span><button class="outline">Manage</button></div><div class="group-card"><span class="avatar group-avatar">G</span><span class="group-info"><strong>Leadership</strong><small>Carson, Maya</small></span><button class="outline">Manage</button></div></div>
+    </div>
+    <div class="tab-panel" data-panel="defaults">
+      <div class="section"><span class="setting-label">Default access for new pages</span><span class="setting-copy">Owners and admins choose what new pages in Product inherit. Authors can change a page afterward.</span><button class="choice selected"><span class="radio"></span><span><strong>Parent</strong><small>Use the parent page’s access</small></span></button><button class="choice"><span class="radio"></span><span><strong>Workspace</strong><small>Share with everyone in Product</small></span></button><button class="choice"><span class="radio"></span><span><strong>Private</strong><small>Only the author until changed</small></span></button></div>
+      <div class="section footer-actions"><button class="primary">Save default</button></div>
+    </div>
   </section>
 </div>
 <script>
-const $ = (s) => document.querySelector(s);
-const $$ = (s) => [...document.querySelectorAll(s)];
-const shareScrim = $('#share-scrim');
-let mode = 'private';
-function closeAll(){ $$('.scrim').forEach(x => x.classList.remove('show')); }
-function configure(next){
-  mode = next; closeAll(); $$('.demo-bar [data-demo]').forEach(b => b.classList.toggle('active', b.dataset.demo === next));
-  const shared = next === 'shared' || next === 'manage';
-  $('#private-banner').classList.toggle('show', next === 'mismatch');
-  $('#tree-mark').textContent = next === 'mismatch' ? '🔒' : '';
-  $('#parent-mark').textContent = next === 'private' ? '' : '♟';
-  $('#share-button').textContent = shared ? 'Shared · 8' : 'Share';
-  $('#current-access').style.display = shared ? '' : 'none';
-  $('#workspace-invite-note').style.display = shared ? '' : 'none';
-  $('#workspace-explain').style.display = shared ? 'none' : '';
-  $('#existing-choice').style.display = shared ? 'none' : '';
-  $('#restrict-choice').style.display = shared ? '' : 'none';
-  $('#manage-choice').style.display = shared ? '' : 'none';
-  $('#share-subtitle').textContent = shared ? 'This page is shared with the same people as Product.' : 'Invite people to this page and its subpages.';
-  $('#advanced-panel').classList.remove('show');
-  if(next === 'manage') $('#manage-scrim').classList.add('show');
-}
-$$('[data-demo]').forEach(b => b.onclick = () => configure(b.dataset.demo));
-$('#share-button').onclick = () => shareScrim.classList.add('show');
-$$('[data-close]').forEach(b => b.onclick = closeAll);
-$$('.scrim').forEach(s => s.addEventListener('mousedown', e => { if(e.target === s) closeAll(); }));
-$('#advanced-toggle').onclick = () => $('#advanced-panel').classList.toggle('show');
-$('#choose-workspace').onclick = () => { closeAll(); $('#workspace-picker').classList.add('show'); };
-$('#pick-product').onclick = () => { configure('shared'); shareScrim.classList.add('show'); };
-$('#open-manage').onclick = () => { closeAll(); $('#manage-scrim').classList.add('show'); };
-$('#copy-link').onclick = (e) => { e.currentTarget.textContent='Copied'; setTimeout(()=>e.currentTarget.textContent='Copy link',1200); };
-$('#invite-button').onclick = () => { configure('shared'); shareScrim.classList.add('show'); };
-$('#inherit-access').onclick = () => configure('shared');
-$('#keep-private').onclick = () => $('#private-banner').classList.remove('show');
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];let mode='initial';
+function closeAll(){$$('.scrim').forEach(x=>x.classList.remove('show'))}
+function show(id){closeAll();$(id).classList.add('show')}
+function configure(next){mode=next;closeAll();$$('[data-demo]').forEach(b=>b.classList.toggle('active',b.dataset.demo===next));$('#scope-banner').classList.toggle('show',next==='banner');$('#share-button').textContent=next==='initial'?'Share':'Parent · Launch team';$('#tree-mark').textContent=next==='initial'?'':'◉';$('#launch-row').classList.toggle('indent',next!=='initial');if(next==='initial')show('#initial-scrim');if(next==='shared')show('#access-scrim');if(next==='manage')show('#manage-scrim')}
+$$('[data-demo]').forEach(b=>b.onclick=()=>configure(b.dataset.demo));$$('[data-close]').forEach(b=>b.onclick=closeAll);$$('.scrim').forEach(s=>s.addEventListener('mousedown',e=>{if(e.target===s)closeAll()}));
+$('#share-button').onclick=()=>show(mode==='initial'?'#initial-scrim':'#access-scrim');$('#show-workspaces').onclick=()=>show('#workspace-picker');$('#show-create').onclick=()=>{$('#initial-scrim .workspace-list').style.display='none';$('#create-form').classList.add('show')};$('#create-back').onclick=()=>{$('#initial-scrim .workspace-list').style.display='';$('#create-form').classList.remove('show')};$('#create-workspace').onclick=()=>configure('shared');$('#pick-product').onclick=()=>configure('shared');
+$$('[data-scope]').forEach(b=>b.onclick=()=>{$$('[data-scope]').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');$('#custom-panel').classList.toggle('show',b.dataset.scope==='custom')});$$('.pick').forEach(b=>b.onclick=e=>{e.stopPropagation();b.classList.toggle('chosen')});$('#save-access').onclick=closeAll;$('#review-access').onclick=()=>show('#access-scrim');$('#dismiss-banner').onclick=()=>$('#scope-banner').classList.remove('show');
+$$('[data-tab]').forEach(b=>b.onclick=()=>{$$('[data-tab]').forEach(x=>x.classList.toggle('active',x===b));$$('[data-panel]').forEach(x=>x.classList.toggle('active',x.dataset.panel===b.dataset.tab))});
+configure('initial');
 </script>
 </body>
 </html>
