@@ -59,7 +59,7 @@ aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display
 /* Both section headings are the same drop target — the top level — so both
    light up together. The drop line for a top-level drop lands at the top of
    .pages-nav, which can be far below the finger (or off screen entirely when
-   FAVORITES is long), so the heading under the pointer has to say so itself. */
+   FAVORITES is long), so the heading under the pointer has to say so itself.
    A rule under the heading rather than a filled box: the two labels carry
    different top padding (PAGES gets 18px as a later sibling), so a box would
    render at two different heights — and the line sits exactly at the edge the
@@ -295,6 +295,63 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .member-list span select { padding: 2px 3px; border: 0; border-radius: 4px; color: #aaa; background: #333; font: inherit; font-size: 11px; }
 .member-list span button { padding: 0 2px; color: #888; background: transparent; font-size: 14px; line-height: 1; }
 .member-list span button:hover { color: #eee; }
+
+.workspace-share-modal { gap: 13px; width: min(500px, 100%); }
+.share-section-label { color: #777; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
+.workspace-choice-list, .access-choice-list, .workspace-create { display: grid; gap: 7px; }
+.workspace-choice-list > p { margin: 0; color: #777; font-size: 12px; }
+.workspace-choice { display: flex; align-items: center; width: 100%; gap: 10px; padding: 10px 11px; border: 1px solid #333; border-radius: 8px; color: #ccc; background: #151515; text-align: left; }
+.workspace-choice span { display: grid; flex: 1; gap: 1px; }
+.workspace-choice strong { font-size: 13px; }
+.workspace-choice small, .access-summary-row small, .access-choice small, .workspace-roster small { color: #777; font-size: 11px; font-style: normal; }
+.workspace-choice i { color: #777; font-style: normal; }
+.share-divider { height: 1px; background: #303030; }
+.workspace-create input { padding: 9px; border: 0; border-radius: 6px; color: #ddd; background: #121212; font: inherit; }
+.workspace-create .new { justify-self: end; padding: 8px 12px; font-size: 12px; }
+.access-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.access-summary-row > span { display: grid; }
+.access-choice { display: flex; align-items: center; width: 100%; gap: 10px; padding: 10px; border: 1px solid #333; border-radius: 8px; color: #ccc; background: #151515; text-align: left; }
+.access-choice > i { display: grid; width: 16px; height: 16px; flex: none; place-items: center; border: 1px solid #666; border-radius: 50%; }
+.access-choice.selected { border-color: #427fbd; background: #172230; }
+.access-choice.selected > i::after { width: 8px; height: 8px; border-radius: 50%; background: #5d9de0; content: ''; }
+.access-choice > span { display: grid; flex: 1; gap: 1px; }
+.access-choice:disabled { opacity: .6; cursor: not-allowed; }
+.custom-member-list { display: grid; gap: 2px; padding: 6px; border-radius: 8px; background: #121212; }
+.custom-member-list > button { display: flex; align-items: center; gap: 8px; padding: 7px; border: 0; border-radius: 6px; color: #bbb; background: transparent; text-align: left; }
+.custom-member-list > button:hover { background: #202020; }
+.custom-member-list > button > i { display: grid; width: 17px; height: 17px; place-items: center; border: 1px solid #555; border-radius: 4px; color: #fff; font-size: 11px; font-style: normal; }
+.custom-member-list > button.selected > i { border-color: #397fc7; background: #397fc7; }
+.custom-member-list > button span { display: grid; }
+.custom-member-list p { margin: 5px 7px 3px; color: #777; font-size: 11px; }
+.share-modal-actions { display: flex; align-items: center; gap: 7px; }
+.share-modal-actions > span { flex: 1; }
+.share-modal-actions .new { padding: 8px 13px; font-size: 12px; }
+.workspace-settings-link, .workspace-back { padding: 0; border: 0; color: #75a8dc; background: transparent; font: inherit; font-size: 12px; }
+.workspace-tabs { display: flex; gap: 16px; border-bottom: 1px solid #333; }
+.workspace-tabs button { padding: 4px 0 9px; border: 0; border-bottom: 2px solid transparent; color: #888; background: transparent; font: inherit; }
+.workspace-tabs button.active { border-color: #ddd; color: #ddd; }
+.workspace-admin-note { padding: 9px 10px; border-radius: 7px; color: #91b9e2; background: #182534; font-size: 11px; }
+.workspace-roster { display: grid; max-height: 260px; overflow-y: auto; }
+.workspace-roster > div { display: flex; align-items: center; gap: 7px; padding: 8px 2px; border-bottom: 1px solid #292929; }
+.workspace-roster span { display: grid; flex: 1; color: #ccc; }
+.workspace-roster b { color: #888; font-size: 11px; font-weight: 400; }
+.workspace-roster select { padding: 4px; border: 0; border-radius: 4px; color: #aaa; background: #292929; }
+.workspace-roster button { border: 0; color: #777; background: transparent; font-size: 17px; }
+.access-scope-banner { display: flex; align-items: center; gap: 9px; margin-bottom: 24px; padding: 11px 12px; border: 1px solid #604f2a; border-radius: 8px; color: #c9b987; background: #292313; font-size: 12px; }
+.access-scope-banner > span { display: grid; flex: 1; }
+.access-scope-banner small { color: #9b906f; }
+.access-scope-banner button { padding: 6px 8px; border: 0; color: #aaa; background: transparent; font: inherit; font-size: 11px; white-space: nowrap; }
+.access-scope-banner .new { color: #fff; background: #333; }
+
+@media (max-width: 560px) {
+  .share-modal-backdrop:has(.workspace-share-modal) { place-items: stretch; padding: 0; }
+  .workspace-share-modal { width: 100%; height: 100dvh; max-height: none; overflow-y: auto; padding: calc(18px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom)); border-width: 0; border-radius: 0; }
+  .workspace-share-modal header { position: sticky; top: calc(-18px - env(safe-area-inset-top)); z-index: 2; margin: calc(-18px - env(safe-area-inset-top)) -16px 0; padding: calc(18px + env(safe-area-inset-top)) 16px 12px; background: #1b1b1b; }
+  .share-modal-actions { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); margin: 0 -16px calc(-18px - env(safe-area-inset-bottom)); padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); background: #1b1b1b; }
+  .access-scope-banner { align-items: flex-start; flex-wrap: wrap; }
+  .access-scope-banner > span { flex-basis: 100%; }
+  .access-scope-banner button { flex: 1; }
+}
 
 .adopt-modal { width: min(420px, 100%); gap: 14px; }
 .adopt-body { margin: -5px 0 0; color: #aaa; line-height: 1.45; }

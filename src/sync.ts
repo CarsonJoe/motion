@@ -87,7 +87,15 @@ const clearStoredRoles = (scope: string) => {
   }
 }
 const ROOM_ROLE_KEY = 'motion-room-role:'
+const WORKSPACE_DEFAULT_KEY = 'motion-workspace-default:'
 const PENDING_ROOM_GRANT_KEY = 'motion-pending-room-grant:'
+export type PageAccessDefault = 'parent' | 'workspace' | 'private'
+export type WorkspaceInfo = Pick<ResourceInfo, 'id' | 'name' | 'memberCount' | 'currentMember'>
+const workspaceDefaultKey = (scope: string, shareId: string) => `${WORKSPACE_DEFAULT_KEY}${scope}:${shareId}`
+export const cachedWorkspaceDefault = (shareId: string): PageAccessDefault => {
+  const value = localStorage.getItem(workspaceDefaultKey(currentScope(), shareId))
+  return value === 'workspace' || value === 'private' ? value : 'parent'
+}
 const roomRolePrefix = (scope: string) => `${ROOM_ROLE_KEY}${scope}:`
 export const roomAccessKey = (shareId: string, roomId: string) => `${shareId}:${roomId}`
 const storedRoomRoles = (scope: string) => {
@@ -659,18 +667,23 @@ export async function fullSync() {
       // simple and deterministic.
       const sharedInventories = await Promise.all(resources.map(async (resource) => {
         const handle = client.resource(resource.id)
-        const [rows, rooms] = await Promise.all([
+        const [rows, rooms, settings] = await Promise.all([
           selectAll((cursor) => {
             const query = handle.table('member_notes').select()
             return cursor ? query.after(cursor) : query
           }),
-          handle.rooms.list()
+          handle.rooms.list(),
+          handle.table('member_workspace_settings').select('settingKey,value')
         ])
-        return { resource, rows, rooms }
+        return { resource, rows, rooms, settings }
       }))
       const roles = { ...state.roles }
       const roomRoles: Record<string, string> = {}
-      for (const { resource, rows, rooms } of sharedInventories) {
+      for (const { resource, rows, rooms, settings } of sharedInventories) {
+        const defaultSetting = settings.find((row) => row.settingKey === 'pageAccessDefault')?.value
+        if (defaultSetting === 'parent' || defaultSetting === 'workspace' || defaultSetting === 'private') {
+          localStorage.setItem(workspaceDefaultKey(currentScope(), resource.id), defaultSetting)
+        }
         if (resource.currentMember?.role) {
           roles[resource.id] = resource.currentMember.role
           localStorage.setItem(roleKey(resource.id), resource.currentMember.role)
@@ -1301,6 +1314,46 @@ export async function createNoteRoom(store: LocalStore, root: Note): Promise<Roo
   }
 }
 
+export type PageAccessMode = 'workspace' | 'parent' | 'custom' | 'private'
+
+const roomRoleForMember = (role: string): ShareRole => role === 'reader' ? 'reader' : role === 'writer' ? 'writer' : 'admin'
+
+// Applies one explicit access boundary. Moving only touches descendants that
+// still share the root's old room, so narrower boundaries below it survive.
+export async function setPageAccess(store: LocalStore, root: Note, mode: PageAccessMode, parentRoomId: string, selectedUserIds: string[] = []) {
+  if (!tallpond || !root.shareId) throw new Error('Add this page to a workspace before changing access.')
+  if (!navigator.onLine) throw new Error('Reconnect to change access for this page.')
+  if (mode === 'workspace' || mode === 'parent') {
+    await moveNoteTreeToRoom(tallpond, store, root, mode === 'workspace' ? '' : parentRoomId)
+    subscribeLiveForCurrentShares(store)
+    return
+  }
+
+  // Custom/private is always a new explicit boundary. Reusing the current room
+  // could silently change a sibling or parent that inherits that same scope.
+  // Room cleanup can happen later; correctness here means never widening or
+  // narrowing another subtree as a side effect of editing this one.
+  const created = await createNoteRoom(store, root)
+  const room = tallpond.resource(root.shareId).room(created.id)
+  const userId = state.user?.id
+  if (!userId) throw new Error('Reconnect before changing access for this page.')
+  const workspaceMembers = await listMembers(root.shareId)
+  const selected = new Set(mode === 'private' ? [] : selectedUserIds)
+  selected.add(userId)
+  const current = await room.grants.list()
+  for (const grant of current) if (!selected.has(grant.principalId)) await room.grants.remove(grant.principalId)
+  for (const member of workspaceMembers) {
+    if (!selected.has(member.userId)) continue
+    const role = member.userId === userId ? 'admin' : roomRoleForMember(member.role)
+    await room.grants.set(member.userId, role)
+  }
+  // listMembers normally contains the signed-in resource member, but retaining
+  // this explicit owner grant makes a partial profile/list response fail open
+  // for the actor rather than locking them out of the room they just created.
+  if (!workspaceMembers.some((member) => member.userId === userId)) await room.grants.set(userId, 'admin')
+  subscribeLiveForCurrentShares(store)
+}
+
 // A share promotion has to survive at every await boundary. The old path wrote
 // the remote metadata first and only then remembered the resource locally. If a
 // body upload failed between those steps, retrying created another resource and
@@ -1363,7 +1416,7 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
 
 // Sharing is an online operation: create (or recover) the resource, durably
 // re-home the subtree, drain its full state, and only then retire private rows.
-export async function shareNoteTree(store: LocalStore, root: Note, destination?: { shareId: string; roomId: string }) {
+export async function shareNoteTree(store: LocalStore, root: Note, destination?: { shareId: string; roomId: string }, workspaceName?: string) {
   const client = tallpond
   if (!client) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to share this page.')
@@ -1377,7 +1430,7 @@ export async function shareNoteTree(store: LocalStore, root: Note, destination?:
       ? await client.resource(root.shareId).get()
       : await interruptedShare(client, root.id)
   if (!resource) {
-    resource = await client.resource.create('shared_notes', { name: root.title || 'Untitled Note', visibility: 'members' })
+    resource = await client.resource.create('shared_notes', { name: workspaceName?.trim() || root.title || 'Untitled Note', visibility: 'members' })
   }
 
   localStorage.setItem(migrationKey, resource.id)
@@ -1424,8 +1477,32 @@ export async function leaveShare(store: LocalStore, shareId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// Membership and invitations.
+// Workspaces, membership, and invitations.
 // ---------------------------------------------------------------------------
+
+export async function listWorkspaces(): Promise<WorkspaceInfo[]> {
+  if (!tallpond) return []
+  return tallpond.resource.list({ type: 'shared_notes' })
+}
+
+export async function getWorkspaceDefault(shareId: string): Promise<PageAccessDefault> {
+  if (!tallpond) return cachedWorkspaceDefault(shareId)
+  const row = await tallpond.resource(shareId).table('member_workspace_settings')
+    .select('value').eq('settingKey', 'pageAccessDefault').maybeSingle()
+  const value = row?.value
+  const resolved: PageAccessDefault = value === 'workspace' || value === 'private' ? value : 'parent'
+  localStorage.setItem(workspaceDefaultKey(currentScope(), shareId), resolved)
+  return resolved
+}
+
+export async function setWorkspaceDefault(shareId: string, value: PageAccessDefault) {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  const table = tallpond.resource(shareId).table('member_workspace_settings')
+  const existing = await table.select('settingKey').eq('settingKey', 'pageAccessDefault').maybeSingle()
+  if (existing) await tallpond.resource(shareId).table('member_workspace_settings').update({ value }).eq('settingKey', 'pageAccessDefault')
+  else await tallpond.resource(shareId).table('member_workspace_settings').insert({ settingKey: 'pageAccessDefault', value })
+  localStorage.setItem(workspaceDefaultKey(currentScope(), shareId), value)
+}
 
 export async function listInvitations(): Promise<InvitationInfo[]> {
   if (!tallpond) return []

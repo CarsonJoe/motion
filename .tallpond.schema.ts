@@ -201,6 +201,15 @@ export default defineSchema({
         table.index(['parentId'])
         table.access({ read: 'reader', create: 'writer', update: 'writer', delete: 'admin' })
       })
+      // Workspace-wide preferences. Keeping the default beside the resource
+      // makes every collaborator create pages with the same predictable access
+      // policy; the client caches it for offline creation.
+      resource.owns('member_workspace_settings', (table) => {
+        table.text('settingKey').notNull().unique()
+        table.text('value').notNull()
+        table.timestamps()
+        table.access({ read: 'reader', create: 'admin', update: 'admin', delete: 'admin' })
+      })
       resource.owns('member_note_updates', (table) => {
         table.uuid('updateId').notNull().unique()
         table.text('noteId').notNull()

@@ -8,7 +8,7 @@ import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscrib
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, connectInteractive, createNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type ShareRole } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDefault, connectInteractive, createEmptyNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, getWorkspaceDefault, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, listWorkspaces, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, setPageAccess, setWorkspaceDefault, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type PageAccessDefault, type PageAccessMode, type ShareRole, type WorkspaceInfo } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -1052,12 +1052,17 @@ export default function App() {
   const [inviteHandle, setInviteHandle] = useState('')
   const inviteInputRef = useRef<HTMLInputElement>(null)
   const [inviteRole, setInviteRole] = useState<ShareRole>('writer')
-  const [separateWorkspace, setSeparateWorkspace] = useState(false)
-  const [members, setMembers] = useState<MemberInfo[]>([])
+  const [shareView, setShareView] = useState<'initial' | 'access' | 'workspace'>('initial')
+  const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([])
+  const [workspacesLoading, setWorkspacesLoading] = useState(false)
+  const [workspaceName, setWorkspaceName] = useState('')
+  const [accessMode, setAccessMode] = useState<PageAccessMode>('workspace')
+  const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(() => new Set())
+  const [workspaceTab, setWorkspaceTab] = useState<'people' | 'defaults'>('people')
+  const [workspaceDefault, setWorkspaceDefaultState] = useState<PageAccessDefault>('parent')
+  const [scopeBannerNote, setScopeBannerNote] = useState<Note | null>(null)
   const [workspaceMembers, setWorkspaceMembers] = useState<MemberInfo[]>([])
-  const [membersLoading, setMembersLoading] = useState(false)
   const [shareError, setShareError] = useState<string | null>(null)
-  const membersRequest = useRef(0)
   const [inviteBusy, setInviteBusy] = useState(false)
   const [invitations, setInvitations] = useState<InvitationInfo[]>([])
   const [requests, setRequests] = useState<AccessRequest[]>([])
@@ -1448,6 +1453,18 @@ export default function App() {
   // the writing somewhere the user cannot see it.
   const canEditActiveNote = Boolean(activeNote) && !activeTrashed && canWriteNote(activeNote!)
   const canDeleteNote = (note: Note) => !note.shareId || ['admin', 'owner'].includes(roleFor(note.shareId, note.roomId))
+  const scopeForNewPage = useCallback(async (parent: Note | null) => {
+    if (!parent?.shareId) return { shareId: '', roomId: '' }
+    const accessDefault = cachedWorkspaceDefault(parent.shareId)
+    if (accessDefault === 'workspace') return { shareId: parent.shareId, roomId: '' }
+    if (accessDefault === 'private') {
+      try {
+        const room = await createEmptyNoteRoom(parent.shareId, 'Private page')
+        return { shareId: parent.shareId, roomId: room.id }
+      } catch { return { shareId: '', roomId: '' } }
+    }
+    return { shareId: parent.shareId, roomId: parent.roomId }
+  }, [sync.user?.id])
 
   // Publish the services the editor's page links need: resolving live titles,
   // navigating, searching pages, and spawning a subpage from the `[[` picker.
@@ -1475,14 +1492,15 @@ export default function App() {
         const host = parent && activeId ? byId.get(activeId) ?? null : null
         if (parent && !host) return null
         if (host?.shareId && !['writer', 'admin', 'owner'].includes(roleFor(host.shareId, host.roomId))) return null
-        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: host?.id ?? '', shareId: host?.shareId ?? '', roomId: host?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
+        const destination = await scopeForNewPage(host)
+        const note: Note = { id: uid(), title: title || 'Untitled Note', parentId: host?.id ?? '', ...destination, deletedAt: 0, updatedAt: Date.now() }
         await saveNote(store, note)
         if (host) setExpandedIds((current) => new Set(current).add(`pages:${host.id}`))
         return note.id
       }
     })
     return () => setPageLinkServices(null)
-  }, [store, notes, allNotes, activeId, sync.roles])
+  }, [store, notes, allNotes, activeId, sync.roles, sync.roomRoles, scopeForNewPage])
 
   // Seed the backlink index from every body already on this device, then keep
   // the open note's outgoing links current as its text changes (below).
@@ -1699,58 +1717,37 @@ export default function App() {
   // No-op on desktop; re-binds when the open note remounts the editor.
   useMobileKeyboard({ toolbar: toolbarHost, main: mainEl, enabled: isMobile, noteId: activeNote?.id ?? null })
 
-  const loadMembers = useCallback(async (shareId: string, roomId = '') => {
-    const request = ++membersRequest.current
-    setMembersLoading(true)
-    try {
-      const loaded = await listMembers(shareId, roomId)
-      if (request !== membersRequest.current) return
-      setMembers(loaded)
-      setShareError(null)
-    } catch (error) {
-      if (request !== membersRequest.current) return
-      // Keep the last successful roster on screen. Replacing it with an empty
-      // list made a failed refresh look as though sharing had been erased.
-      setShareError(error instanceof Error ? error.message : 'Could not load the people with access.')
-    } finally {
-      if (request === membersRequest.current) setMembersLoading(false)
-    }
-  }, [])
-
   useEffect(() => {
-    if (!activeNote?.shareId || !sync.connected) {
-      membersRequest.current += 1
-      setMembers([]); setWorkspaceMembers([]); setMembersLoading(false); setShareError(null)
-      return
-    }
-    setMembers([])
-    setWorkspaceMembers([])
-    setShareError(null)
-    void loadMembers(activeNote.shareId, activeNote.roomId)
-    if (activeNote.roomId) void listMembers(activeNote.shareId).then(setWorkspaceMembers).catch(() => {})
-  }, [activeNote?.shareId, activeNote?.roomId, sync.connected, loadMembers])
+    if (!activeNote?.shareId || !sync.connected) { setWorkspaceMembers([]); setShareError(null); return }
+    void listMembers(activeNote.shareId).then(setWorkspaceMembers).catch(() => {})
+  }, [activeNote?.shareId, sync.connected])
 
-  // The data layer owns the sockets and announces only which resource changed.
-  // Refresh both derived membership views; accepted invites and revoked access
-  // also trigger a full scope sync in sync.ts.
+  // Membership changes update workspace administration and access pickers.
   useEffect(() => subscribeMembershipChanges(({ resourceId }) => {
     void loadInvitations()
-    if (activeNote?.shareId === resourceId) void loadMembers(resourceId, activeNote.roomId)
-  }), [activeNote?.shareId, activeNote?.roomId, loadInvitations, loadMembers])
+    if (activeNote?.shareId === resourceId) void listMembers(resourceId).then(setWorkspaceMembers).catch(() => {})
+  }), [activeNote?.shareId, loadInvitations])
 
   useEffect(() => {
-    if (!shareOpen) return
+    if (!shareOpen || shareView !== 'workspace' || workspaceTab !== 'people') return
     const frame = window.requestAnimationFrame(() => inviteInputRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
-  }, [shareOpen])
+  }, [shareOpen, shareView, workspaceTab])
+
+  // Owners/admins get one unobtrusive explanation for each access boundary
+  // they encounter. The room id is part of the key, so a later access change
+  // gets one fresh explanation without nagging on every open.
+  useEffect(() => {
+    if (!activeNote?.shareId || !['owner', 'admin'].includes(sync.roles[activeNote.shareId] ?? '')) { setScopeBannerNote(null); return }
+    const key = `motion-access-scope-seen:${activeNote.id}:${activeNote.shareId}:${activeNote.roomId || 'workspace'}`
+    setScopeBannerNote(localStorage.getItem(key) ? null : activeNote)
+  }, [activeNote?.id, activeNote?.shareId, activeNote?.roomId, sync.roles])
 
   const createNote = async (parent: Note | null = null) => {
     if (!store) return
     try {
-      // New pages are personal by default, even beneath shared content. Sharing
-      // is an explicit second action: inherit the parent's access or create a
-      // separate permission boundary.
-      const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', shareId: '', roomId: '', deletedAt: 0, updatedAt: Date.now() }
+      const destination = await scopeForNewPage(parent)
+      const note: Note = { id: uid(), title: 'Untitled Note', parentId: parent?.id ?? '', ...destination, deletedAt: 0, updatedAt: Date.now() }
       await saveNote(store, note)
       setLanding(null)
       setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current)
@@ -1978,89 +1975,108 @@ export default function App() {
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not sign out') }
   }
 
-  // Opening the share sheet is a pure UI action. Nothing is created until an
-  // invite is actually sent, so closing the sheet leaves no empty resource
-  // behind and never re-homes a note the user only looked at.
-  const invite = async () => {
-    if (!store || !activeNote || !inviteHandle.trim() || inviteBusy) return
-    const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId, activeNote.roomId))
-    if (!canManageMembers) {
-      setShareError('Only the owner or an admin can add people to this shared page.')
-      return
-    }
-    const handle = inviteHandle.trim().replace(/^@/, '')
-    const pendingId = `pending:${handle}`
-    const pendingMember: MemberInfo = { userId: pendingId, role: inviteRole, state: 'inviting', kind: 'user', ownerId: null, ownerHandle: handle, ownerDisplayName: null }
-    setInviteHandle('')
-    setInviteBusy(true)
+  const workspaceNameFor = (shareId: string) => workspaces.find((workspace) => workspace.id === shareId)?.name || 'Workspace'
+  const activeWorkspaceId = () => activeNote?.shareId || notes.find((note) => note.id === activeNote?.parentId)?.shareId || ''
+
+  const openSharing = () => {
+    if (!activeNote) return
+    const parent = notes.find((note) => note.id === activeNote.parentId)
     setShareError(null)
-    setMembers((current) => [...current.filter((member) => member.userId !== pendingId), pendingMember])
+    setWorkspaceName(activeNote.title || 'Untitled')
+    setSelectedMemberIds(new Set())
+    setShareOpen(true)
+    setWorkspacesLoading(true)
+    void listWorkspaces().then((loaded) => setWorkspaces(loaded)).catch(() => setWorkspaces([])).finally(() => setWorkspacesLoading(false))
+    if (!activeNote.shareId && !parent?.shareId) { setShareView('initial'); return }
+    const shareId = activeNote.shareId || parent!.shareId
+    const roomId = activeNote.shareId ? activeNote.roomId : parent!.roomId
+    const inheritsParent = Boolean(parent?.shareId === shareId && parent.roomId === roomId)
+    setAccessMode(inheritsParent ? 'parent' : roomId ? 'custom' : 'workspace')
+    setShareView('access')
+    void Promise.all([listMembers(shareId), roomId ? listMembers(shareId, roomId) : Promise.resolve([]), getWorkspaceDefault(shareId)]).then(([workspaceRoster, roomRoster, defaultValue]) => {
+      setWorkspaceMembers(workspaceRoster)
+      setWorkspaceDefaultState(defaultValue)
+      if (roomId && !inheritsParent) {
+        const activeIds = roomRoster.filter((member) => member.state === 'active').map((member) => member.userId)
+        setSelectedMemberIds(new Set(activeIds))
+        if (activeIds.length === 1 && activeIds[0] === sync.user?.id) setAccessMode('private')
+      }
+    }).catch(() => {})
+  }
+
+  const addPageToWorkspace = async (shareId?: string) => {
+    if (!store || !activeNote || inviteBusy) return
+    setInviteBusy(true); setShareError(null)
     try {
-      // A private child can inherit the parent's permission scope or become a
-      // separate workspace. Most users never need the underlying term.
-      const parent = notes.find((note) => note.id === activeNote.parentId)
-      const destination = !activeNote.shareId && !separateWorkspace && parent?.shareId
-        ? { shareId: parent.shareId, roomId: parent.roomId }
-        : undefined
-      const shareId = activeNote.shareId || await shareNoteTree(store, activeNote, destination)
-      const roomId = store.getNote(activeNote.id)?.roomId ?? activeNote.roomId
-      const member = await inviteByHandle(shareId, handle, inviteRole, roomId)
-      setMembers((current) => [...current.filter((candidate) => candidate.userId !== pendingId && candidate.userId !== member.userId), member])
-    }
-    catch (error) {
-      setMembers((current) => current.filter((member) => member.userId !== pendingId))
-      const status = (error as { status?: number } | null)?.status
-      const message = status === 403
-        ? 'Only the owner or an admin can add people to this shared page.'
-        : status === 404 ? 'Tallpond user not found.'
-          : error instanceof Error ? error.message : 'Could not invite that person.'
-      setShareError(message)
-      setActionError(message)
-    }
+      await shareNoteTree(store, activeNote, shareId ? { shareId, roomId: '' } : undefined, workspaceName)
+      setShareOpen(false)
+      await fullSync()
+    } catch (error) { setShareError(error instanceof Error ? error.message : 'Could not share this page.') }
     finally { setInviteBusy(false) }
   }
 
-  const restrictAccess = async () => {
-    if (!store || !activeNote?.shareId || !activeNote.parentId || activeNote.roomId || inviteBusy) return
-    setInviteBusy(true)
-    setShareError(null)
+  const savePageAccess = async () => {
+    if (!store || !activeNote || inviteBusy) return
+    const parent = notes.find((note) => note.id === activeNote.parentId)
+    setInviteBusy(true); setShareError(null)
     try {
-      const room = await createNoteRoom(store, activeNote)
-      await loadMembers(activeNote.shareId, room.id)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not restrict access to this page.'
-      setShareError(message)
-      setActionError(message)
-    } finally { setInviteBusy(false) }
+      let root = activeNote
+      if (!root.shareId) {
+        if (!parent?.shareId) throw new Error('Choose a workspace first.')
+        await shareNoteTree(store, root, { shareId: parent.shareId, roomId: parent.roomId })
+        root = store.getNote(root.id) ?? { ...root, shareId: parent.shareId, roomId: parent.roomId }
+      }
+      await setPageAccess(store, root, accessMode, parent?.shareId === root.shareId ? parent.roomId : '', [...selectedMemberIds])
+      setShareOpen(false)
+      await fullSync()
+    } catch (error) { setShareError(error instanceof Error ? error.message : 'Could not change page access.') }
+    finally { setInviteBusy(false) }
   }
 
-  const addWorkspaceMember = (member: MemberInfo) => {
-    setInviteHandle(member.ownerHandle || member.userId)
-    window.requestAnimationFrame(() => inviteInputRef.current?.focus())
+  const invite = async () => {
+    const shareId = activeWorkspaceId()
+    if (!shareId || !inviteHandle.trim() || inviteBusy) return
+    const handle = inviteHandle.trim().replace(/^@/, '')
+    setInviteBusy(true); setShareError(null)
+    try {
+      const member = await inviteByHandle(shareId, handle, inviteRole)
+      setInviteHandle('')
+      setWorkspaceMembers((current) => [...current.filter((candidate) => candidate.userId !== member.userId), member])
+    } catch (error) {
+      const status = (error as { status?: number } | null)?.status
+      setShareError(status === 404 ? 'Tallpond user not found.' : error instanceof Error ? error.message : 'Could not invite that person.')
+    } finally { setInviteBusy(false) }
   }
 
   const changeMemberRole = async (member: MemberInfo, role: ShareRole) => {
-    if (!activeNote?.shareId || inviteBusy || member.role === role) return
-    setInviteBusy(true)
-    setShareError(null)
+    const shareId = activeWorkspaceId()
+    if (!shareId || inviteBusy || member.role === role) return
+    setInviteBusy(true); setShareError(null)
     try {
-      await setMemberRole(activeNote.shareId, activeNote.roomId, member.userId, role)
-      setMembers((current) => current.map((candidate) => candidate.userId === member.userId ? { ...candidate, role } : candidate))
-    } catch (error) {
-      setShareError(error instanceof Error ? error.message : 'Could not change access.')
-    } finally { setInviteBusy(false) }
+      await setMemberRole(shareId, '', member.userId, role)
+      setWorkspaceMembers((current) => current.map((candidate) => candidate.userId === member.userId ? { ...candidate, role } : candidate))
+    } catch (error) { setShareError(error instanceof Error ? error.message : 'Could not change access.') }
+    finally { setInviteBusy(false) }
   }
 
-  const removeMemberFromRoom = async (member: MemberInfo) => {
-    if (!activeNote?.shareId || inviteBusy) return
-    setInviteBusy(true)
-    setShareError(null)
+  const removeWorkspaceMember = async (member: MemberInfo) => {
+    const shareId = activeWorkspaceId()
+    if (!shareId || inviteBusy) return
+    setInviteBusy(true); setShareError(null)
     try {
-      await removeMemberAccess(activeNote.shareId, activeNote.roomId, member.userId)
-      setMembers((current) => current.filter((candidate) => candidate.userId !== member.userId))
-    } catch (error) {
-      setShareError(error instanceof Error ? error.message : 'Could not remove access.')
-    } finally { setInviteBusy(false) }
+      await removeMemberAccess(shareId, '', member.userId)
+      setWorkspaceMembers((current) => current.filter((candidate) => candidate.userId !== member.userId))
+    } catch (error) { setShareError(error instanceof Error ? error.message : 'Could not remove this workspace member.') }
+    finally { setInviteBusy(false) }
+  }
+
+  const saveWorkspaceDefault = async () => {
+    const shareId = activeWorkspaceId()
+    if (!shareId || inviteBusy) return
+    setInviteBusy(true); setShareError(null)
+    try { await setWorkspaceDefault(shareId, workspaceDefault) }
+    catch (error) { setShareError(error instanceof Error ? error.message : 'Could not save the page default.') }
+    finally { setInviteBusy(false) }
   }
 
   const acceptShareInvitation = async (resourceId: string) => {
@@ -2080,7 +2096,7 @@ export default function App() {
   // event is authoritative but may arrive a moment after the request resolves.
   const refreshMembership = async (resourceId: string) => {
     await loadInvitations()
-    if (activeNote?.shareId === resourceId) await loadMembers(resourceId, activeNote.roomId)
+    if (activeNote?.shareId === resourceId) setWorkspaceMembers(await listMembers(resourceId))
   }
   const approveAccessRequest = async (resourceId: string, userId: string) => {
     try { setNotificationsLoading(true); await approveRequest(resourceId, userId); await refreshMembership(resourceId) }
@@ -2243,7 +2259,8 @@ export default function App() {
     try {
       for (const file of files) {
         const { title, body } = fromImportMarkdown(await file.text(), file.name)
-        const note: Note = { id: uid(), title, parentId, shareId: parent?.shareId ?? '', roomId: parent?.roomId ?? '', deletedAt: 0, updatedAt: Date.now() }
+        const destination = await scopeForNewPage(parent)
+        const note: Note = { id: uid(), title, parentId, ...destination, deletedAt: 0, updatedAt: Date.now() }
         await saveNote(store, note)
         await seedNoteBody(store, note, body)
         opened ??= note.id
@@ -2408,7 +2425,7 @@ export default function App() {
         it. Inert until the drawer opens. */}
     {isMobile && <div className="drawer-close-layer"><button className="show-sidebar-button drawer-close" aria-label="Close page" tabIndex={mobileView === 'drawer' ? 0 : -1} aria-hidden={mobileView !== 'drawer'} onClick={() => { if (reviewPreview) { setReviewPreview(null); setMenuOpen(false) } else closePage() }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button></div>}
     {isMobile && (mobileView === 'drawer' || drawerSettling) && <div className="drawer-grip" role="button" tabIndex={0} aria-label="Back to your page" onPointerDown={dragDrawer} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMenuOpen(false) } }} />}
-    <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={reviewPreview ? undefined : focusEditorCanvas} onPointerDown={reviewPreview ? undefined : swipeOpenDrawer}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{reviewPreview ? <ReviewPage preview={reviewPreview} isMobile={isMobile} onBack={() => setMenuOpen(true)} /> : activeNote && !landing ? <><header onMouseDownCapture={handleHeaderMouseDown} className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden} onMouseDown={(event) => event.stopPropagation()}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
+    <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={reviewPreview ? undefined : focusEditorCanvas} onPointerDown={reviewPreview ? undefined : swipeOpenDrawer}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{reviewPreview ? <ReviewPage preview={reviewPreview} isMobile={isMobile} onBack={() => setMenuOpen(true)} /> : activeNote && !landing ? <><header onMouseDownCapture={handleHeaderMouseDown} className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><svg viewBox="0 0 24 24" aria-hidden="true">{isMobile ? <><line x1="3" y1="6" x2="18" y2="6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="12" x2="21" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /><line x1="3" y1="18" x2="12" y2="18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16M10 9l3 3-3 3" /></>}</svg></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.4" /><circle cx="12" cy="12" r="1.4" /><circle cx="19" cy="12" r="1.4" /></svg></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{scopeBannerNote?.id === activeNote.id && <div className="access-scope-banner" role="status"><span><strong>{activeNote.roomId ? 'This page has custom access' : 'This page uses workspace access'}</strong><small>{activeNote.roomId ? 'Only selected workspace members can access it. New subpages inherit this access.' : `Everyone in ${workspaceNameFor(activeNote.shareId)} can access it. New subpages inherit this access.`}</small></span><button onClick={() => { localStorage.setItem(`motion-access-scope-seen:${activeNote.id}:${activeNote.shareId}:${activeNote.roomId || 'workspace'}`, '1'); setScopeBannerNote(null) }}>Got it</button><button className="new" onClick={() => { setScopeBannerNote(null); openSharing() }}>Review access</button></div>}{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden} onMouseDown={(event) => event.stopPropagation()}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
       {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
@@ -2427,7 +2444,7 @@ export default function App() {
     {headerMenuOpen && headerMenuAnchor && activeNote && <HeaderMenu
       anchor={headerMenuAnchor}
       canShare={sync.connected && online}
-      onShare={() => { setSeparateWorkspace(false); setHeaderMenuOpen(false); setShareOpen(true) }}
+      onShare={() => { setHeaderMenuOpen(false); openSharing() }}
       onCopyMarkdown={() => void copyMarkdown()}
       onDownload={downloadMarkdown}
       onClose={() => setHeaderMenuOpen(false)}
@@ -2438,8 +2455,36 @@ export default function App() {
     {recoverPrompt && createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setRecoverPrompt(null)}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="recover-title" onMouseDown={(event) => event.stopPropagation()}><strong id="recover-title">Recover this page to edit it?</strong><p>{`“${recoverPrompt.title || 'Untitled'}” is in Recently deleted, so it can be read but not changed. Recovering puts it back where it was.`}</p><div className="confirm-actions"><button className="confirm-cancel" disabled={recoverBusy} onClick={() => setRecoverPrompt(null)}>Keep reading</button><button className="new" disabled={recoverBusy || !canWriteNote(recoverPrompt)} onClick={() => void recover(recoverPrompt)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button></div></section></div>, document.body)}
     {attentionKind && createPortal(<div className="share-modal-backdrop adopt-backdrop" role="presentation"><AttentionDialog kind={attentionKind} count={attentionCount} onNotNow={deferAttention} onReview={() => { setTrashViewOpen(false); setIdentityOpen(false); openSidebar(); setReviewPreview(null); setReviewKind(attentionKind) }} /></div>, document.body)}
     {shareOpen && activeNote && (() => {
-      const canManageMembers = !activeNote.shareId || ['owner', 'admin'].includes(roleFor(activeNote.shareId, activeNote.roomId))
-      return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}><header><div><strong id="share-title">Share this page</strong><span>Its shared subpages keep the same structure for everyone.</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header><div className="share-link-row"><span className="share-link-label">Anyone you add can open this page from its link</span><button className="copy-link" onClick={() => void copyPageLink()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15l6-6M11 6l1-1a4 4 0 0 1 6 6l-1 1M13 18l-1 1a4 4 0 0 1-6-6l1-1" /></svg>{copiedLink ? 'Copied' : 'Copy link'}</button></div>{!activeNote.shareId && notes.some((note) => note.id === activeNote.parentId && note.shareId) && <div className="separate-workspace-option"><span>{separateWorkspace ? 'This page will have separate people, ownership, and cost attribution.' : 'This page will use its parent’s access.'}</span><button className="copy-link" onClick={() => setSeparateWorkspace((value) => !value)}>{separateWorkspace ? 'Use parent access' : 'Create separate workspace'}</button></div>}{activeNote.shareId && activeNote.parentId && !activeNote.roomId && canManageMembers && <div className="share-link-row"><span className="share-link-label">Give this page its own access list. Everyone else currently loses access to it and its subpages.</span><button className="copy-link" disabled={inviteBusy} onClick={() => void restrictAccess()}>{inviteBusy ? 'Restricting…' : 'Restrict to me'}</button></div>}{canManageMembers ? <div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(e) => { setInviteHandle(e.target.value); setShareError(null) }} placeholder="Tallpond handle" onKeyDown={(e) => { if (e.key === 'Enter') void invite() }} /><select aria-label="Invite role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>{inviteBusy ? 'Inviting…' : 'Invite'}</button></div> : <p className="share-permission-note">Only the owner or an admin can add people.</p>}{activeNote.roomId && canManageMembers && workspaceMembers.some((candidate) => candidate.state === 'active' && !members.some((member) => member.userId === candidate.userId)) && <div className="workspace-member-picks"><small>Add someone already collaborating here</small><div>{workspaceMembers.filter((candidate) => candidate.state === 'active' && !members.some((member) => member.userId === candidate.userId)).map((member) => <button key={member.userId} disabled={inviteBusy} onClick={() => addWorkspaceMember(member)}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)}</button>)}</div></div>}{shareError && <p className="share-error" role="alert">{shareError}</p>}{membersLoading && members.length === 0 && <div className="member-list"><span>Loading people…</span></div>}{!membersLoading && activeNote.shareId && members.length === 0 && !shareError && <p className="share-empty">No people to show yet.</p>}{members.length > 0 && <div className="member-list">{members.map((member) => <span key={member.userId}>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)}{canManageMembers && member.state === 'active' && member.role !== 'owner' && member.userId !== sync.user?.id ? <select aria-label={`Access for ${member.ownerDisplayName || member.ownerHandle || member.userId}`} value={member.role} disabled={inviteBusy} onChange={(event) => void changeMemberRole(member, event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select> : <> · {member.role}</>}{member.state !== 'active' ? ` · ${member.state}` : ''}{canManageMembers && member.role !== 'owner' && member.userId !== sync.user?.id && <button aria-label={`Remove access for ${member.ownerDisplayName || member.ownerHandle || member.userId}`} disabled={inviteBusy} onClick={() => void removeMemberFromRoom(member)}>×</button>}</span>)}</div>}</section></div>, document.body)
+      const parent = notes.find((note) => note.id === activeNote.parentId)
+      const shareId = activeNote.shareId || parent?.shareId || ''
+      const workspaceLabel = workspaceNameFor(shareId)
+      const canManageWorkspace = !shareId || ['owner', 'admin'].includes(sync.roles[shareId] ?? '')
+      const activeWorkspaceMembers = workspaceMembers.filter((member) => member.state === 'active')
+      const accessLabel = accessMode === 'workspace' ? `Everyone in ${workspaceLabel}` : accessMode === 'parent' ? `Same access as ${parent?.title || 'parent'}` : accessMode === 'private' ? 'Only you' : `${selectedMemberIds.size} selected people`
+      return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal workspace-share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}>
+        <header><div><strong id="share-title">{shareView === 'initial' ? `Share “${activeNote.title || 'Untitled'}”` : shareView === 'workspace' ? `${workspaceLabel} workspace` : `Access for “${activeNote.title || 'Untitled'}”`}</strong><span>{shareView === 'initial' ? 'Choose a workspace for this page and its subpages.' : shareView === 'workspace' ? 'Manage workspace membership and page defaults.' : `Choose who in ${workspaceLabel} can access this page and its subpages.`}</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header>
+        {shareView === 'initial' ? <>
+          <div className="workspace-choice-list"><span className="share-section-label">EXISTING WORKSPACES</span>{workspacesLoading ? <p>Loading workspaces…</p> : workspaces.length === 0 ? <p>No existing workspaces.</p> : workspaces.filter((workspace) => ['writer', 'admin', 'owner'].includes(workspace.currentMember?.role ?? '')).map((workspace) => <button className="workspace-choice" key={workspace.id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(workspace.id)}><span><strong>{workspace.name}</strong><small>{workspace.memberCount ?? '—'} people · {workspace.currentMember?.role}</small></span><i>›</i></button>)}</div>
+          <div className="share-divider" />
+          <label className="workspace-create"><span className="share-section-label">CREATE A NEW WORKSPACE</span><input aria-label="Workspace name" value={workspaceName} onChange={(event) => setWorkspaceName(event.target.value)} /><button className="new" disabled={inviteBusy || !workspaceName.trim()} onClick={() => void addPageToWorkspace()}>{inviteBusy ? 'Creating…' : 'Create & share'}</button></label>
+        </> : shareView === 'access' ? <>
+          <div className="access-summary-row"><span><strong>{accessMode[0].toUpperCase() + accessMode.slice(1)}</strong><small>{accessLabel}</small></span>{activeNote.shareId && <button className="copy-link" onClick={() => void copyPageLink()}>{copiedLink ? 'Copied' : 'Copy link'}</button>}</div>
+          <div className="access-choice-list" role="radiogroup" aria-label="Page access">
+            {(['workspace', 'parent', 'custom', 'private'] as PageAccessMode[]).map((mode) => {
+              const parentAvailable = Boolean(parent?.shareId === shareId)
+              if (mode === 'parent' && !parentAvailable) return null
+              const detail = mode === 'workspace' ? `Everyone in ${workspaceLabel}` : mode === 'parent' ? `Same access as ${parent?.title || 'parent'}` : mode === 'custom' ? 'Choose existing workspace members' : 'Only you can access this page'
+              return <Fragment key={mode}><button className={`access-choice ${accessMode === mode ? 'selected' : ''}`} role="radio" aria-checked={accessMode === mode} disabled={!canManageWorkspace || inviteBusy} onClick={() => setAccessMode(mode)}><i /><span><strong>{mode[0].toUpperCase() + mode.slice(1)}</strong><small>{detail}</small></span></button>{mode === 'custom' && accessMode === 'custom' && <div className="custom-member-list">{activeWorkspaceMembers.map((member) => { const selected = selectedMemberIds.has(member.userId); const name = member.ownerDisplayName || (member.ownerHandle ? `@${member.ownerHandle}` : member.userId.slice(0, 8)); return <button key={member.userId} className={selected ? 'selected' : ''} disabled={member.userId === sync.user?.id} onClick={() => setSelectedMemberIds((current) => { const next = new Set(current); if (selected) next.delete(member.userId); else next.add(member.userId); return next })}><i>{selected ? '✓' : ''}</i><span>{name}<small>{member.role}</small></span></button> })}<p>Workspace admins add new people from Workspace settings.</p></div>}</Fragment>
+            })}
+          </div>
+          {shareError && <p className="share-error" role="alert">{shareError}</p>}
+          <div className="share-modal-actions">{canManageWorkspace && <button className="workspace-settings-link" onClick={() => { setWorkspaceTab('people'); void Promise.all([listMembers(shareId), getWorkspaceDefault(shareId)]).then(([roster, defaultValue]) => { setWorkspaceMembers(roster); setWorkspaceDefaultState(defaultValue) }).catch(() => {}); setShareView('workspace') }}>Workspace settings</button>}<span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button>{canManageWorkspace && <button className="new" disabled={inviteBusy || (accessMode === 'custom' && selectedMemberIds.size === 0)} onClick={() => void savePageAccess()}>{inviteBusy ? 'Saving…' : 'Save'}</button>}</div>
+        </> : <>
+          <div className="workspace-tabs" role="tablist"><button className={workspaceTab === 'people' ? 'active' : ''} onClick={() => setWorkspaceTab('people')}>People</button><button className={workspaceTab === 'defaults' ? 'active' : ''} onClick={() => setWorkspaceTab('defaults')}>Page defaults</button></div>
+          {workspaceTab === 'people' ? <><div className="workspace-admin-note">Add people to the workspace here. Page access can then select them.</div><div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(event) => { setInviteHandle(event.target.value); setShareError(null) }} placeholder="Tallpond handle" onKeyDown={(event) => { if (event.key === 'Enter') void invite() }} /><select aria-label="Workspace role" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>Invite</button></div><div className="workspace-roster">{workspaceMembers.map((member) => <div key={member.userId}><span>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)}<small>{member.state}</small></span>{member.role === 'owner' || member.userId === sync.user?.id ? <b>{member.role}</b> : <><select value={member.role} disabled={inviteBusy} onChange={(event) => void changeMemberRole(member, event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button aria-label="Remove member" disabled={inviteBusy} onClick={() => void removeWorkspaceMember(member)}>×</button></>}</div>)}</div></> : <><div className="workspace-admin-note">Choose how new subpages in this workspace are shared by default.</div><div className="access-choice-list">{(['parent', 'workspace', 'private'] as PageAccessDefault[]).map((value) => <button key={value} className={`access-choice ${workspaceDefault === value ? 'selected' : ''}`} onClick={() => setWorkspaceDefaultState(value)}><i /><span><strong>{value[0].toUpperCase() + value.slice(1)}</strong><small>{value === 'parent' ? 'Use the parent page’s access' : value === 'workspace' ? `Share with everyone in ${workspaceLabel}` : 'Only the author until changed'}</small></span></button>)}</div><div className="share-modal-actions"><span /><button className="new" disabled={inviteBusy} onClick={() => void saveWorkspaceDefault()}>{inviteBusy ? 'Saving…' : 'Save default'}</button></div></>}
+          {shareError && <p className="share-error" role="alert">{shareError}</p>}<button className="workspace-back" onClick={() => setShareView('access')}>← Back to page access</button>
+        </>}
+      </section></div>, document.body)
     })()}
   </div>
 }
