@@ -339,7 +339,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .workspace-roster b { color: #888; font-size: 11px; font-weight: 400; }
 .workspace-roster select { padding: 4px; border: 0; border-radius: 4px; color: #aaa; background: #292929; }
 .workspace-roster button { border: 0; color: #777; background: transparent; font-size: 17px; }
-.access-scope-banner { display: flex; align-items: center; gap: 9px; margin-bottom: 24px; padding: 11px 12px; border: 1px solid #604f2a; border-radius: 8px; color: #c9b987; background: #292313; font-size: 12px; }
+.access-scope-banner-wrap { position: relative; z-index: 8; max-width: 780px; margin: 12px auto 0; padding: 0 56px; }
+.access-scope-banner { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; padding: 11px 12px; border: 1px solid #604f2a; border-radius: 8px; color: #c9b987; background: #292313; font-size: 12px; }
 .access-scope-banner > span { display: grid; flex: 1; }
 .access-scope-banner small { color: #9b906f; }
 .access-scope-banner button { padding: 6px 8px; border: 0; color: #aaa; background: transparent; font: inherit; font-size: 11px; white-space: nowrap; }
@@ -350,6 +351,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .workspace-share-modal { width: 100%; height: 100dvh; max-height: none; overflow-y: auto; padding: calc(18px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom)); border-width: 0; border-radius: 0; }
   .workspace-share-modal header { position: sticky; top: calc(-18px - env(safe-area-inset-top)); z-index: 2; margin: calc(-18px - env(safe-area-inset-top)) -16px 0; padding: calc(18px + env(safe-area-inset-top)) 16px 12px; background: #1b1b1b; }
   .share-modal-actions { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); margin: 0 -16px calc(-18px - env(safe-area-inset-bottom)); padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); background: #1b1b1b; }
+  .access-scope-banner-wrap { margin-top: 8px; padding: 0 20px; }
   .access-scope-banner { align-items: flex-start; flex-wrap: wrap; }
   .access-scope-banner > span { flex-basis: 100%; }
   .access-scope-banner button { flex: 1; }
