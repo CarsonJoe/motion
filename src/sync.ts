@@ -89,12 +89,13 @@ const clearStoredRoles = (scope: string) => {
 const ROOM_ROLE_KEY = 'motion-room-role:'
 const WORKSPACE_DEFAULT_KEY = 'motion-workspace-default:'
 const PENDING_ROOM_GRANT_KEY = 'motion-pending-room-grant:'
-export type PageAccessDefault = 'parent' | 'workspace' | 'private'
+export type PageAccessDefault = 'parent' | 'workspace' | 'custom'
 export type WorkspaceInfo = Pick<ResourceInfo, 'id' | 'name' | 'memberCount' | 'currentMember'>
 const workspaceDefaultKey = (scope: string, shareId: string) => `${WORKSPACE_DEFAULT_KEY}${scope}:${shareId}`
 export const cachedWorkspaceDefault = (shareId: string): PageAccessDefault => {
   const value = localStorage.getItem(workspaceDefaultKey(currentScope(), shareId))
-  return value === 'workspace' || value === 'private' ? value : 'parent'
+  // `private` was the old name for custom access with an empty roster.
+  return value === 'workspace' ? 'workspace' : value === 'custom' || value === 'private' ? 'custom' : 'parent'
 }
 const roomRolePrefix = (scope: string) => `${ROOM_ROLE_KEY}${scope}:`
 export const roomAccessKey = (shareId: string, roomId: string) => `${shareId}:${roomId}`
@@ -682,8 +683,8 @@ export async function fullSync() {
       const roomRoles: Record<string, string> = {}
       for (const { resource, rows, rooms, settings } of sharedInventories) {
         const defaultSetting = settings.find((row) => row.settingKey === 'pageAccessDefault')?.value
-        if (defaultSetting === 'parent' || defaultSetting === 'workspace' || defaultSetting === 'private') {
-          localStorage.setItem(workspaceDefaultKey(currentScope(), resource.id), defaultSetting)
+        if (defaultSetting === 'parent' || defaultSetting === 'workspace' || defaultSetting === 'custom' || defaultSetting === 'private') {
+          localStorage.setItem(workspaceDefaultKey(currentScope(), resource.id), defaultSetting === 'private' ? 'custom' : defaultSetting)
         }
         if (resource.currentMember?.role) {
           roles[resource.id] = resource.currentMember.role
@@ -1318,7 +1319,7 @@ export async function createNoteRoom(store: LocalStore, root: Note): Promise<Roo
   }
 }
 
-export type PageAccessMode = 'workspace' | 'parent' | 'custom' | 'private'
+export type PageAccessMode = 'workspace' | 'parent' | 'custom'
 
 const roomRoleForMember = (role: string): ShareRole => role === 'reader' ? 'reader' : role === 'writer' ? 'writer' : 'admin'
 
@@ -1333,7 +1334,8 @@ export async function setPageAccess(store: LocalStore, root: Note, mode: PageAcc
     return
   }
 
-  // Custom/private is always a new explicit boundary. Reusing the current room
+  // Custom access is always a new explicit boundary. An empty selection means
+  // creator-only access. Reusing the current room
   // could silently change a sibling or parent that inherits that same scope.
   // Room cleanup can happen later; correctness here means never widening or
   // narrowing another subtree as a side effect of editing this one.
@@ -1342,7 +1344,7 @@ export async function setPageAccess(store: LocalStore, root: Note, mode: PageAcc
   const userId = state.user?.id
   if (!userId) throw new Error('Reconnect before changing access for this page.')
   const workspaceMembers = await listMembers(root.shareId)
-  const selected = new Set(mode === 'private' ? [] : selectedUserIds)
+  const selected = new Set(selectedUserIds)
   selected.add(userId)
   const current = await room.grants.list()
   for (const grant of current) if (!selected.has(grant.principalId)) await room.grants.remove(grant.principalId)
@@ -1494,7 +1496,7 @@ export async function getWorkspaceDefault(shareId: string): Promise<PageAccessDe
   const row = await tallpond.resource(shareId).table('member_workspace_settings')
     .select('value').eq('settingKey', 'pageAccessDefault').maybeSingle()
   const value = row?.value
-  const resolved: PageAccessDefault = value === 'workspace' || value === 'private' ? value : 'parent'
+  const resolved: PageAccessDefault = value === 'workspace' ? 'workspace' : value === 'custom' || value === 'private' ? 'custom' : 'parent'
   localStorage.setItem(workspaceDefaultKey(currentScope(), shareId), resolved)
   return resolved
 }
