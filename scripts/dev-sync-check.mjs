@@ -126,6 +126,18 @@ const run = async () => {
     const movedRows = await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', movingNoteId)
     if (movedRows.length !== 1) throw new Error('Moved room note was not visible in its destination')
 
+    // Restoring workspace access targets the default room's managed id, which
+    // is distinct from the resource id. Exercise both tables in the reverse
+    // direction so an `invalid_room` regression cannot ship again.
+    const defaultRoom = (await owner.resource(resourceId).rooms.list()).find((room) => room.isDefault)
+    if (!defaultRoom) throw new Error('Resource default room was not listed')
+    const [restrictedMetadata] = await owner.resource(resourceId).room(roomId).table('member_notes').select('id').eq('noteId', movingNoteId)
+    const restrictedUpdates = await owner.resource(resourceId).room(roomId).table('member_note_updates').select('id').eq('noteId', movingNoteId)
+    await owner.resource(resourceId).room(roomId).table('member_note_updates').moveRoom(restrictedUpdates.map((row) => row.id), defaultRoom.id)
+    await owner.resource(resourceId).room(roomId).table('member_notes').moveRoom([restrictedMetadata.id], defaultRoom.id)
+    const restoredRows = await owner.resource(resourceId).table('member_notes').select().eq('noteId', movingNoteId)
+    if (restoredRows.length !== 1) throw new Error('Moved room note did not return to workspace access')
+
     // Soft delete travels as an ordinary metadata update.
     await owner.resource(resourceId).table('member_notes').update({ deletedAt: Date.now(), clientUpdatedAt: Date.now() }).eq('noteId', sharedNoteId)
 

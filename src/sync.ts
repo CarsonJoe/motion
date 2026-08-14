@@ -1265,9 +1265,12 @@ export async function moveNoteTreeToRoom(client: TallpondClient, store: LocalSto
   ])
   if (metadataRowIds.length !== noteIds.length) throw new Error('Not every page was ready to move. Sync and try again.')
 
-  // Tallpond names the default room with the resource id at the move boundary;
-  // locally it remains the empty string for backwards-compatible routing.
-  const destination = destinationRoomId || root.shareId
+  // Tallpond gives the default room its own id. Locally it remains the empty
+  // string, so resolve that managed id only at the move boundary. Using the
+  // resource id here produces `invalid_room` when restoring custom access to
+  // workspace access.
+  const destination = destinationRoomId || (await client.resource(root.shareId).rooms.list()).find((room) => room.isDefault)?.id
+  if (!destination) throw new Error('This workspace has no default access room.')
   if (updateRowIds.length) await sourceUpdates().moveRoom(updateRowIds, destination)
   await sourceNotes().moveRoom(metadataRowIds, destination)
   await store.moveNotesToRoom(ids, destinationRoomId)
