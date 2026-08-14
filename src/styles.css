@@ -315,6 +315,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .access-choice.selected { border-color: #427fbd; background: #172230; }
 .access-choice.selected > i::after { width: 8px; height: 8px; border-radius: 50%; background: #5d9de0; content: ''; }
 .access-choice > span { display: grid; flex: 1; gap: 1px; }
+.access-audience { display: flex !important; flex: none !important; align-items: center; justify-content: flex-end; gap: 0 !important; }
+.access-audience b { margin-right: 6px; color: #999; font-size: 11px; font-weight: 500; }
+.access-audience i { display: grid; width: 21px; height: 21px; place-items: center; margin-left: -4px; border: 2px solid #151515; border-radius: 50%; color: #ddd; background: #3a3a3a; font-size: 9px; font-style: normal; }
+.access-choice.selected .access-audience i { border-color: #172230; }
 .access-choice:disabled { opacity: .6; cursor: not-allowed; }
 .custom-member-list { display: grid; gap: 2px; padding: 6px; border-radius: 8px; background: #121212; }
 .custom-member-search { width: 100%; margin-bottom: 4px; padding: 8px; border: 1px solid #333; border-radius: 6px; color: #ddd; background: #191919; font: inherit; font-size: 12px; outline: none; }
@@ -325,10 +329,15 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .custom-member-list > button.selected > i { border-color: #397fc7; background: #397fc7; }
 .custom-member-list > button span { display: grid; }
 .custom-member-list p { margin: 5px 7px 3px; color: #777; font-size: 11px; }
+.custom-member-list .custom-invite-link { justify-content: center; border: 1px solid #31577e; color: #8ab7e4; background: #172230; text-align: center; }
+.workspace-empty-invite { display: grid; gap: 2px; width: 100%; padding: 10px 11px; border: 1px solid #31577e; border-radius: 8px; color: #9bc5ee; background: #172230; font: inherit; text-align: left; }
+.workspace-empty-invite strong { color: #c6def5; font-size: 12px; }
+.workspace-empty-invite span { color: #7ea5cc; font-size: 11px; }
 .share-modal-actions { display: flex; align-items: center; gap: 7px; }
 .share-modal-actions > span { flex: 1; }
 .share-modal-actions .new { padding: 8px 13px; font-size: 12px; }
 .workspace-settings-link, .workspace-back { padding: 0; border: 0; color: #75a8dc; background: transparent; font: inherit; font-size: 12px; }
+.workspace-settings-link { font-weight: 600; }
 .workspace-tabs { display: flex; gap: 16px; border-bottom: 1px solid #333; }
 .workspace-tabs button { padding: 4px 0 9px; border: 0; border-bottom: 2px solid transparent; color: #888; background: transparent; font: inherit; }
 .workspace-tabs button.active { border-color: #ddd; color: #ddd; }
