@@ -48,6 +48,18 @@ export function toExportMarkdown(markdown: string, shareIdFor: (noteId: string) 
 export const exportFileName = (title: string) =>
   `${(title.trim() || 'Untitled').replace(/[\\/:*?"<>|#]/g, '-').replace(/\s+/g, ' ').slice(0, 80).trim()}.md`
 
+// MDXEditor's Markdown importer treats CommonMark angle-bracket autolinks as
+// malformed MDX and silently renders the whole document empty. Feed it the
+// equivalent ordinary-link syntax; the stored Markdown is unchanged until the
+// user makes a real edit, at which point the editor exports this valid form.
+export function toEditorMarkdown(markdown: string) {
+  return markdown.replace(/<(https?:\/\/[^<>\s]+)>/gi, (_match, url: string) => {
+    const label = url.replace(/([\\\[\]])/g, '\\$1')
+    const destination = url.replace(/[()]/g, (character) => character === '(' ? '%28' : '%29')
+    return `[${label}](${destination})`
+  })
+}
+
 // A dropped file is plain CommonMark that knows nothing about this app. There
 // are no markers to restore — consecutive empty blocks are not expressible in
 // Markdown, so there is genuinely nothing to recover — and any `motion:` links

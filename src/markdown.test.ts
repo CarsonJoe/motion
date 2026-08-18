@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { exportFileName, fromImportMarkdown, toExportMarkdown } from './markdown'
+import { exportFileName, fromImportMarkdown, toEditorMarkdown, toExportMarkdown } from './markdown'
 
 const BLANK = '\u200B'
 const noShares = () => null
@@ -30,6 +30,17 @@ describe('toExportMarkdown', () => {
 
   it('ends with exactly one trailing newline', () => {
     expect(toExportMarkdown('body\n\n\n', noShares)).toBe('body\n')
+  })
+})
+
+describe('toEditorMarkdown', () => {
+  it('converts CommonMark URL autolinks without changing surrounding content', () => {
+    expect(toEditorMarkdown('before\n\n<https://arxiv.org/abs/2608.10218>\n\nafter'))
+      .toBe('before\n\n[https://arxiv.org/abs/2608.10218](https://arxiv.org/abs/2608.10218)\n\nafter')
+  })
+
+  it('leaves ordinary links and non-link angle brackets alone', () => {
+    expect(toEditorMarkdown('[site](https://example.com) <not a link>')).toBe('[site](https://example.com) <not a link>')
   })
 })
 

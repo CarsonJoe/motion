@@ -16,6 +16,7 @@ import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin } from './pageLink'
 import { editorMenuPlugin, thematicBreakRulePlugin } from './editorMenu'
 import { lexicalBridgePlugin } from './lexicalBridge'
+import { toEditorMarkdown } from './markdown'
 import './editorVendor.css'
 
 // The stored document IS this Markdown string, so serialization has to be a
@@ -38,7 +39,8 @@ const MARKDOWN_OPTIONS = {
 export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean }) {
   const editor = useRef<MDXEditorMethods>(null)
   const container = useRef<HTMLDivElement>(null)
-  const current = useRef(markdown)
+  const editorMarkdown = toEditorMarkdown(markdown)
+  const current = useRef(editorMarkdown)
   // Loading markdown INTO the editor must never come back out as an edit. The
   // editor re-serializes whatever it is given and its output is not always the
   // input byte for byte — bullet markers, escaping, and the blank-line markers
@@ -65,8 +67,8 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
     return () => window.clearTimeout(release.current)
   }, [])
   useEffect(() => {
-    if (markdown === current.current) return
-    current.current = markdown
+    if (editorMarkdown === current.current) return
+    current.current = editorMarkdown
     holdApplying()
     const root = container.current?.querySelector<HTMLElement>('.motion-md-content')
     const selection = window.getSelection()
@@ -93,7 +95,7 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
       anchorNodeOffset: selection!.anchorOffset,
       focusNodeOffset: selection!.focusOffset
     } : null
-    editor.current?.setMarkdown(markdown)
+    editor.current?.setMarkdown(editorMarkdown)
     if (saved) window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
       const nextRoot = container.current?.querySelector<HTMLElement>('.motion-md-content')
       if (!nextRoot) return
@@ -126,8 +128,8 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
       const nextSelection = window.getSelection()
       nextSelection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
     }))
-  }, [markdown])
-  return <div ref={container}><MDXEditor ref={editor} markdown={markdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value, initial) => { current.current = value; if (!initial && !applying.current) onChange(value) }} plugins={[
+  }, [editorMarkdown])
+  return <div ref={container}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
     headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
