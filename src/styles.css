@@ -871,7 +871,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      while peeking the highlight is what ties the two together. With no page
      open there is no active row for it to match, so the other states are
      unaffected. */
-  .sidebar-footer { padding: 14px 3px 0; }
+  /* Footer actions take their own line beneath the status and stay in the left
+     column, clear of the floating new-page button on the right. */
+  .sidebar-footer { padding: 14px 72px 0 3px; }
+  .sidebar-footer .sync-button { flex-basis: 100%; margin-left: 0; text-align: left; }
   .sync-status { display: block; }
   main { height: 100%; overflow: auto; }
   /* No gutter is reserved for a scrollbar here, so the fades run edge to edge. */
