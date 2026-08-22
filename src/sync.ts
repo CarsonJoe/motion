@@ -1,6 +1,6 @@
 import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type RoomChange, type RoomInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
 import { mergeBase64Updates } from './codec'
-import { adoptScope, ANON_SCOPE, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
+import { adoptScope, ANON_SCOPE, discardScopeNotes, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
 
 // Tallpond injects gateway config on its hosted origin; local Vite development
 // supplies the same two values through .env.local. Developer credentials never
@@ -969,9 +969,14 @@ export const declineAnonymousWork = () => setState({ adoptable: null })
 
 // The explicit discard, reachable only after the user has been told what it
 // contains. Separate from `decline` on purpose — one of these is destructive.
-export async function discardAnonymousWork() {
-  await dropScope(ANON_SCOPE)
-  setState({ adoptable: null })
+export async function discardAnonymousWork(selectedIds?: ReadonlySet<string>) {
+  if (!selectedIds) {
+    await dropScope(ANON_SCOPE)
+    setState({ adoptable: null })
+    return
+  }
+  const remaining = await discardScopeNotes(ANON_SCOPE, selectedIds)
+  setState({ adoptable: remaining.notes ? remaining : null })
 }
 
 // A complete pull found that these previously-synced ids no longer exist, but

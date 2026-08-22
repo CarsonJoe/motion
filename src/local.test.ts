@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { adoptScope, ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, workspaceMountBlockedBy, type Note, type NoteOp } from './local'
+import { adoptScope, ANON_SCOPE, discardScopeNotes, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, workspaceMountBlockedBy, type Note, type NoteOp } from './local'
 
 const note = (patch: Partial<Note>): Note => ({
   id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
@@ -417,6 +417,22 @@ describe('scope adoption', () => {
     expect(await remaining.getDocState('child')).toBe('remaining body')
     remaining.close()
     expect((await surveyScope(ANON_SCOPE)).notes).toBe(2)
+  })
+
+  it('deletes only selected source pages and leaves the rest reviewable', async () => {
+    const anonymous = await openLocalStore(ANON_SCOPE)
+    await anonymous.putNote(note({ id: 'discard', title: 'Discard me' }))
+    await anonymous.putNote(note({ id: 'keep', title: 'Keep reviewing', parentId: 'discard' }))
+    await anonymous.putDocState('discard', 'discarded body')
+    await anonymous.putDocState('keep', 'remaining body')
+    anonymous.close()
+
+    expect((await discardScopeNotes(ANON_SCOPE, new Set(['discard']))).notes).toBe(1)
+    const remaining = await openLocalStore(ANON_SCOPE)
+    expect(remaining.getNote('discard')).toBeNull()
+    expect(remaining.getNote('keep')?.parentId).toBe('')
+    expect(await remaining.getDocState('discard')).toBeNull()
+    expect(await remaining.getDocState('keep')).toBe('remaining body')
   })
 
   it('promotes a selected child to a root when its parent is not selected', async () => {

@@ -427,6 +427,42 @@ export function dropScope(scope: string) {
 // metadata update (last-write-wins) and the CRDT payload (Yjs deduplicates)
 // are idempotent, so a re-push of already-known rows is a no-op server-side.
 //
+// Remove a chosen set while preserving the pages that remain. Children whose
+// parent leaves become roots so a partial decision can never make them vanish
+// from the next review.
+const removeScopeNotes = async (db: IDBDatabase, allNotes: Note[], selected: ReadonlySet<string>) => {
+  const transaction = db.transaction(['notes', 'docs', 'outbox'], 'readwrite')
+  const sourceNotes = transaction.objectStore('notes')
+  const sourceDocs = transaction.objectStore('docs')
+  const sourceOutbox = transaction.objectStore('outbox')
+  for (const note of allNotes) {
+    if (selected.has(note.id)) {
+      sourceNotes.delete(note.id)
+      sourceDocs.delete(note.id)
+    } else if (selected.has(note.parentId)) sourceNotes.put({ ...note, parentId: '' })
+  }
+  const queued = sourceOutbox.getAll()
+  queued.onsuccess = () => {
+    for (const op of queued.result as Op[]) if (selected.has(op.noteId)) sourceOutbox.delete(op.id)
+  }
+  await done(transaction)
+}
+
+export async function discardScopeNotes(scope: string, selectedIds: ReadonlySet<string>) {
+  const db = await openIfExists(scope)
+  if (!db) return { notes: 0, deleted: 0, pending: 0, titles: [] } satisfies ScopeSurvey
+  let empty = false
+  try {
+    const allNotes = await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)
+    const existingIds = new Set(allNotes.map((note) => note.id))
+    const selected = new Set([...selectedIds].filter((id) => existingIds.has(id)))
+    if (selected.size) await removeScopeNotes(db, allNotes, selected)
+    empty = selected.size === allNotes.length
+  } finally { db.close() }
+  if (empty) await dropScope(scope)
+  return surveyScope(scope)
+}
+
 // Safe to re-run: it is a merge, and the source is only dropped once every row
 // has landed, so a crash halfway through leaves the source intact for a retry.
 export async function adoptScope(
@@ -441,7 +477,8 @@ export async function adoptScope(
   let sourceIsEmpty = true
   try {
     const allNotes = await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)
-    const selected = selectedIds ? new Set([...selectedIds].filter((id) => allNotes.some((note) => note.id === id))) : null
+    const existingIds = new Set(allNotes.map((note) => note.id))
+    const selected = selectedIds ? new Set([...selectedIds].filter((id) => existingIds.has(id))) : null
     const notes = selected ? allNotes.filter((note) => selected.has(note.id)) : allNotes
     const docs = (await asPromise(db.transaction('docs').objectStore('docs').getAll() as IDBRequest<DocRow[]>))
       .filter((doc) => !selected || selected.has(doc.noteId))
@@ -486,23 +523,7 @@ export async function adoptScope(
     // A selective merge consumes only the chosen rows. Keep everything else in
     // the anonymous scope for the next decision, promoting children whose
     // selected parent just left so they remain visible and independently safe.
-    if (selected && selected.size) {
-      const transaction = db.transaction(['notes', 'docs', 'outbox'], 'readwrite')
-      const sourceNotes = transaction.objectStore('notes')
-      const sourceDocs = transaction.objectStore('docs')
-      const sourceOutbox = transaction.objectStore('outbox')
-      for (const note of allNotes) {
-        if (selected.has(note.id)) {
-          sourceNotes.delete(note.id)
-          sourceDocs.delete(note.id)
-        } else if (selected.has(note.parentId)) sourceNotes.put({ ...note, parentId: '' })
-      }
-      const queued = sourceOutbox.getAll()
-      queued.onsuccess = () => {
-        for (const op of queued.result as Op[]) if (selected.has(op.noteId)) sourceOutbox.delete(op.id)
-      }
-      await done(transaction)
-    }
+    if (selected?.size) await removeScopeNotes(db, allNotes, selected)
   } finally { db.close() }
   if (sourceIsEmpty) await dropScope(fromScope)
   return { notes: adopted }
