@@ -393,32 +393,26 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .adopt-actions { display: flex; align-items: center; gap: 8px; }
 .adopt-spacer { flex: 1; }
 .adopt-actions button { padding: 9px 14px; border: 1px solid #3a3a3a; border-radius: 7px; color: #c5c5c5; background: #242424; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.adopt-actions .new { border-color: transparent; color: #171717; background: #f0f0f0; font-weight: 600; }
+.adopt-actions .new { border-color: #555; color: #eee; background: #363636; font-weight: 600; }
 .adopt-actions button:disabled { color: #666; cursor: not-allowed; }
 /* Destructive, and deliberately the quietest thing in the dialog. */
 .adopt-discard-link { border-color: transparent !important; color: #7d7d7d !important; background: none !important; padding-left: 0 !important; }
 .adopt-discard { border-color: #6a2f2f !important; color: #e88 !important; background: #2b1c1c !important; }
 @media (hover: hover) {
   .adopt-actions button:not(.new):not(:disabled):hover { color: #fff; }
+  .adopt-actions .new:not(:disabled):hover { color: #fff; background: #444; }
   .adopt-discard-link:not(:disabled):hover { color: #e88 !important; }
 }
 
-/* Phones: a bottom sheet rather than a floating card. The actions sit within
-   thumb reach instead of centred halfway up the screen, and the primary action
-   goes full width on its own row so the three choices never crowd into a line
-   of tiny targets. */
+/* Keep the attention prompt a centered dialog on phones too. It only has two
+   short actions, so turning it into a bottom sheet and reordering the primary
+   action adds movement without buying useful space. */
 @media (max-width: 560px) {
-  .adopt-backdrop { place-items: end stretch; padding: 0; }
-  .adopt-modal { width: 100%; gap: 13px; padding: 18px 16px calc(18px + env(safe-area-inset-bottom)); border-width: 1px 0 0; border-radius: 16px 16px 0 0; }
+  .adopt-backdrop { place-items: center; padding: 16px; }
+  .adopt-modal { width: min(420px, 100%); gap: 13px; padding: 18px; border-width: 1px; border-radius: 12px; }
   .adopt-modal header { align-items: center; }
   .adopt-list { max-height: 42vh; }
-  .adopt-actions { flex-wrap: wrap; }
-  /* With the primary action on its own row the spacer has nothing left to push
-     apart, and left in place it wraps to a row of its own. */
-  .adopt-spacer { display: none; }
-  .adopt-actions .new { order: -1; width: 100%; padding: 12px 14px; text-align: center; }
-  .adopt-actions button { flex: 1; padding: 11px 12px; text-align: center; }
-  .adopt-discard-link { flex: 0 1 auto !important; padding-left: 2px !important; }
+  .adopt-actions button { padding: 11px 12px; text-align: center; }
   .adopt-see-pages { padding: 13px; }
 }
 
@@ -436,8 +430,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 @media (hover: hover) { .trash-view-close:hover { color: #fff; background: #292929; } }
 .trash-view-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .trash-view-empty { margin: 4px 8px; color: #7c7c7c; font-size: 13px; line-height: 1.5; }
-.trash-list { display: grid; min-height: 0; flex: 1; align-content: start; grid-auto-rows: max-content; margin-top: 2px; overflow-y: auto; gap: 2px; }
-.trash-item { display: flex; align-items: center; gap: 4px; border-radius: 7px; }
+.trash-list { display: flex; min-height: 0; flex: 1; flex-direction: column; align-items: stretch; margin-top: 2px; overflow-y: auto; gap: 2px; }
+.trash-item { display: flex; min-height: 52px; flex: 0 0 52px; align-items: center; gap: 4px; border-radius: 7px; }
 .trash-item.active { background: #242424; }
 .trash-open { display: grid; min-width: 0; flex: 1; padding: 9px 8px 9px 10px; border: 0; border-radius: 7px; gap: 2px; background: none; font: inherit; text-align: left; cursor: pointer; }
 .trash-title { overflow: hidden; color: #cfcfcf; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
