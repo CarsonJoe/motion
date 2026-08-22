@@ -10,7 +10,8 @@
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { BoldItalicUnderlineToggles, headingsPlugin, HighlightToggle, imagePlugin, InsertImage, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
+import { usePublisher } from '@mdxeditor/gurx'
+import { BoldItalicUnderlineToggles, ButtonWithTooltip, headingsPlugin, HighlightToggle, iconComponentFor$, imagePlugin, insertImage$, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, readOnly$, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo, useCellValue } from '@mdxeditor/editor'
 import { BlockTypeMenu } from './blockTypeMenu'
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin } from './pageLink'
@@ -35,6 +36,41 @@ const MARKDOWN_OPTIONS = {
   fence: '`', fences: true, quote: '"',
   incrementListMarker: true, resourceLink: false, setext: false
 } as const
+
+// The image button is intentionally just a file-picker trigger. URL, alt, and
+// title fields belong in Markdown for people who need them; the common action
+// should be one click, one system picker, and an immediate local-first insert.
+function InsertImagePicker() {
+  const input = useRef<HTMLInputElement>(null)
+  const insertImage = usePublisher(insertImage$)
+  const iconComponentFor = useCellValue(iconComponentFor$)
+  const readOnly = useCellValue(readOnly$)
+  return <>
+    <ButtonWithTooltip
+      title="Insert image"
+      aria-label="Insert image"
+      disabled={readOnly}
+      onPointerDown={(event) => event.preventDefault()}
+      onClick={() => input.current?.click()}
+    >
+      {iconComponentFor('add_photo')}
+    </ButtonWithTooltip>
+    <input
+      ref={input}
+      hidden
+      tabIndex={-1}
+      type="file"
+      accept="image/jpeg,image/png,image/webp,image/gif"
+      onClick={(event) => { event.currentTarget.value = '' }}
+      onChange={(event) => {
+        const file = event.currentTarget.files?.[0]
+        if (file) insertImage({ file })
+      }}
+    />
+  </>
+}
+
+const NoImageDialog = () => null
 
 export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false, onUploadImage, resolveImage }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean; onUploadImage?: (file: File) => Promise<string>; resolveImage?: (source: string) => Promise<string> }) {
   const editor = useRef<MDXEditorMethods>(null)
@@ -130,7 +166,7 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
     }))
   }, [editorMarkdown])
   return <div ref={container}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
-    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /><InsertImage /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
+    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageDialog }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
+    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /><InsertImagePicker /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
