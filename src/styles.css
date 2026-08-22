@@ -393,13 +393,13 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .adopt-actions { display: flex; align-items: center; gap: 8px; }
 .adopt-spacer { flex: 1; }
 .adopt-actions button { padding: 9px 14px; border: 1px solid #3a3a3a; border-radius: 7px; color: #c5c5c5; background: #242424; font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
-.adopt-actions .new { border-color: transparent; font-weight: 600; }
+.adopt-actions .new { border-color: transparent; color: #171717; background: #f0f0f0; font-weight: 600; }
 .adopt-actions button:disabled { color: #666; cursor: not-allowed; }
 /* Destructive, and deliberately the quietest thing in the dialog. */
 .adopt-discard-link { border-color: transparent !important; color: #7d7d7d !important; background: none !important; padding-left: 0 !important; }
 .adopt-discard { border-color: #6a2f2f !important; color: #e88 !important; background: #2b1c1c !important; }
 @media (hover: hover) {
-  .adopt-actions button:not(:disabled):hover { color: #fff; }
+  .adopt-actions button:not(.new):not(:disabled):hover { color: #fff; }
   .adopt-discard-link:not(:disabled):hover { color: #e88 !important; }
 }
 
