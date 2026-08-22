@@ -6,6 +6,15 @@ import { defineSchema } from '@tallpond/schema'
 // share authority. Deletions are soft (`deletedAt`) so a stale device can
 // never resurrect a removed note.
 export default defineSchema({
+  // Visual assets use the same bucket name privately and in workspaces. Private
+  // pages upload to the owner-only bucket; shared pages upload directly into
+  // their resource room so custom page access also protects the bytes.
+  buckets: {
+    visual_assets: (bucket) => {
+      bucket.maxFileSize('10MB')
+      bucket.accept(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+    }
+  },
   tables: {
     // ---------------------------------------------------------------------
     // Legacy tables from earlier schema generations. The app no longer reads
@@ -193,6 +202,11 @@ export default defineSchema({
       resource.visibility('members')
       resource.defaultRole('reader')
       resource.grant({ owner: 'admin', admin: 'writer', writer: 'reader', reader: null })
+      resource.files('visual_assets', (files) => {
+        files.maxFileSize('10MB')
+        files.accept(['image/jpeg', 'image/png', 'image/webp', 'image/gif'])
+        files.access({ list: 'reader', read: 'reader', upload: 'writer', update: 'creator', delete: 'creator', unlink: ['creator', 'admin'] })
+      })
       resource.owns('member_notes', (table) => {
         table.text('noteId').notNull().unique()
         table.text('title').notNull().default('')

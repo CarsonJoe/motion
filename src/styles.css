@@ -586,6 +586,20 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 
 /* MDXEditor tooltip — sit above the sticky editor header (z-index 5). */
 [class*="_popupContainer_"], [class*="_tooltipContent_"] { z-index: 40 !important; }
+/* Image/link dialogs portal outside `.mdxeditor`, so they do not inherit its
+   dark theme variables. Style the portal surface explicitly instead of letting
+   the editor's light defaults flash over the app. */
+[class*="_dialogOverlay_"] { background: #000 !important; opacity: .7 !important; }
+[class*="_dialogContent_"] { display: grid !important; width: min(560px, calc(100vw - 32px)); gap: 14px !important; padding: 18px !important; border: 1px solid #3a3a3a !important; border-radius: 12px !important; color: #c8c8c8 !important; background: #1b1b1b !important; box-shadow: 0 20px 60px rgba(0, 0, 0, .55); }
+[class*="_dialogContent_"] h2 { margin: 0; color: #f1f1f1; font-size: 17px; }
+[class*="_dialogContent_"] form { width: 100%; padding: 0 !important; }
+[class*="_dialogContent_"] label { color: #999; }
+[class*="_dialogContent_"] [class*="_textInput_"] { padding: 9px 10px; border: 1px solid #444; border-radius: 7px; color: #eee; background: #111; }
+[class*="_dialogContent_"] input[type='file'] { max-width: 100%; color: #999; font: inherit; font-size: 12px; }
+[class*="_dialogContent_"] input[type='file']::file-selector-button { margin-right: 8px; padding: 7px 9px; border: 1px solid #444; border-radius: 6px; color: #ddd; background: #292929; font: inherit; cursor: pointer; }
+[class*="_dialogContent_"] [class*="_primaryButton_"], [class*="_dialogContent_"] [class*="_secondaryButton_"] { padding: 8px 12px; border-radius: 7px; color: #ddd; background: #303030; cursor: pointer; }
+[class*="_dialogContent_"] [class*="_primaryButton_"] { border-color: transparent; color: #171717; background: #eee; }
+@media (hover: hover) { [class*="_dialogContent_"] [class*="_primaryButton_"]:hover { background: #fff; } [class*="_dialogContent_"] [class*="_secondaryButton_"]:hover { background: #3a3a3a; } }
 
 /* Block-type dropdown — force our dark palette (defaults render light). */
 [class*="_selectTrigger_"] { border: 0 !important; padding-left: 10px !important; background-color: transparent !important; color: #c2c2c2 !important; }
@@ -614,6 +628,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .motion-md-content blockquote { margin-left: 0; padding-left: 15px; border-left: 3px solid #aaa; color: #bababa; }
 .motion-md-content code { padding: 2px 4px; border-radius: 4px; background: #252525; }
 .motion-md-content mark { color: #00011c; background: #66adff; }
+.motion-md-content img { display: block; max-width: 100%; height: auto; margin: 20px auto; border-radius: 10px; background: #1b1b1b; }
 .motion-md-content pre { padding: 12px; border: 1px solid #2d2d2d; border-radius: 8px; background: #191919; }
 .motion-md-content table { border-collapse: collapse; }
 .motion-md-content td, .motion-md-content th { padding: 6px; border: 1px solid #3a3a3a; }

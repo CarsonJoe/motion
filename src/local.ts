@@ -1,6 +1,7 @@
-// The single local database. Three stores, one authority each:
+// The single local database. Four stores, one authority each:
 //   notes  — metadata mirror (title/parent/share/room/soft-delete), LWW by updatedAt
 //   docs   — merged Yjs state per note body, rewritten as edits land
+//   assets — local image blobs and their last uploaded placement
 //   outbox — operations not yet accepted by the gateway
 // Everything except the outbox and unsynced doc state is rebuildable from the
 // server, and the app is fully usable if the outbox never drains.
@@ -29,6 +30,19 @@ export type Note = {
   // Per-user placement for a workspace root. Undefined means use canonical
   // placement; an empty string explicitly mounts it at this user's top level.
   localParentId?: string
+}
+
+export type LocalAsset = {
+  path: string
+  noteId: string
+  blob: Blob
+  contentType: string
+  sizeBytes: number
+  // `private`, `resource:<id>:default`, or `resource:<id>:<room>`.
+  placement?: string
+  ownerId?: string
+  // Downloaded for offline display rather than authored on this device.
+  cacheOnly?: boolean
 }
 
 export type UpdateOp = { id: string; kind: 'update'; noteId: string; shareId: string; roomId: string; payload: string; createdAt: number }
@@ -120,16 +134,22 @@ const done = (transaction: IDBTransaction) => new Promise<void>((resolve, reject
 export type LocalStore = Awaited<ReturnType<typeof openLocalStore>>
 
 const createStores = (db: IDBDatabase) => {
-  db.createObjectStore('notes', { keyPath: 'id' })
-  db.createObjectStore('docs', { keyPath: 'noteId' })
-  const outbox = db.createObjectStore('outbox', { keyPath: 'id' })
-  outbox.createIndex('createdAt', 'createdAt')
-  outbox.createIndex('noteId', 'noteId')
+  if (!db.objectStoreNames.contains('notes')) db.createObjectStore('notes', { keyPath: 'id' })
+  if (!db.objectStoreNames.contains('docs')) db.createObjectStore('docs', { keyPath: 'noteId' })
+  if (!db.objectStoreNames.contains('assets')) {
+    const assets = db.createObjectStore('assets', { keyPath: 'path' })
+    assets.createIndex('noteId', 'noteId')
+  }
+  if (!db.objectStoreNames.contains('outbox')) {
+    const outbox = db.createObjectStore('outbox', { keyPath: 'id' })
+    outbox.createIndex('createdAt', 'createdAt')
+    outbox.createIndex('noteId', 'noteId')
+  }
 }
 
 export async function openLocalStore(scope: string = ANON_SCOPE) {
   const db = await asPromise<IDBDatabase>((() => {
-    const request = indexedDB.open(databaseName(scope), 1)
+    const request = indexedDB.open(databaseName(scope), 2)
     request.onupgradeneeded = () => createStores(request.result)
     return request
   })())
@@ -234,6 +254,19 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
     },
     deleteDocState,
 
+    getAsset: async (path: string) => asPromise(db.transaction('assets').objectStore('assets').get(path) as IDBRequest<LocalAsset | undefined>),
+    allAssets: async () => asPromise(db.transaction('assets').objectStore('assets').getAll() as IDBRequest<LocalAsset[]>),
+    putAsset: async (asset: LocalAsset) => {
+      const transaction = db.transaction('assets', 'readwrite')
+      transaction.objectStore('assets').put(asset)
+      await done(transaction)
+    },
+    removeAsset: async (path: string) => {
+      const transaction = db.transaction('assets', 'readwrite')
+      transaction.objectStore('assets').delete(path)
+      await done(transaction)
+    },
+
     enqueueUpdate: async (noteId: string, shareId: string, roomId: string, payload: string) => {
       const transaction = db.transaction('outbox', 'readwrite')
       transaction.objectStore('outbox').put({ id: crypto.randomUUID(), kind: 'update', noteId, shareId, roomId, payload, createdAt: Date.now() } satisfies UpdateOp)
@@ -311,9 +344,12 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
     // queued for it — an op outliving the note would push a row the purge just
     // removed and resurrect it.
     removeNote: async (noteId: string) => {
-      const transaction = db.transaction(['notes', 'docs', 'outbox'], 'readwrite')
+      const transaction = db.transaction(['notes', 'docs', 'assets', 'outbox'], 'readwrite')
       transaction.objectStore('notes').delete(noteId)
       transaction.objectStore('docs').delete(noteId)
+      const assets = transaction.objectStore('assets')
+      const assetKeys = assets.index('noteId').getAllKeys(noteId)
+      assetKeys.onsuccess = () => { for (const key of assetKeys.result) assets.delete(key) }
       const outbox = transaction.objectStore('outbox')
       const keys = outbox.index('noteId').getAllKeys(noteId)
       keys.onsuccess = () => { for (const key of keys.result) outbox.delete(key) }
@@ -327,11 +363,14 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
     removeShare: async (shareId: string) => {
       const removed = [...cache.values()].filter((note) => note.shareId === shareId)
       if (!removed.length) return
-      const transaction = db.transaction(['notes', 'docs', 'outbox'], 'readwrite')
+      const transaction = db.transaction(['notes', 'docs', 'assets', 'outbox'], 'readwrite')
+      const assets = transaction.objectStore('assets')
       const outbox = transaction.objectStore('outbox')
       for (const note of removed) {
         transaction.objectStore('notes').delete(note.id)
         transaction.objectStore('docs').delete(note.id)
+        const assetKeys = assets.index('noteId').getAllKeys(note.id)
+        assetKeys.onsuccess = () => { for (const key of assetKeys.result) assets.delete(key) }
         const keys = outbox.index('noteId').getAllKeys(note.id)
         keys.onsuccess = () => { for (const key of keys.result) outbox.delete(key) }
       }
@@ -358,8 +397,8 @@ type DocRow = { noteId: string; state: string }
 // available everywhere this app runs.
 async function openIfExists(scope: string) {
   let created = false
-  const request = indexedDB.open(databaseName(scope), 1)
-  request.onupgradeneeded = () => { created = true; createStores(request.result) }
+  const request = indexedDB.open(databaseName(scope), 2)
+  request.onupgradeneeded = (event) => { created = event.oldVersion === 0; createStores(request.result) }
   const db = await asPromise<IDBDatabase>(request)
   if (!created) return db
   db.close()
@@ -431,14 +470,17 @@ export function dropScope(scope: string) {
 // parent leaves become roots so a partial decision can never make them vanish
 // from the next review.
 const removeScopeNotes = async (db: IDBDatabase, allNotes: Note[], selected: ReadonlySet<string>) => {
-  const transaction = db.transaction(['notes', 'docs', 'outbox'], 'readwrite')
+  const transaction = db.transaction(['notes', 'docs', 'assets', 'outbox'], 'readwrite')
   const sourceNotes = transaction.objectStore('notes')
   const sourceDocs = transaction.objectStore('docs')
+  const sourceAssets = transaction.objectStore('assets')
   const sourceOutbox = transaction.objectStore('outbox')
   for (const note of allNotes) {
     if (selected.has(note.id)) {
       sourceNotes.delete(note.id)
       sourceDocs.delete(note.id)
+      const assetKeys = sourceAssets.index('noteId').getAllKeys(note.id)
+      assetKeys.onsuccess = () => { for (const key of assetKeys.result) sourceAssets.delete(key) }
     } else if (selected.has(note.parentId)) sourceNotes.put({ ...note, parentId: '' })
   }
   const queued = sourceOutbox.getAll()
@@ -482,6 +524,8 @@ export async function adoptScope(
     const notes = selected ? allNotes.filter((note) => selected.has(note.id)) : allNotes
     const docs = (await asPromise(db.transaction('docs').objectStore('docs').getAll() as IDBRequest<DocRow[]>))
       .filter((doc) => !selected || selected.has(doc.noteId))
+    const assets = (await asPromise(db.transaction('assets').objectStore('assets').getAll() as IDBRequest<LocalAsset[]>))
+      .filter((asset) => !selected || selected.has(asset.noteId))
     sourceIsEmpty = !selected || selected.size === allNotes.length
 
     // Notes first, so a doc merged below always has a row to belong to. A page
@@ -509,6 +553,7 @@ export async function adoptScope(
       const existing = await target.getDocState(doc.noteId)
       await target.putDocState(doc.noteId, existing ? mergeDocStates([existing, doc.state]) : doc.state)
     }
+    for (const asset of assets) await target.putAsset({ ...asset, placement: undefined, ownerId: undefined })
 
     // Tombstones are pushed too. Skipping them was a real bug: a delete that
     // had not yet drained stayed local and came back on the next device.

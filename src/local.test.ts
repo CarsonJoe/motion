@@ -300,6 +300,25 @@ describe('identity scoping', () => {
     expect(reopened.getNote('a-note')?.title).toBe('user a private')
   })
 
+  it('upgrades pre-asset databases without mistaking them for empty new scopes', async () => {
+    await new Promise<void>((resolve, reject) => {
+      const request = indexedDB.open('motion', 1)
+      request.onupgradeneeded = () => {
+        request.result.createObjectStore('notes', { keyPath: 'id' }).put(note({ id: 'legacy', title: 'Keep me' }))
+        request.result.createObjectStore('docs', { keyPath: 'noteId' })
+        const outbox = request.result.createObjectStore('outbox', { keyPath: 'id' })
+        outbox.createIndex('createdAt', 'createdAt')
+        outbox.createIndex('noteId', 'noteId')
+      }
+      request.onsuccess = () => { request.result.close(); resolve() }
+      request.onerror = () => reject(request.error)
+    })
+
+    const upgraded = await openLocalStore(ANON_SCOPE)
+    expect(upgraded.getNote('legacy')?.title).toBe('Keep me')
+    expect(await upgraded.allAssets()).toEqual([])
+  })
+
   it('keeps the anonymous scope separate from every signed-in scope', async () => {
     const anonymous = await openLocalStore(ANON_SCOPE)
     await anonymous.putNote(note({ id: 'draft' }))
@@ -403,6 +422,8 @@ describe('scope adoption', () => {
     await anonymous.putNote(note({ id: 'other', title: 'Remaining root' }))
     await anonymous.putDocState('parent', 'selected body')
     await anonymous.putDocState('child', 'remaining body')
+    await anonymous.putAsset({ path: 'notes/parent/selected.png', noteId: 'parent', blob: new Blob(['selected']), contentType: 'image/png', sizeBytes: 8, placement: 'private', ownerId: 'anonymous' })
+    await anonymous.putAsset({ path: 'notes/child/remaining.png', noteId: 'child', blob: new Blob(['remaining']), contentType: 'image/png', sizeBytes: 9 })
     anonymous.close()
 
     const target = await openLocalStore('user-a')
@@ -410,11 +431,15 @@ describe('scope adoption', () => {
     expect(target.getNote('parent')?.title).toBe('Selected parent')
     expect(target.getNote('child')).toBeNull()
     expect(await target.getDocState('parent')).toBe('selected body')
+    expect(await (await target.getAsset('notes/parent/selected.png'))?.blob.text()).toBe('selected')
+    expect((await target.getAsset('notes/parent/selected.png'))?.placement).toBeUndefined()
 
     const remaining = await openLocalStore(ANON_SCOPE)
     expect(remaining.getNote('parent')).toBeNull()
     expect(remaining.getNote('child')?.parentId).toBe('')
     expect(await remaining.getDocState('child')).toBe('remaining body')
+    expect(await (await remaining.getAsset('notes/child/remaining.png'))?.blob.text()).toBe('remaining')
+    expect(await remaining.getAsset('notes/parent/selected.png')).toBeUndefined()
     remaining.close()
     expect((await surveyScope(ANON_SCOPE)).notes).toBe(2)
   })
@@ -425,6 +450,7 @@ describe('scope adoption', () => {
     await anonymous.putNote(note({ id: 'keep', title: 'Keep reviewing', parentId: 'discard' }))
     await anonymous.putDocState('discard', 'discarded body')
     await anonymous.putDocState('keep', 'remaining body')
+    await anonymous.putAsset({ path: 'notes/discard/gone.png', noteId: 'discard', blob: new Blob(['gone']), contentType: 'image/png', sizeBytes: 4 })
     anonymous.close()
 
     expect((await discardScopeNotes(ANON_SCOPE, new Set(['discard']))).notes).toBe(1)
@@ -433,6 +459,7 @@ describe('scope adoption', () => {
     expect(remaining.getNote('keep')?.parentId).toBe('')
     expect(await remaining.getDocState('discard')).toBeNull()
     expect(await remaining.getDocState('keep')).toBe('remaining body')
+    expect(await remaining.getAsset('notes/discard/gone.png')).toBeUndefined()
   })
 
   it('promotes a selected child to a root when its parent is not selected', async () => {

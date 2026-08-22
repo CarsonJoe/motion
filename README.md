@@ -12,6 +12,7 @@ One authority per kind of data — nothing is stored twice:
 | --- | --- | --- |
 | Note metadata (title, parent, deletion) | `notes` row per note | Last-write-wins by client timestamp |
 | Note body (markdown) | Yjs CRDT per note | Automatic merge via `note_updates` log |
+| Visual assets | IndexedDB blob, then Tallpond Files | Stable `motion-asset:` path; room-scoped upload |
 | Presence (cursors) | `member_presence` rows | Ephemeral, 30s lease, never queued |
 
 - **Deletes are soft.** `deletedAt` on the metadata row is an ordinary LWW
@@ -27,7 +28,7 @@ One authority per kind of data — nothing is stored twice:
 ### Client modules (`src/`)
 
 - `local.ts` — the single IndexedDB: `notes` (metadata mirror), `docs` (merged
-  Yjs state per note), `outbox` (undelivered ops). Fully usable offline;
+  Yjs state per note), `assets` (offline image blobs), `outbox` (undelivered ops). Fully usable offline;
   everything except the outbox is rebuildable from the server.
 - `sync.ts` — session state machine, pull + live subscriptions on the metadata
   tables, serialized outbox drain (content updates merge per note; metadata
@@ -39,6 +40,8 @@ One authority per kind of data — nothing is stored twice:
   local-only state the server log is missing (self-healing).
 - `codec.ts` — base64 + Yjs helpers, including the minimal-diff markdown
   patcher that keeps concurrent edits mergeable.
+- `visualAssets.ts` — local image staging, stable Markdown references, offline
+  preview caching, and private/default-room/custom-room Tallpond uploads.
 - `App.tsx` — the UI, talking only to the modules above.
 
 Offline shell: a hand-rolled service worker (`sw.template.js`, assembled by

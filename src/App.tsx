@@ -9,6 +9,7 @@ import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './ro
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
 import { CloseIcon, MoreHorizontalIcon, SettingsIcon, SidebarIcon } from './icons'
+import { resolveVisualAsset, stageVisualAsset, syncVisualAsset, syncVisualAssets, visualAssetSource } from './visualAssets'
 import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDefault, connectInteractive, createEmptyNoteRoom, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, getWorkspaceDefault, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, listWorkspaces, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, setPageAccess, setWorkspaceDefault, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type PageAccessDefault, type PageAccessMode, type ShareRole, type WorkspaceInfo } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
@@ -1147,6 +1148,7 @@ export default function App() {
   const mirrorReadyRef = useRef(false)
   const controllerRef = useRef<NoteDocController | null>(null)
   const contentTouchRef = useRef(new Map<string, number>())
+  const assetSyncRunningRef = useRef(false)
 
   const sync = useSyncExternalStore(subscribeSyncState, getSyncState)
   const online = useSyncExternalStore(subscribeOnline, getOnline)
@@ -1304,6 +1306,14 @@ export default function App() {
   // and is then shoved down once the editor mounts and claims its min-height.
   // Mirrors the editor's own gate in the article below; keep the two in step.
   const bodyMounted = Boolean(toolbarHost && activeNote && collaborativeMarkdown?.noteId === activeNote.id)
+  useEffect(() => {
+    const userId = sync.user?.id
+    if (!store || !online || !userId || assetSyncRunningRef.current) return
+    assetSyncRunningRef.current = true
+    void syncVisualAssets(tallpond, store, allNotes, userId)
+      .catch((error) => setActionError(error instanceof Error ? error.message : 'Could not upload an image'))
+      .finally(() => { assetSyncRunningRef.current = false })
+  }, [store, online, sync.user?.id, allNotes])
   // Sort key for the sidebar: the newest updatedAt anywhere in a note's subtree,
   // not just its own. Editing a nested subpage is activity on the whole branch
   // holding it, so its ancestors have to rise with it — otherwise a root whose
@@ -1887,6 +1897,23 @@ export default function App() {
     contentTouchRef.current.set(activeNote.id, Date.now())
     void saveNote(store, { ...activeNote, updatedAt: Date.now() }).catch(() => {})
   }
+
+  const uploadEditorImage = async (file: File) => {
+    if (!store || !activeNote || !canEditActiveNote) throw new Error('This page is read-only.')
+    const asset = await stageVisualAsset(store, activeNote, file)
+    const userId = sync.user?.id
+    if (userId && online) void syncVisualAsset(tallpond, store, asset, activeNote, userId)
+      .catch((error) => setActionError(error instanceof Error ? `${error.message} The image is saved on this device and will retry.` : 'The image is saved locally and will retry uploading.'))
+    if (activeNote.shareId && !localStorage.getItem('motion-shared-image-lifecycle-seen')) {
+      localStorage.setItem('motion-shared-image-lifecycle-seen', '1')
+      setFlash('Images added by collaborators are removed if that person leaves the workspace.')
+    }
+    return visualAssetSource(asset.path)
+  }
+
+  const resolveEditorImage = (source: string) => store && activeNote
+    ? resolveVisualAsset(tallpond, store, activeNote, source)
+    : Promise.resolve(source)
 
   const connect = async () => {
     try { setActionError(null); await connectInteractive() }
@@ -2486,7 +2513,7 @@ export default function App() {
     {isMobile && <div className="drawer-close-layer"><button className="show-sidebar-button drawer-close" aria-label="Close page" tabIndex={mobileView === 'drawer' ? 0 : -1} aria-hidden={mobileView !== 'drawer'} onClick={() => { if (reviewPreview) { setReviewPreview(null); setMenuOpen(false) } else closePage() }}><CloseIcon /></button></div>}
     {isMobile && (mobileView === 'drawer' || drawerSettling) && <div className="drawer-grip" role="button" tabIndex={0} aria-label="Back to your page" onPointerDown={dragDrawer} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMenuOpen(false) } }} />}
     <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={reviewPreview ? undefined : focusEditorCanvas} onPointerDown={reviewPreview ? undefined : swipeOpenDrawer}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{reviewPreview ? <ReviewPage preview={reviewPreview} isMobile={isMobile} onBack={() => setMenuOpen(true)} /> : activeNote && !landing ? <><div className="access-scope-banner-wrap">{scopeBannerNote?.id === activeNote.id && <div className="access-scope-banner" role="status" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}><span><strong>{activeNote.roomId ? 'This page has custom access' : 'This page uses workspace access'}</strong><small>{activeNote.roomId ? 'Only selected workspace members can access it. New subpages inherit this access.' : `Everyone in ${workspaceNameFor(activeNote.shareId)} can access it. New subpages inherit this access.`}</small></span><button onClick={() => { localStorage.setItem(`motion-access-scope-seen:${activeNote.id}`, '1'); setScopeBannerNote(null) }}>Got it</button><button className="new" onClick={() => { localStorage.setItem(`motion-access-scope-seen:${activeNote.id}`, '1'); setScopeBannerNote(null); openSharing() }}>Review access</button></div>}</div><header onMouseDownCapture={handleHeaderMouseDown} className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><SidebarIcon /></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><MoreHorizontalIcon /></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden} onMouseDown={(event) => event.stopPropagation()}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
-      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
+      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onUploadImage={uploadEditorImage} resolveImage={resolveEditorImage} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} />
       {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
       </article></> : landing ? <section className="empty access-landing">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><SidebarIcon /></button>}<div className="empty-mark">M</div>{(() => {

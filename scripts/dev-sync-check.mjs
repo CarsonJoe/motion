@@ -31,6 +31,7 @@ const run = async () => {
   const privateUpdateId = crypto.randomUUID()
   let resourceId = null
   let roomId = null
+  let roomAssetPath = null
 
   try {
     await owner.table('notes').insert({ noteId: privateNoteId, title: 'Transport check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
@@ -96,6 +97,8 @@ const run = async () => {
     await owner.resource(resourceId).room(roomId).grants.set(ownerSession.user_id, 'admin')
     const roomNoteId = crypto.randomUUID()
     await owner.resource(resourceId).room(roomId).table('member_notes').insert({ noteId: roomNoteId, title: 'Room transport check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
+    roomAssetPath = `notes/${roomNoteId}/${crypto.randomUUID()}.png`
+    await owner.resource(resourceId).room(roomId).files('visual_assets').upload(roomAssetPath, new Blob(['room image'], { type: 'image/png' }))
 
     let deniedBeforeGrant = false
     try { await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', roomNoteId) }
@@ -104,6 +107,13 @@ const run = async () => {
       deniedBeforeGrant = true
     }
     if (!deniedBeforeGrant) throw new Error('Room note was visible before its grant')
+    let assetHiddenBeforeGrant = false
+    try { await writer.resource(resourceId).room(roomId).files('visual_assets').download(roomAssetPath, { owner: ownerSession.user_id }) }
+    catch (error) {
+      if (![403, 404].includes(error?.status)) throw error
+      assetHiddenBeforeGrant = true
+    }
+    if (!assetHiddenBeforeGrant) throw new Error('Room image was visible before its grant')
 
     const roomGrantSeen = timeout(new Promise((resolve) => writerRooms.on('insert', (grant) => {
       if (grant.resourceId === resourceId && grant.roomId === roomId && grant.role === 'writer') resolve(grant)
@@ -113,6 +123,8 @@ const run = async () => {
     writerRooms.close()
     const roomRows = await writer.resource(resourceId).room(roomId).table('member_notes').select().eq('noteId', roomNoteId)
     if (roomRows.length !== 1) throw new Error('Room note was not visible after its grant')
+    const roomAsset = await writer.resource(resourceId).room(roomId).files('visual_assets').download(roomAssetPath, { owner: ownerSession.user_id })
+    if (await roomAsset.text() !== 'room image') throw new Error('Room image did not round-trip after its grant')
 
     // Move a complete note from the default room into the restricted room using
     // the managed row ids, exactly as Motion's resumable subtree move does.
@@ -145,7 +157,7 @@ const run = async () => {
     const writerResources = await writer.resource.list({ type: 'shared_notes' })
     if (writerResources.some((candidate) => candidate.id === resourceId)) throw new Error('Left resource remained in the writer membership list')
 
-    console.log('dev sync transport passed: private realtime, shared realtime, membership realtime, room isolation, writer permissions, soft delete, leave membership')
+    console.log('dev sync transport passed: private realtime, shared realtime, membership realtime, room data/file isolation, writer permissions, soft delete, leave membership')
   } finally {
     await Promise.resolve(owner.table('note_updates').delete().eq('noteId', privateNoteId)).catch(() => {})
     await Promise.resolve(owner.table('notes').delete().eq('noteId', privateNoteId)).catch(() => {})
@@ -154,6 +166,7 @@ const run = async () => {
     // themselves disappear on the next environment reset.
     if (resourceId) {
       if (roomId) {
+        if (roomAssetPath) await Promise.resolve(owner.resource(resourceId).room(roomId).files('visual_assets').delete(roomAssetPath)).catch(() => {})
         await Promise.resolve(owner.resource(resourceId).room(roomId).table('member_note_updates').delete().gte('createdAt', '1970-01-01')).catch(() => {})
         await Promise.resolve(owner.resource(resourceId).room(roomId).table('member_notes').delete().gte('createdAt', '1970-01-01')).catch(() => {})
         await Promise.resolve(owner.resource(resourceId).room(roomId).delete()).catch(() => {})

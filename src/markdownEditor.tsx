@@ -10,7 +10,7 @@
 
 import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { BoldItalicUnderlineToggles, headingsPlugin, HighlightToggle, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
+import { BoldItalicUnderlineToggles, headingsPlugin, HighlightToggle, imagePlugin, InsertImage, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo } from '@mdxeditor/editor'
 import { BlockTypeMenu } from './blockTypeMenu'
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin } from './pageLink'
@@ -36,7 +36,7 @@ const MARKDOWN_OPTIONS = {
   incrementListMarker: true, resourceLink: false, setext: false
 } as const
 
-export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean }) {
+export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false, onUploadImage, resolveImage }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean; onUploadImage?: (file: File) => Promise<string>; resolveImage?: (source: string) => Promise<string> }) {
   const editor = useRef<MDXEditorMethods>(null)
   const container = useRef<HTMLDivElement>(null)
   const editorMarkdown = toEditorMarkdown(markdown)
@@ -130,7 +130,7 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
     }))
   }, [editorMarkdown])
   return <div ref={container}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
-    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
+    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
+    toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /><InsertImage /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
