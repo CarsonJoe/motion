@@ -949,11 +949,12 @@ export async function connectInteractive() {
 // Move the anonymous scope's pages into this account and push them. The prompt
 // that leads here is the only place the choice is offered, and the alternative
 // keeps the data rather than deleting it, so neither answer loses work.
-export async function adoptAnonymousWork() {
+export async function adoptAnonymousWork(selectedIds?: ReadonlySet<string>) {
   if (!local || local.scope === ANON_SCOPE) return
   try {
-    await adoptScope(ANON_SCOPE, local, mergeBase64Updates)
-    setState({ adoptable: null })
+    await adoptScope(ANON_SCOPE, local, mergeBase64Updates, selectedIds)
+    const remaining = selectedIds ? await surveyScope(ANON_SCOPE) : null
+    setState({ adoptable: remaining?.notes ? remaining : null })
     await refreshPending()
     scheduleFlush()
   } catch (error) {

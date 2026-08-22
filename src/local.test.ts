@@ -396,6 +396,41 @@ describe('scope adoption', () => {
     expect(ops.filter((op) => op.noteId === 'trashed' && op.kind === 'update')).toHaveLength(0)
   })
 
+  it('moves only selected pages and leaves the remaining source pages reviewable', async () => {
+    const anonymous = await openLocalStore(ANON_SCOPE)
+    await anonymous.putNote(note({ id: 'parent', title: 'Selected parent' }))
+    await anonymous.putNote(note({ id: 'child', title: 'Remaining child', parentId: 'parent' }))
+    await anonymous.putNote(note({ id: 'other', title: 'Remaining root' }))
+    await anonymous.putDocState('parent', 'selected body')
+    await anonymous.putDocState('child', 'remaining body')
+    anonymous.close()
+
+    const target = await openLocalStore('user-a')
+    await adoptScope(ANON_SCOPE, target, concat, new Set(['parent']))
+    expect(target.getNote('parent')?.title).toBe('Selected parent')
+    expect(target.getNote('child')).toBeNull()
+    expect(await target.getDocState('parent')).toBe('selected body')
+
+    const remaining = await openLocalStore(ANON_SCOPE)
+    expect(remaining.getNote('parent')).toBeNull()
+    expect(remaining.getNote('child')?.parentId).toBe('')
+    expect(await remaining.getDocState('child')).toBe('remaining body')
+    remaining.close()
+    expect((await surveyScope(ANON_SCOPE)).notes).toBe(2)
+  })
+
+  it('promotes a selected child to a root when its parent is not selected', async () => {
+    const anonymous = await openLocalStore(ANON_SCOPE)
+    await anonymous.putNote(note({ id: 'parent' }))
+    await anonymous.putNote(note({ id: 'child', parentId: 'parent' }))
+    anonymous.close()
+
+    const target = await openLocalStore('user-a')
+    await adoptScope(ANON_SCOPE, target, concat, new Set(['child']))
+    expect(target.getNote('child')?.parentId).toBe('')
+    expect(target.getNote('parent')).toBeNull()
+  })
+
   it('does not let an adopted tombstone be undone by the page it replaces', async () => {
     const anonymous = await openLocalStore(ANON_SCOPE)
     await anonymous.putNote(note({ id: 'both', deletedAt: 40, updatedAt: 40 }))

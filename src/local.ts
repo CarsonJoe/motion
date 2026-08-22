@@ -432,19 +432,28 @@ export function dropScope(scope: string) {
 export async function adoptScope(
   fromScope: string,
   target: LocalStore,
-  mergeDocStates: (states: string[]) => string
+  mergeDocStates: (states: string[]) => string,
+  selectedIds?: ReadonlySet<string>
 ) {
   const db = await openIfExists(fromScope)
   if (!db) return { notes: 0 }
   let adopted = 0
+  let sourceIsEmpty = true
   try {
-    const notes = await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)
-    const docs = await asPromise(db.transaction('docs').objectStore('docs').getAll() as IDBRequest<DocRow[]>)
+    const allNotes = await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)
+    const selected = selectedIds ? new Set([...selectedIds].filter((id) => allNotes.some((note) => note.id === id))) : null
+    const notes = selected ? allNotes.filter((note) => selected.has(note.id)) : allNotes
+    const docs = (await asPromise(db.transaction('docs').objectStore('docs').getAll() as IDBRequest<DocRow[]>))
+      .filter((doc) => !selected || selected.has(doc.noteId))
+    sourceIsEmpty = !selected || selected.size === allNotes.length
 
-    // Notes first, so a doc merged below always has a row to belong to. The
-    // remote path is reused verbatim: it already resolves last-write-wins and
-    // refuses to let a private row displace a note that has moved into a share.
-    for (const note of notes) {
+    // Notes first, so a doc merged below always has a row to belong to. A page
+    // selected without its parent becomes a root in the destination; otherwise
+    // it would point at a row that intentionally stayed in the source scope.
+    for (const sourceNote of notes) {
+      const note = selected && sourceNote.parentId && !selected.has(sourceNote.parentId)
+        ? { ...sourceNote, parentId: '' }
+        : sourceNote
       if (await target.applyRemoteNote(note)) {
         adopted += 1
         // The source is another local scope, not proof of a server row. Newer
@@ -465,13 +474,7 @@ export async function adoptScope(
     }
 
     // Tombstones are pushed too. Skipping them was a real bug: a delete that
-    // had not yet drained would be adopted locally and never told to the
-    // server, so the page stayed gone here and came back on the next device to
-    // sync. A soft delete is durable state, not the absence of state.
-    // Bodies are pushed for deleted notes too. They are kept now rather than
-    // destroyed on delete, and a body that only ever existed in this scope is
-    // the one copy there is — leaving it unpushed would mean the page could be
-    // restored on this device and nowhere else.
+    // had not yet drained stayed local and came back on the next device.
     for (const note of notes) {
       const current = target.getNote(note.id)
       if (!current) continue
@@ -479,7 +482,28 @@ export async function adoptScope(
       const state = await target.getDocState(note.id)
       if (state) await target.enqueueUpdate(note.id, current.shareId, current.roomId, state)
     }
+
+    // A selective merge consumes only the chosen rows. Keep everything else in
+    // the anonymous scope for the next decision, promoting children whose
+    // selected parent just left so they remain visible and independently safe.
+    if (selected && selected.size) {
+      const transaction = db.transaction(['notes', 'docs', 'outbox'], 'readwrite')
+      const sourceNotes = transaction.objectStore('notes')
+      const sourceDocs = transaction.objectStore('docs')
+      const sourceOutbox = transaction.objectStore('outbox')
+      for (const note of allNotes) {
+        if (selected.has(note.id)) {
+          sourceNotes.delete(note.id)
+          sourceDocs.delete(note.id)
+        } else if (selected.has(note.parentId)) sourceNotes.put({ ...note, parentId: '' })
+      }
+      const queued = sourceOutbox.getAll()
+      queued.onsuccess = () => {
+        for (const op of queued.result as Op[]) if (selected.has(op.noteId)) sourceOutbox.delete(op.id)
+      }
+      await done(transaction)
+    }
   } finally { db.close() }
-  await dropScope(fromScope)
+  if (sourceIsEmpty) await dropScope(fromScope)
   return { notes: adopted }
 }
