@@ -319,6 +319,32 @@ describe('identity scoping', () => {
     expect(await upgraded.allAssets()).toEqual([])
   })
 
+  it('reports an upgrade blocked by an older tab instead of hanging', async () => {
+    const legacy = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('motion', 1)
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    // Deliberately ignore versionchange, as a tab running the old bundle does.
+    legacy.onversionchange = () => {}
+
+    await expect(openLocalStore(ANON_SCOPE)).rejects.toThrow('Local data is open in another Motion tab')
+    legacy.close()
+  })
+
+  it('closes its connection to let a newer schema version proceed', async () => {
+    const store = await openLocalStore(ANON_SCOPE)
+    const upgraded = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('motion', 3)
+      request.onupgradeneeded = () => {}
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+      request.onblocked = () => reject(new Error('upgrade was blocked'))
+    })
+    upgraded.close()
+    store.close()
+  })
+
   it('keeps the anonymous scope separate from every signed-in scope', async () => {
     const anonymous = await openLocalStore(ANON_SCOPE)
     await anonymous.putNote(note({ id: 'draft' }))

@@ -125,6 +125,26 @@ const asPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject
   request.onerror = () => reject(request.error)
 })
 
+// An older Motion tab can keep a pre-migration connection open indefinitely.
+// IndexedDB then fires `blocked` but leaves the open request pending, which used
+// to strand startup (or an account switch) at “Syncing” after auth succeeded.
+// Fail visibly instead; if the blocker later disappears, close the now-unused
+// connection rather than leaking it from an already-rejected promise.
+const openDatabase = (name: string, version: number) => new Promise<IDBDatabase>((resolve, reject) => {
+  const request = indexedDB.open(name, version)
+  let blocked = false
+  request.onblocked = () => {
+    blocked = true
+    reject(new Error('Local data is open in another Motion tab. Close other Motion tabs or windows, then reload this one.'))
+  }
+  request.onsuccess = () => {
+    if (blocked) request.result.close()
+    else resolve(request.result)
+  }
+  request.onerror = () => reject(request.error)
+  request.onupgradeneeded = () => createStores(request.result)
+})
+
 const done = (transaction: IDBTransaction) => new Promise<void>((resolve, reject) => {
   transaction.oncomplete = () => resolve()
   transaction.onerror = () => reject(transaction.error)
@@ -148,11 +168,11 @@ const createStores = (db: IDBDatabase) => {
 }
 
 export async function openLocalStore(scope: string = ANON_SCOPE) {
-  const db = await asPromise<IDBDatabase>((() => {
-    const request = indexedDB.open(databaseName(scope), 2)
-    request.onupgradeneeded = () => createStores(request.result)
-    return request
-  })())
+  const db = await openDatabase(databaseName(scope), 2)
+  // Cooperate with the next schema migration instead of making its tab hang.
+  // Version changes wait for active transactions before firing this event, so
+  // closing here does not interrupt a write already in progress.
+  db.onversionchange = () => db.close()
 
   const cache = new Map<string, Note>()
   for (const note of await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)) {
