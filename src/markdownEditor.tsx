@@ -70,7 +70,7 @@ function InsertImagePicker() {
   </>
 }
 
-const NoImageDialog = () => null
+const NoImageUi = () => null
 
 export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false, onUploadImage, resolveImage }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean; onUploadImage?: (file: File) => Promise<string>; resolveImage?: (source: string) => Promise<string> }) {
   const editor = useRef<MDXEditorMethods>(null)
@@ -166,7 +166,7 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
     }))
   }, [editorMarkdown])
   return <div ref={container}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageDialog }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
+    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageUi, EditImageToolbar: NoImageUi }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /><InsertImagePicker /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
