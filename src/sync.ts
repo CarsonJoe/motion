@@ -823,7 +823,7 @@ async function establishSession() {
   if (!user) return false
   // The cookie changed again between the two identity requests. Do not sync
   // either account; the retry will take a fresh, internally consistent reading.
-  if (sessionUserId && sessionUserId !== user.id) throw new Error('Your Tallpond session changed while Motion was reconnecting.')
+  if (sessionUserId && sessionUserId !== user.id) throw new Error('Your Tallpond session changed while Pad was reconnecting.')
   rememberLogin()
   await applyScope(user.id)
   setState({ connected: true, user: { id: user.id, name: user.profile.displayName || user.profile.handle || 'You' } })

@@ -1,1 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192"><rect width="192" height="192" rx="42" fill="#4f46e5"/><path d="M52 48h22l22 45 22-45h22v96h-20V86l-25 48-25-48v58H52z" fill="white"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="42" fill="#171717"/>
+  <!-- A writing pad and lily pad in one mark: the open notch reads as the
+       leaf's split, while the two rules make the writing surface explicit. -->
+  <path d="M136 54C124 43 108 38 91 39 57 41 34 65 33 98c-1 32 22 53 58 57 35 4 62-12 70-40 4-14 2-26-3-36l-62 21 40-46Z" fill="#a8c985"/>
+  <path d="M57 113h66M62 130h43" fill="none" stroke="#171717" stroke-width="8" stroke-linecap="round" opacity=".78"/>
+</svg>

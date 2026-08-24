@@ -135,7 +135,7 @@ const openDatabase = (name: string, version: number) => new Promise<IDBDatabase>
   let blocked = false
   request.onblocked = () => {
     blocked = true
-    reject(new Error('Local data is open in another Motion tab. Close other Motion tabs or windows, then reload this one.'))
+    reject(new Error('Local data is open in another Pad tab. Close other Pad tabs or windows, then reload this one.'))
   }
   request.onsuccess = () => {
     if (blocked) request.result.close()

@@ -99,7 +99,7 @@ const BUSY_MIN_MS = 400
 // duplicate page on every new device, while a genuinely empty/offline install
 // still starts with something useful instead of a blank workspace.
 const GETTING_STARTED_KEY = 'motion-getting-started-created'
-const GETTING_STARTED_BODY = `Welcome to Motion — a simple place for notes that keeps working offline.
+const GETTING_STARTED_BODY = `Pad is a simple place to write. Your pages live on this device first, so you can keep working offline.
 
 ## A few things to know
 
@@ -109,7 +109,7 @@ const GETTING_STARTED_BODY = `Welcome to Motion — a simple place for notes tha
 - Changes save on this device as you type, even offline.
 - Sign in to sync your pages across devices and share them with others.
 
-That’s it. Rename this page, edit it, or create a new one.`
+That’s it. Make this page yours, or create a new one.`
 
 // True only after `active` has held for `delayMs`, and then for at least
 // `minVisibleMs` afterwards. A flap that never outlasts the delay never shows
@@ -1223,7 +1223,7 @@ export default function App() {
       }
 
       const note: Note = {
-        id: uid(), title: 'Getting Started', creatorId: sync.user?.id, parentId: '', shareId: '', roomId: '',
+        id: uid(), title: 'Welcome to Pad', creatorId: sync.user?.id, parentId: '', shareId: '', roomId: '',
         deletedAt: 0, updatedAt: Date.now()
       }
       await saveNote(currentStore, note)
@@ -2537,7 +2537,7 @@ export default function App() {
       {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} selectionRestore={selectionRestore?.noteId === activeNote.id ? selectionRestore : null} onUploadImage={uploadEditorImage} resolveImage={resolveEditorImage} onChange={(markdown) => { markdownRef.current = { noteId: activeNote.id, value: markdown }; controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
       <RemoteCursors presence={remotePresence} containerRef={articleRef} markdownRef={markdownRef} />
       {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
-      </article></> : landing ? <section className="empty access-landing">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><SidebarIcon /></button>}<div className="empty-mark">M</div>{(() => {
+      </article></> : landing ? <section className="empty access-landing">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><SidebarIcon /></button>}<div className="empty-mark"><img src="/icon.svg" alt="" /></div>{(() => {
       const name = landing.name
       switch (landing.status) {
         case 'checking': return <><h1>Opening…</h1><p>Checking your access.</p></>
@@ -2548,7 +2548,7 @@ export default function App() {
         case 'requested': return <><h1>Request sent</h1><p>You’ll be able to open {name || 'this page'} once the owner approves.</p></>
         default: return <><h1>You don’t have access</h1><p>Ask the owner to share this page with you.</p></>
       }
-    })()}<button className="landing-dismiss" onClick={dismissLanding}>Back to your pages</button></section> : <section className="empty">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><SidebarIcon /></button>}{notes.length > 0 ? <><div className="empty-mark">M</div><p>Select a page to start writing.</p><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark">M</div><h1>Your ideas, in motion.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}<div className={`scroll-fade scroll-fade-bottom ${scrollFade.bottom ? 'visible' : ''}`} aria-hidden="true" /></main>
+    })()}<button className="landing-dismiss" onClick={dismissLanding}>Back to your pages</button></section> : <section className="empty">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><SidebarIcon /></button>}{notes.length > 0 ? <><div className="empty-mark"><img src="/icon.svg" alt="" /></div><p>Select a page to start writing.</p><button className="new" onClick={() => void createNote()}>＋ New page</button></> : <><div className="empty-mark"><img src="/icon.svg" alt="" /></div><h1>A place to put things down.</h1><p>Create a page to begin. Everything works offline.</p><button className="new" onClick={() => void createNote()}>Create your first page</button></>}</section>}<div className={`scroll-fade scroll-fade-bottom ${scrollFade.bottom ? 'visible' : ''}`} aria-hidden="true" /></main>
     {headerMenuOpen && headerMenuAnchor && activeNote && <HeaderMenu
       anchor={headerMenuAnchor}
       canShare={sync.connected && online}

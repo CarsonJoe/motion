@@ -328,7 +328,7 @@ describe('identity scoping', () => {
     // Deliberately ignore versionchange, as a tab running the old bundle does.
     legacy.onversionchange = () => {}
 
-    await expect(openLocalStore(ANON_SCOPE)).rejects.toThrow('Local data is open in another Motion tab')
+    await expect(openLocalStore(ANON_SCOPE)).rejects.toThrow('Local data is open in another Pad tab')
     legacy.close()
   })
 

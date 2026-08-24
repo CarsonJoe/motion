@@ -1,7 +1,7 @@
 {
-  "name": "Motion Notes",
-  "short_name": "Motion",
-  "description": "Local-first collaborative workspace",
+  "name": "Pad",
+  "short_name": "Pad",
+  "description": "Local-first collaborative writing",
   "theme_color": "#101010",
   "background_color": "#101010",
   "display": "standalone",
