@@ -125,7 +125,7 @@ const asPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject
   request.onerror = () => reject(request.error)
 })
 
-// An older Motion tab can keep a pre-migration connection open indefinitely.
+// An older Pad tab can keep a pre-migration connection open indefinitely.
 // IndexedDB then fires `blocked` but leaves the open request pending, which used
 // to strand startup (or an account switch) at “Syncing” after auth succeeded.
 // Fail visibly instead; if the blocker later disappears, close the now-unused

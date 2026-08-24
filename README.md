@@ -1,4 +1,4 @@
-# Motion
+# Pad
 
 A local-first, Notion-style notes app hosted on [Tallpond](https://tallpond.com).
 Works fully offline, syncs durably to the cloud when signed in, and collaborates
@@ -64,7 +64,7 @@ Deploying:
 
 ```sh
 npm run build
-npx tallpond deploy    # schema + functions + ./dist → https://motion-carsongragg.tallpond.app
+npx tallpond deploy    # schema + functions + ./dist → https://docs-carson.tallpond.app
 ```
 
 The schema was reset in one clean generation. Legacy tables from earlier

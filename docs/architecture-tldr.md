@@ -1,4 +1,4 @@
-# Motion architecture — TLDR
+# Pad architecture — TLDR
 
 Five threads. They are not separate; they collide on the same two assumptions.
 

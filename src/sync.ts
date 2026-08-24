@@ -370,7 +370,7 @@ let fullSyncPromise: Promise<void> | null = null
 let sessionRefreshPromise: Promise<void> | null = null
 let flushTimer: number | null = null
 // resources.live() covers every resource type in the app, including retained
-// legacy types Motion no longer syncs. Remember confirmed non-Motion resources
+// legacy types Pad no longer syncs. Remember confirmed non-Pad resources
 // so their initial snapshot rows cannot repeatedly trigger whole-tree syncs.
 const ignoredMembershipResources = new Set<string>()
 // Only the workspace containing the open page gets a resource-scoped socket.
@@ -506,7 +506,7 @@ function subscribeLive(client: TallpondClient, activeShareId: string) {
     emitMembershipChange(resourceId)
 
     if (!('state' in change)) {
-      // A deletion only matters to Motion if this was one of its known shares.
+      // A deletion only matters to Pad if this was one of its known shares.
       if (state.roles[resourceId]) void fullSync().finally(() => emitMembershipChange(resourceId))
       return
     }
@@ -521,7 +521,7 @@ function subscribeLive(client: TallpondClient, activeShareId: string) {
     // unknown active membership might be a newly accepted shared_notes invite,
     // but blindly treating every unknown row as one creates an infinite loop:
     // fullSync rebuilds the subscription, whose next legacy snapshot triggers
-    // fullSync again. Resolve the type once before widening Motion's scopes.
+    // fullSync again. Resolve the type once before widening Pad's scopes.
     void client.resource(resourceId).get().then((info) => {
       if (info.type !== 'shared_notes') { ignoredMembershipResources.add(resourceId); return }
       return fullSync().finally(() => emitMembershipChange(resourceId))

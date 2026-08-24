@@ -1,7 +1,7 @@
 {
   "appId": "1573ca07-98d8-424c-b125-85f7ace20201",
-  "slug": "motion-carsongragg",
-  "name": "Motion",
+  "slug": "docs-carsongragg",
+  "name": "Pad",
   "gatewayUrl": "https://api.tallpond.com",
-  "url": "https://motion-carsongragg.tallpond.app"
+  "url": "https://docs-carsongragg.tallpond.app"
 }

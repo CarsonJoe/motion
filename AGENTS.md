@@ -1,6 +1,6 @@
-# Motion
+# Pad
 
-Motion is a local-first notes PWA built with React, TypeScript, Yjs, and Tallpond. Keep the app usable offline and preserve reliable synchronization when changing persistence or network code.
+Pad is a local-first notes PWA built with React, TypeScript, Yjs, and Tallpond. Keep the app usable offline and preserve reliable synchronization when changing persistence or network code.
 
 ## Git workflow
 

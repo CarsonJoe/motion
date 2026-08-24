@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Motion — sidebar mockup</title>
+<title>Pad — sidebar mockup</title>
 <style>
 :root {
   --bg: #ffffff;
@@ -372,7 +372,7 @@ mark { background: rgba(47,125,225,.22); color: inherit; border-radius: 2px; }
 <script>
 // ---------------- fake data ----------------
 const PAGES = [
-  { id:'p1', parent:'', type:'note',   title:'Motion',           fav:true,  snippet:'Local-first notes with CRDT sync' },
+  { id:'p1', parent:'', type:'note',   title:'Pad',              fav:true,  snippet:'Local-first notes with CRDT sync' },
   { id:'p2', parent:'p1', type:'note', title:'Architecture',     snippet:'Yjs docs per note, IndexedDB scoped per user' },
   { id:'p3', parent:'p2', type:'thread', title:'Sync failure postmortem', snippet:'Two paths destroyed local data silently',
     from:'Dana', color:'#5b8def', last:'Reproduced it — the second write wins even when it is stale.', when:'2m', unread:true },
@@ -429,7 +429,7 @@ function render() {
   tree.innerHTML = html;
 }
 
-// full path of a page, e.g. "Motion / Architecture"
+// full path of a page, e.g. "Pad / Architecture"
 function pathOf(p) {
   const parts = []; let cur = p;
   while (cur && cur.parent) { const par = PAGES.find(x => x.id === cur.parent); if (!par) break; parts.unshift(par.title); cur = par; }
@@ -479,7 +479,7 @@ function msgRender() {
       <span class="msg-avatar" style="background:#7a6ce0">R</span>
       <span style="min-width:0">
         <div class="msg-name">Rae invited you</div>
-        <div class="msg-path">Motion / <b>Q3 planning</b></div>
+        <div class="msg-path">Pad / <b>Q3 planning</b></div>
       </span>
       <span class="actions"><button>Decline</button><button class="accept">Accept</button></span>
     </div>

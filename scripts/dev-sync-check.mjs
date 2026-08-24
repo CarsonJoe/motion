@@ -42,7 +42,7 @@ const run = async () => {
     await owner.table('note_updates').insert({ updateId: privateUpdateId, noteId: privateNoteId, payload: payload('private realtime') })
     await timeout(privateSeen, 'private realtime')
 
-    const resource = await owner.resource.create('shared_notes', { name: 'Motion transport check', visibility: 'members' })
+    const resource = await owner.resource.create('shared_notes', { name: 'Pad transport check', visibility: 'members' })
     resourceId = resource.id
 
     // Both sides of membership realtime: the recipient's app-wide feed sees
@@ -91,8 +91,8 @@ const run = async () => {
     if (rows.length !== 1) throw new Error('Writer update was not visible to the owner')
 
     // A room narrows access inside the resource. Metadata and CRDT writes use
-    // the same room handle Motion uses for per-note access scopes.
-    const privateRoom = await owner.resource(resourceId).rooms.create({ name: 'Motion private note check' })
+    // the same room handle Pad uses for per-note access scopes.
+    const privateRoom = await owner.resource(resourceId).rooms.create({ name: 'Pad private note check' })
     roomId = privateRoom.id
     await owner.resource(resourceId).room(roomId).grants.set(ownerSession.user_id, 'admin')
     const roomNoteId = crypto.randomUUID()
@@ -127,7 +127,7 @@ const run = async () => {
     if (await roomAsset.text() !== 'room image') throw new Error('Room image did not round-trip after its grant')
 
     // Move a complete note from the default room into the restricted room using
-    // the managed row ids, exactly as Motion's resumable subtree move does.
+    // the managed row ids, exactly as Pad's resumable subtree move does.
     const movingNoteId = crypto.randomUUID()
     await owner.resource(resourceId).table('member_notes').insert({ noteId: movingNoteId, title: 'Room move check', parentId: '', deletedAt: 0, clientUpdatedAt: Date.now() })
     await owner.resource(resourceId).table('member_note_updates').insert({ updateId: crypto.randomUUID(), noteId: movingNoteId, payload: payload('room move') })

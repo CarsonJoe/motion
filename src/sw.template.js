@@ -1,4 +1,4 @@
-/* __MOTION_PRECACHE__ */
+/* __PAD_PRECACHE__ */
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -17,7 +17,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const keys = await caches.keys()
-    await Promise.all(keys.filter((key) => key.startsWith('motion-shell-') && key !== CACHE).map((key) => caches.delete(key)))
+    await Promise.all(keys.filter((key) => (key.startsWith('pad-shell-') || key.startsWith('motion-shell-')) && key !== CACHE).map((key) => caches.delete(key)))
     await self.clients.claim()
   })())
 })

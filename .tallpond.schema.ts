@@ -1,6 +1,6 @@
 import { defineSchema } from '@tallpond/schema'
 
-// Motion stores one row of metadata per note and an append-only log of Yjs
+// Pad stores one row of metadata per note and an append-only log of Yjs
 // updates per note body. Metadata (title, parent, deletion) is last-write-wins
 // by client timestamp; content merges through the CRDT log, so the two never
 // share authority. Deletions are soft (`deletedAt`) so a stale device can
