@@ -99,7 +99,9 @@ const BUSY_MIN_MS = 400
 // duplicate page on every new device, while a genuinely empty/offline install
 // still starts with something useful instead of a blank workspace.
 const GETTING_STARTED_KEY = 'motion-getting-started-created'
-const GETTING_STARTED_BODY = `Pad is a simple place to write. Your pages live on this device first, so you can keep working offline.
+const GETTING_STARTED_BODY = `![Pad logo](/pad-icon.svg)
+
+Pad is a simple place to write. Your pages live on this device first, so you can keep working offline.
 
 ## A few things to know
 
