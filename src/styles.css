@@ -629,7 +629,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .motion-md-content blockquote { margin-left: 0; padding-left: 15px; border-left: 3px solid #aaa; color: #bababa; }
 .motion-md-content code { padding: 2px 4px; border-radius: 4px; background: #252525; }
 .motion-md-content mark { color: #00011c; background: #66adff; }
-.motion-md-content img { display: block; max-width: 100%; height: auto; margin: 20px auto; border-radius: 10px; background: #1b1b1b; }
+.motion-md-content img { display: block; width: auto; max-width: 100%; height: auto; margin: 20px auto; border-radius: 10px; background: #1b1b1b; }
+.motion-md-content img[alt="Pad logo"] { width: 192px; height: 192px; }
 .motion-md-content pre { padding: 12px; border: 1px solid #2d2d2d; border-radius: 8px; background: #191919; }
 .motion-md-content table { border-collapse: collapse; }
 .motion-md-content td, .motion-md-content th { padding: 6px; border: 1px solid #3a3a3a; }
