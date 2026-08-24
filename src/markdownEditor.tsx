@@ -18,6 +18,8 @@ import { InsertPageLink, pageLinkPlugin } from './pageLink'
 import { editorMenuPlugin, thematicBreakRulePlugin } from './editorMenu'
 import { lexicalBridgePlugin } from './lexicalBridge'
 import { toEditorMarkdown } from './markdown'
+import { sourceOffsetToRendered } from './cursorMap'
+import type { Selection } from './doc'
 import './editorVendor.css'
 
 // The stored document IS this Markdown string, so serialization has to be a
@@ -72,9 +74,10 @@ function InsertImagePicker() {
 
 const NoImageUi = () => null
 
-export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false, onUploadImage, resolveImage }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean; onUploadImage?: (file: File) => Promise<string>; resolveImage?: (source: string) => Promise<string> }) {
+export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false, selectionRestore, onUploadImage, resolveImage }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean; selectionRestore?: { revision: number; value: Selection } | null; onUploadImage?: (file: File) => Promise<string>; resolveImage?: (source: string) => Promise<string> }) {
   const editor = useRef<MDXEditorMethods>(null)
   const container = useRef<HTMLDivElement>(null)
+  const selectionActivity = useRef(0)
   const editorMarkdown = toEditorMarkdown(markdown)
   const current = useRef(editorMarkdown)
   // Loading markdown INTO the editor must never come back out as an edit. The
@@ -131,8 +134,12 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
       anchorNodeOffset: selection!.anchorOffset,
       focusNodeOffset: selection!.focusOffset
     } : null
+    const activityAtImport = selectionActivity.current
     editor.current?.setMarkdown(editorMarkdown)
     if (saved) window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      // A tap or keystroke after the import owns the newer caret location. Do
+      // not let this delayed reconciliation overwrite it.
+      if (selectionActivity.current !== activityAtImport) return
       const nextRoot = container.current?.querySelector<HTMLElement>('.motion-md-content')
       if (!nextRoot) return
       // A remote edit must never pull the caret back into the document. If
@@ -159,13 +166,14 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
         }
         return point(fallback)
       }
-      const anchor = resolvePath(saved.anchorPath, saved.anchorNodeOffset, saved.anchor)
-      const focus = resolvePath(saved.focusPath, saved.focusNodeOffset, saved.focus)
+      const renderedText = nextRoot.textContent ?? ''
+      const anchor = selectionRestore ? point(sourceOffsetToRendered(markdown, renderedText, selectionRestore.value.anchor)) : resolvePath(saved.anchorPath, saved.anchorNodeOffset, saved.anchor)
+      const focus = selectionRestore ? point(sourceOffsetToRendered(markdown, renderedText, selectionRestore.value.focus)) : resolvePath(saved.focusPath, saved.focusNodeOffset, saved.focus)
       const nextSelection = window.getSelection()
       nextSelection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
     }))
-  }, [editorMarkdown])
-  return <div ref={container}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
+  }, [editorMarkdown, selectionRestore?.revision])
+  return <div ref={container} onPointerDownCapture={() => { selectionActivity.current += 1 }} onKeyDownCapture={() => { selectionActivity.current += 1 }}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
     headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageUi, EditImageToolbar: NoImageUi }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /><InsertImagePicker /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>

@@ -2,7 +2,7 @@ import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useM
 import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
 import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, visibleParentId, workspaceMountBlockedBy, type LocalStore, type Note } from './local'
-import { openNoteDoc, readNoteText, type CollaboratorPresence, type DocTransport, type NoteDocController } from './doc'
+import { openNoteDoc, readNoteText, type CollaboratorPresence, type DocTransport, type NoteDocController, type Selection } from './doc'
 import { setPageLinkServices, type PageOption } from './pageLinkServices'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
@@ -30,6 +30,9 @@ import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDe
 // session can still recover), and never while offline, where a failure means
 // the precache is incomplete rather than stale and reloading would fix nothing.
 const CHUNK_RELOAD_FLAG = 'motion-chunk-reload'
+let cursorMap: typeof import('./cursorMap') | null = null
+let cursorMapLoad: Promise<typeof import('./cursorMap')> | null = null
+const loadCursorMap = () => cursorMapLoad ??= import('./cursorMap').then((loaded) => (cursorMap = loaded))
 async function importMarkdownEditor() {
   try {
     const loaded = await import('./markdownEditor')
@@ -192,7 +195,7 @@ function describeRetention(note: Note) {
   return hours > 1 ? `${hours} hours left` : 'Less than an hour left'
 }
 
-function RemoteCursors({ presence, containerRef }: { presence: CollaboratorPresence[]; containerRef: { current: HTMLElement | null } }) {
+function RemoteCursors({ presence, containerRef, markdownRef }: { presence: CollaboratorPresence[]; containerRef: { current: HTMLElement | null }; markdownRef: { current: { noteId: string; value: string } | null } }) {
   const [positions, setPositions] = useState<Array<CollaboratorPresence & { left: number; top: number; height: number }>>([])
   useEffect(() => {
     let frame = 0
@@ -206,8 +209,11 @@ function RemoteCursors({ presence, containerRef }: { presence: CollaboratorPrese
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
       let node: Node | null
       while ((node = walker.nextNode())) textNodes.push(node as Text)
+      if (!cursorMap) { void loadCursorMap().then(schedulePlace); return }
+      const renderedText = root.textContent ?? ''
+      const markdown = markdownRef.current?.value ?? ''
       setPositions(presence.filter((item) => item.active).flatMap((item) => {
-        let remaining = Math.max(0, item.focus)
+        let remaining = cursorMap!.sourceOffsetToRendered(markdown, renderedText, item.focus)
         let target = textNodes[0]
         let offset = 0
         for (const textNode of textNodes) {
@@ -243,7 +249,7 @@ function RemoteCursors({ presence, containerRef }: { presence: CollaboratorPrese
       window.removeEventListener('resize', schedulePlace)
       window.visualViewport?.removeEventListener('resize', schedulePlace)
     }
-  }, [presence, containerRef])
+  }, [presence, containerRef, markdownRef])
   return <>{positions.map((item) => <div className="remote-cursor" key={item.presenceId} style={{ left: item.left, top: item.top, height: item.height, background: item.color }}><span style={{ background: item.color }}>{item.displayName}</span></div>)}</>
 }
 
@@ -1052,6 +1058,8 @@ export default function App() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [docTransport, setDocTransport] = useState<DocTransport>('local')
   const [collaborativeMarkdown, setCollaborativeMarkdown] = useState<{ noteId: string; value: string } | null>(null)
+  const markdownRef = useRef<{ noteId: string; value: string } | null>(null)
+  const [selectionRestore, setSelectionRestore] = useState<{ noteId: string; revision: number; value: Selection } | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [inviteHandle, setInviteHandle] = useState('')
   const inviteInputRef = useRef<HTMLInputElement>(null)
@@ -1683,7 +1691,8 @@ export default function App() {
 
   useEffect(() => {
     controllerRef.current?.close(); controllerRef.current = null
-    setCollaborativeMarkdown(null); setRemotePresence([]); setDocTransport('local')
+    markdownRef.current = null
+    setCollaborativeMarkdown(null); setSelectionRestore(null); setRemotePresence([]); setDocTransport('local')
     if (!activeNote || !store) return
     let cancelled = false
     void openNoteDoc({
@@ -1691,9 +1700,11 @@ export default function App() {
       store,
       connected: sync.connected,
       writable: canEditActiveNote,
-      onText: (value, source) => {
+      onText: (value, source, transformedSelection) => {
         if (cancelled) return
+        markdownRef.current = { noteId: activeNote.id, value }
         if (source !== 'local') setCollaborativeMarkdown({ noteId: activeNote.id, value })
+        if (source === 'remote') setSelectionRestore((current) => transformedSelection ? { noteId: activeNote.id, revision: (current?.revision ?? 0) + 1, value: transformedSelection } : null)
       },
       onPresence: (presence) => { if (!cancelled) setRemotePresence(presence) },
       onTransport: (transport) => { if (!cancelled) setDocTransport(transport) },
@@ -1709,10 +1720,12 @@ export default function App() {
   }, [activeNote?.id, activeNote?.shareId, sync.connected, canEditActiveNote, store])
 
   useEffect(() => {
+    let focusTimer = 0
     const selectionChanged = () => {
       const root = document.querySelector<HTMLElement>('.motion-md-content')
       const selection = window.getSelection()
-      if (!root || !selection?.anchorNode || !selection.focusNode || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) {
+      const markdown = markdownRef.current
+      if (!root || !markdown || markdown.noteId !== activeNote?.id || !root.contains(document.activeElement) || !selection?.anchorNode || !selection.focusNode || !root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) {
         controllerRef.current?.setSelection(null)
         return
       }
@@ -1722,12 +1735,20 @@ export default function App() {
         range.setEnd(node, offset)
         return range.toString().length
       }
-      controllerRef.current?.setSelection({ anchor: offsetAt(selection.anchorNode, selection.anchorOffset), focus: offsetAt(selection.focusNode, selection.focusOffset) })
+      if (!cursorMap) { void loadCursorMap().then(selectionChanged); return }
+      const rendered = root.textContent ?? ''
+      controllerRef.current?.setSelection({
+        anchor: cursorMap.renderedOffsetToSource(markdown.value, rendered, offsetAt(selection.anchorNode, selection.anchorOffset)),
+        focus: cursorMap.renderedOffsetToSource(markdown.value, rendered, offsetAt(selection.focusNode, selection.focusOffset))
+      })
     }
+    const focusChanged = () => { window.clearTimeout(focusTimer); focusTimer = window.setTimeout(selectionChanged, 0) }
     const blurred = () => controllerRef.current?.setSelection(null)
     document.addEventListener('selectionchange', selectionChanged)
+    document.addEventListener('focusin', focusChanged)
+    document.addEventListener('focusout', focusChanged)
     window.addEventListener('blur', blurred)
-    return () => { document.removeEventListener('selectionchange', selectionChanged); window.removeEventListener('blur', blurred) }
+    return () => { window.clearTimeout(focusTimer); document.removeEventListener('selectionchange', selectionChanged); document.removeEventListener('focusin', focusChanged); document.removeEventListener('focusout', focusChanged); window.removeEventListener('blur', blurred) }
   }, [activeNote?.id])
 
   // On small screens, float the formatting toolbar above the software keyboard
@@ -2513,8 +2534,8 @@ export default function App() {
     {isMobile && <div className="drawer-close-layer"><button className="show-sidebar-button drawer-close" aria-label="Close page" tabIndex={mobileView === 'drawer' ? 0 : -1} aria-hidden={mobileView !== 'drawer'} onClick={() => { if (reviewPreview) { setReviewPreview(null); setMenuOpen(false) } else closePage() }}><CloseIcon /></button></div>}
     {isMobile && (mobileView === 'drawer' || drawerSettling) && <div className="drawer-grip" role="button" tabIndex={0} aria-label="Back to your page" onPointerDown={dragDrawer} onContextMenu={(event) => event.preventDefault()} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setMenuOpen(false) } }} />}
     <main ref={setMainEl} onScroll={rememberEditorScroll} onMouseDown={reviewPreview ? undefined : focusEditorCanvas} onPointerDown={reviewPreview ? undefined : swipeOpenDrawer}><div className={`scroll-fade scroll-fade-top ${scrollFade.top ? 'visible' : ''}`} aria-hidden="true" />{reviewPreview ? <ReviewPage preview={reviewPreview} isMobile={isMobile} onBack={() => setMenuOpen(true)} /> : activeNote && !landing ? <><div className="access-scope-banner-wrap">{scopeBannerNote?.id === activeNote.id && <div className="access-scope-banner" role="status" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}><span><strong>{activeNote.roomId ? 'This page has custom access' : 'This page uses workspace access'}</strong><small>{activeNote.roomId ? 'Only selected workspace members can access it. New subpages inherit this access.' : `Everyone in ${workspaceNameFor(activeNote.shareId)} can access it. New subpages inherit this access.`}</small></span><button onClick={() => { localStorage.setItem(`motion-access-scope-seen:${activeNote.id}`, '1'); setScopeBannerNote(null) }}>Got it</button><button className="new" onClick={() => { localStorage.setItem(`motion-access-scope-seen:${activeNote.id}`, '1'); setScopeBannerNote(null); openSharing() }}>Review access</button></div>}</div><header onMouseDownCapture={handleHeaderMouseDown} className={`editor-header ${!isMobile && !editing ? 'transparent' : ''}`}><div className="editor-header-row"><div className="header-left">{(isMobile || !sidebarOpen) && <button className="show-sidebar-button" aria-label={isMobile ? 'Back to your pages' : 'Open sidebar'} onClick={showSidebar}><SidebarIcon /></button>}{isMobile && activeNote && <span className={`header-title ${scrollY > 100 ? 'visible' : ''}`}>{activeNote.title || 'Untitled'}</span>}</div><div ref={setToolbarHost} className={`editor-toolbar ${!isMobile && !editing ? 'hidden' : ''}`} role="toolbar" aria-label="Formatting tools" /><div className="header-right">{remotePresence.length > 0 && <div className="presence-list" aria-label="Online collaborators">{remotePresence.map((presence) => <span key={presence.presenceId} title={presence.displayName} style={{ background: presence.color }}>{presence.displayName.slice(0, 1).toUpperCase()}</span>)}</div>}{(headerBusy || (syncNotice && !syncNotice.sidebarOnly)) && <div className="header-status">{headerBusy ? <SyncBusyLabel announce={isMobile} /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span>{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}</div>}<div className="header-actions">{copiedMarkdown && <span className="copied-flash" role="status">Copied</span>}<button className="header-button page-options-button" aria-label="Page options" aria-haspopup="menu" aria-expanded={headerMenuOpen} onClick={(event) => { setHeaderMenuAnchor(event.currentTarget); setHeaderMenuOpen((open) => !open) }}><MoreHorizontalIcon /></button></div></div></div></header><article ref={articleRef} onKeyDownCapture={(event) => { if (activeTrashed && editingKeyPressed(event)) { event.preventDefault(); setRecoverPrompt(activeNote) } }}>{activeTrashed && <div className="trash-banner" role="status"><div className="trash-banner-text"><strong>This page is in Recently deleted</strong><span>{describeRetention(activeNote)} before it is permanently deleted.</span></div>{canWriteNote(activeNote) && <button className="new" disabled={recoverBusy} onClick={() => void recover(activeNote)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button>}</div>}{!isMobile && (() => { const pathHidden = sidebarOpen || breadcrumbs.length < 2; return <div className={`page-path article-path ${pathHidden ? 'hidden' : ''}`} aria-label="Page path" aria-hidden={pathHidden} onMouseDown={(event) => event.stopPropagation()}>{breadcrumbs.map((crumb, index) => <Fragment key={crumb.id}>{index > 0 && <i>/</i>}<span className={index === breadcrumbs.length - 1 ? 'breadcrumb-current' : 'breadcrumb-ancestor'}><button onClick={() => openNote(crumb.id)}>{crumb.title || 'Untitled'}</button></span></Fragment>)}</div> })()}<textarea ref={titleInputRef} aria-label="Page title" className="title" rows={1} readOnly={!canEditActiveNote} value={titleDraft.noteId === activeNote.id ? titleDraft.value : activeNote.title} onChange={(event) => patchTitle(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); focusEditorBody() } }} placeholder="Untitled Note" />
-      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} onUploadImage={uploadEditorImage} resolveImage={resolveEditorImage} onChange={(markdown) => { controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
-      <RemoteCursors presence={remotePresence} containerRef={articleRef} />
+      {toolbarHost && collaborativeMarkdown?.noteId === activeNote.id && <Suspense fallback={null}><MarkdownEditor key={activeNote.id} toolbarHost={toolbarHost} readOnly={!canEditActiveNote} markdown={collaborativeMarkdown.value} selectionRestore={selectionRestore?.noteId === activeNote.id ? selectionRestore : null} onUploadImage={uploadEditorImage} resolveImage={resolveEditorImage} onChange={(markdown) => { markdownRef.current = { noteId: activeNote.id, value: markdown }; controllerRef.current?.setText(markdown); indexNote(activeNote.id, markdown); touchActiveNote() }} /></Suspense>}
+      <RemoteCursors presence={remotePresence} containerRef={articleRef} markdownRef={markdownRef} />
       {bodyMounted && backlinks.length > 0 && <section className="backlinks" aria-label="Backlinks"><h2>Backlinks</h2>{backlinks.map((note) => <button key={note.id} className="backlink" onClick={() => openNote(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg><span>{note.title || 'Untitled'}</span></button>)}</section>}
       </article></> : landing ? <section className="empty access-landing">{!isMobile && !sidebarOpen && <button className="empty-sidebar-open show-sidebar-button" aria-label="Open sidebar" onClick={openSidebar}><SidebarIcon /></button>}<div className="empty-mark">M</div>{(() => {
       const name = landing.name

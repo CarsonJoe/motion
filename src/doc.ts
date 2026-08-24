@@ -26,6 +26,8 @@ export type CollaboratorPresence = {
   expiresAt: number
 }
 
+// Anchor/focus are offsets in the stored Markdown Y.Text, not rendered DOM
+// offsets. That lets Yjs relative positions move them with concurrent edits.
 export type Selection = { anchor: number; focus: number }
 
 export type DocTransport = 'local' | 'connecting' | 'live' | 'offline'
@@ -97,7 +99,7 @@ export async function openNoteDoc(options: {
   store: LocalStore
   connected: boolean
   writable: boolean
-  onText: (text: string, source: 'local' | 'remote' | 'initial') => void
+  onText: (text: string, source: 'local' | 'remote' | 'initial', transformedSelection?: Selection | null) => void
   onPresence: (presence: CollaboratorPresence[]) => void
   onTransport: (transport: DocTransport) => void
   onError: (error: unknown) => void
@@ -125,10 +127,16 @@ export async function openNoteDoc(options: {
   const saved = await store.getDocState(note.id)
   if (saved) Y.applyUpdate(doc, fromBase64(saved), REMOTE_ORIGIN)
 
-  const emitText = (source: 'local' | 'remote' | 'initial') => options.onText(text.toString(), source)
+  const emitText = (source: 'local' | 'remote' | 'initial', transformedSelection?: Selection | null) => options.onText(text.toString(), source, transformedSelection)
+  let transformSelection = (): Selection | null => null
+  let refreshPresence = () => {}
   const textChanged = (event: Y.YTextEvent) => {
     if (event.transaction.origin === LOCAL_ORIGIN) emitText('local')
-    else if (event.transaction.origin === REMOTE_ORIGIN) emitText('remote')
+    else if (event.transaction.origin === REMOTE_ORIGIN) emitText('remote', transformSelection())
+    // Remote rows carry Yjs relative positions. Re-resolve them against every
+    // local document change so their markers move with the content immediately,
+    // rather than briefly treating an old absolute offset as current.
+    refreshPresence()
   }
   text.observe(textChanged)
 
@@ -255,25 +263,38 @@ export async function openNoteDoc(options: {
       return { userId: user?.id ?? sessionId, displayName: user?.name ?? 'Collaborator' }
     }
     let selection: Selection | null = null
+    let selectionAnchorRel: string | null = null
+    let selectionFocusRel: string | null = null
     let inFlight = false
     let queued = false
     let published = false
     let lastPublishAt = 0
     let publishTimer: number | null = null
-    const rows = new Map<string, CollaboratorPresence>()
+    type PresenceRecord = Omit<CollaboratorPresence, 'anchor' | 'focus'> & { anchorRel: unknown; focusRel: unknown }
+    const rows = new Map<string, PresenceRecord>()
 
     const relative = (index: number) =>
       toBase64(Y.encodeRelativePosition(Y.createRelativePositionFromTypeIndex(text, Math.min(Math.max(index, 0), text.length))))
     const absolute = (value: unknown) => {
       if (typeof value !== 'string' || !value) return 0
-      const position = Y.createAbsolutePositionFromRelativePosition(Y.decodeRelativePosition(fromBase64(value)), doc)
-      return position?.type === text ? position.index : 0
+      try {
+        const position = Y.createAbsolutePositionFromRelativePosition(Y.decodeRelativePosition(fromBase64(value)), doc)
+        return position?.type === text ? position.index : 0
+      } catch { return 0 }
     }
 
     const emitPresence = () => {
       const now = Date.now()
       for (const [id, value] of rows) if (value.expiresAt <= now) rows.delete(id)
-      options.onPresence([...rows.values()].filter((value) => value.presenceId !== presenceId))
+      options.onPresence([...rows.values()].filter((value) => value.presenceId !== presenceId).map(({ anchorRel, focusRel, ...value }) => ({
+        ...value, anchor: absolute(anchorRel), focus: absolute(focusRel)
+      })))
+    }
+    refreshPresence = emitPresence
+    transformSelection = () => {
+      if (!selection || !selectionAnchorRel || !selectionFocusRel) return null
+      selection = { anchor: absolute(selectionAnchorRel), focus: absolute(selectionFocusRel) }
+      return selection
     }
     const receivePresence = (row: Row) => {
       const data = typeof row.data === 'object' && row.data ? row.data as Record<string, unknown> : {}
@@ -281,7 +302,7 @@ export async function openNoteDoc(options: {
         presenceId: String(row.presenceId), userId: String(data.userId ?? ''),
         displayName: String(row.displayName ?? 'Collaborator'),
         color: String(data.color ?? colorFor(String(data.userId ?? row.presenceId))),
-        anchor: absolute(data.anchorRel), focus: absolute(data.focusRel),
+        anchorRel: data.anchorRel, focusRel: data.focusRel,
         active: Boolean(data.active), expiresAt: Number(row.expiresAt ?? 0)
       })
       emitPresence()
@@ -298,8 +319,8 @@ export async function openNoteDoc(options: {
           presenceId, noteId: note.id, displayName,
           data: {
             userId, color: colorFor(userId),
-            anchorRel: relative(selection?.anchor ?? 0),
-            focusRel: relative(selection?.focus ?? 0),
+            anchorRel: selectionAnchorRel ?? relative(0),
+            focusRel: selectionFocusRel ?? relative(0),
             active: activeSelection()
           },
           expiresAt: Date.now() + PRESENCE_LEASE_MS
@@ -368,6 +389,8 @@ export async function openNoteDoc(options: {
       setSelection: (value) => {
         if (selection?.anchor === value?.anchor && selection?.focus === value?.focus) return
         selection = value
+        selectionAnchorRel = value ? relative(value.anchor) : null
+        selectionFocusRel = value ? relative(value.focus) : null
         schedulePresence(value === null)
       },
       flushed: () => persistChain,
