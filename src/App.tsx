@@ -1360,7 +1360,11 @@ export default function App() {
   // system's forward-swipe would then be racing our own drag for the same
   // pixels. With no entry to go forward to, the gesture is ours alone.
   const hasPage = Boolean((activeId || landing || reviewPreview) && !exitingToList)
-  const mobileView: 'list' | 'editor' | 'drawer' = !hasPage ? 'list' : menuOpen ? 'drawer' : 'editor'
+  // Review decisions live in the sidebar. An account switch can leave the old
+  // anonymous page id in the route, but it must not turn this list into a
+  // drawer over an empty editor. Show the full list until a preview is chosen.
+  const reviewingList = Boolean(reviewKind && !reviewPreview)
+  const mobileView: 'list' | 'editor' | 'drawer' = reviewingList || !hasPage ? 'list' : menuOpen ? 'drawer' : 'editor'
   // Buttons and keyboard activation can open the drawer without passing through
   // the swipe handler. Peeking always ends the editing session either way.
   useEffect(() => {
