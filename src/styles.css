@@ -634,7 +634,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .motion-md-content [data-editor-block-type="image"]:has(img.motion-image-right) { margin-left: auto; }
 .motion-md-content img { display: block; width: auto; max-width: 100%; height: auto; margin: 0; border-radius: 10px; }
 .motion-md-content img[alt="Pad logo"] { width: 192px; height: 192px; }
-.motion-image-alignment { position: absolute; z-index: 3; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px; border: 1px solid #444; border-radius: 8px; background: rgba(24, 24, 24, .9); box-shadow: 0 4px 16px rgba(0, 0, 0, .32); touch-action: none; }
+.motion-image-alignment { position: absolute; z-index: 3; top: 8px; right: 8px; display: none; gap: 2px; padding: 3px; border: 1px solid #444; border-radius: 8px; background: rgba(24, 24, 24, .9); box-shadow: 0 4px 16px rgba(0, 0, 0, .32); touch-action: none; }
+.motion-md-content [data-editor-block-type="image"]:has(img[class*="_focusedImage_"]) .motion-image-alignment { display: flex; }
 .motion-image-alignment button { display: grid; width: 28px; height: 28px; place-items: center; padding: 3px; border: 0; border-radius: 5px; color: #999; background: transparent; cursor: pointer; }
 .motion-image-alignment button[aria-pressed="true"] { color: #f1f1f1; background: #3b3b3b; }
 .motion-image-alignment svg { width: 19px; height: 19px; }
