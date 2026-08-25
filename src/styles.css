@@ -11,6 +11,13 @@
      stop short of it — on mobile especially, where the scrollbar is an overlay
      that would otherwise draw straight across the sticky header. */
   --scrollbarWidth: 12px;
+  /* A restrained spring curve shared by transient components. It gives menus
+     and sheets a little continuity without requiring pointer-hover or a JS
+     animation runtime, so the same motion runs in the installed mobile app. */
+  --motion-spring: cubic-bezier(.16, 1, .3, 1);
+  --motion-smooth: cubic-bezier(.22, 1, .36, 1);
+  --motion-fast: 140ms;
+  --motion-medium: 240ms;
 }
 
 * { box-sizing: border-box; }
@@ -27,7 +34,8 @@ body { margin: 0; background: #111; }
 .sidebar-collapsed aside { width: 0; flex-basis: 0; padding-right: 0; padding-left: 0; border-right-color: transparent; opacity: 0; pointer-events: none; }
 
 aside { position: relative; width: 272px; min-width: 0; flex: 0 0 272px; display: flex; flex-direction: column; overflow: hidden; padding: 16px 10px; background: #161616; border-right: 1px solid #2a2a2a; transition: width .24s cubic-bezier(.22, 1, .36, 1), flex-basis .24s cubic-bezier(.22, 1, .36, 1), padding .24s ease, border-color .24s ease, opacity .16s ease; }
-.new { border: 0; border-radius: 7px; padding: 10px 12px; color: #171717; background: #f0f0f0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.new { border: 0; border-radius: 7px; padding: 10px 12px; color: #171717; background: #f0f0f0; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.new:active:not(:disabled) { transform: scale(.96); }
 /* Every :hover in this file is gated behind `(hover: hover)`. On touch, a tap
    leaves :hover latched on the element until you tap somewhere else, so an
    ungated hover reads as a stuck selection. Anything that must show state after
@@ -93,7 +101,10 @@ nav { overflow: visible; }
    arrives at the top of the other — so it gets the same line saying where. */
 .pages-nav > .drop-line, .favorites-nav > .drop-line { top: -3px; bottom: auto; }
 .page-tree-item { position: relative; }
-.page-row { position: relative; display: flex; align-items: center; border-radius: 6px; }
+.page-row { position: relative; display: flex; align-items: center; border-radius: 6px; transition: background var(--motion-fast) ease, opacity var(--motion-fast) ease; }
+.page-tree-item > .page-tree-item { transform-origin: top; }
+.page-tree-item .page-tree-item { animation: tree-row-in 180ms var(--motion-spring) both; }
+@keyframes tree-row-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 .page-link { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; overflow: hidden; padding: 8px 9px; border: 0; border-radius: 6px; color: #aaa; background: transparent; font: inherit; font-size: 14px; text-align: left; text-decoration: none; cursor: grab; -webkit-user-drag: none; }
 .dragging-page .page-link { cursor: grabbing; }
 .resource-root-icon { position: absolute; top: 50%; right: 4px; display: grid; width: 28px; height: 28px; place-items: center; color: #777; pointer-events: none; transform: translateY(-50%); }
@@ -106,7 +117,8 @@ nav { overflow: visible; }
 .page-toggle, .page-toggle-spacer { width: 22px; height: 28px; flex: none; }
 .page-toggle { display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; color: #777; background: transparent; cursor: pointer; }
 @media (hover: hover) { .page-toggle:hover { color: #eee; background: #303030; } }
-.page-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.page-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: transform 180ms var(--motion-spring); }
+.page-toggle:active svg { transform: scale(.78); }
 @media (hover: hover) {
   .page-row:hover { background: #222; }
   .page-row:hover .page-link { color: #f2f2f2; }
@@ -130,9 +142,10 @@ nav { overflow: visible; }
   .page-row:hover .page-menu-button { opacity: 1; }
   .page-menu-button:hover { color: #eee; background: #303030; }
 }
-.page-menu { z-index: 30; display: grid; width: 170px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); animation: page-menu-in .12s ease; }
-@keyframes page-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
-.page-menu button { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
+.page-menu { z-index: 30; display: grid; width: 170px; padding: 5px; border: 1px solid #363636; border-radius: 8px; background: #262626; box-shadow: 0 12px 32px rgba(0, 0, 0, .45); transform-origin: top right; animation: popup-in 200ms var(--motion-spring) both; }
+@keyframes popup-in { from { opacity: 0; transform: translateY(-7px) scale(.96); filter: blur(3px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+.page-menu button { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border: 0; border-radius: 4px; color: #ddd; background: transparent; font: inherit; font-size: 12px; text-align: left; cursor: pointer; transition: color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.page-menu button:active:not(:disabled) { transform: scale(.97); }
 .page-menu button svg { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 @media (hover: hover) { .page-menu button:hover { background: #383838; } }
 .page-menu .danger { color: #ee9999; }
@@ -262,13 +275,17 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .empty h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -.7px; }
 .empty p { margin: 0 0 23px; color: #888; font-size: 15px; }
 
-.share-modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); }
-.confirm-modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); }
+.share-modal-backdrop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); animation: backdrop-in 180ms ease-out both; }
+.confirm-modal-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(0, 0, 0, .56); backdrop-filter: blur(5px); animation: backdrop-in 180ms ease-out both; }
+@keyframes backdrop-in { from { opacity: 0; backdrop-filter: blur(0); } to { opacity: 1; backdrop-filter: blur(5px); } }
+.share-modal-backdrop > *, .confirm-modal-backdrop > * { transform-origin: center; animation: modal-in 280ms var(--motion-spring) both; }
+@keyframes modal-in { from { opacity: 0; transform: translateY(14px) scale(.96); filter: blur(4px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
 .confirm-modal { display: grid; width: min(360px, 100%); gap: 10px; padding: 18px; border: 1px solid #3a3a3a; border-radius: 12px; color: #aaa; background: #1b1b1b; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); font-size: 13px; }
 .confirm-modal strong { color: #f4f4f4; font-size: 15px; }
 .confirm-modal p { margin: 0; line-height: 1.5; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
-.confirm-actions button { border: 1px solid #3a3a3a; border-radius: 7px; padding: 8px 14px; color: #ddd; background: transparent; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.confirm-actions button { border: 1px solid #3a3a3a; border-radius: 7px; padding: 8px 14px; color: #ddd; background: transparent; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: color var(--motion-fast) ease, border-color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.confirm-actions button:active:not(:disabled) { transform: scale(.96); }
 .confirm-delete { border-color: transparent; color: #fff; background: #b3382f; }
 @media (hover: hover) { .confirm-cancel:hover { border-color: #555; color: #fff; } .confirm-delete:hover { background: #c9443a; } }
 .share-modal { display: grid; width: min(460px, 100%); gap: 16px; padding: 18px; border: 1px solid #3a3a3a; border-radius: 12px; color: #aaa; background: #1b1b1b; box-shadow: 0 20px 60px rgba(0, 0, 0, .45); font-size: 13px; }
@@ -277,7 +294,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .share-modal strong { color: #f1f1f1; font-size: 16px; }
 .share-modal header span { color: #888; font-size: 12px; }
 .share-modal p { margin: -5px 0 0; color: #aaa; line-height: 1.45; }
-.modal-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: #b5b5b5; background: #292929; font: inherit; font-size: 22px; line-height: 1; cursor: pointer; }
+.modal-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: #b5b5b5; background: #292929; font: inherit; font-size: 22px; line-height: 1; cursor: pointer; transition: color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.modal-close:active { transform: scale(.88) rotate(5deg); }
 @media (hover: hover) { .modal-close:hover { color: #fff; background: #353535; } }
 .invite-row { display: flex; gap: 7px; }
 .invite-row input, .invite-row select { min-width: 0; padding: 8px; border: none; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
@@ -423,8 +441,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
    section of the tree. It covers the sidebar rather than opening a dialog over
    the whole app: it is scoped to the list, and on a phone the sidebar *is* the
    screen, so a full-width panel is the same gesture in both layouts. */
-.trash-view { position: absolute; inset: 0; z-index: 25; display: flex; flex-direction: column; padding: 16px 10px calc(12px + env(safe-area-inset-bottom)); background: #161616; animation: trash-view-in .16s ease; }
-@keyframes trash-view-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+.trash-view { position: absolute; inset: 0; z-index: 25; display: flex; flex-direction: column; padding: 16px 10px calc(12px + env(safe-area-inset-bottom)); background: #161616; animation: trash-view-in 240ms var(--motion-spring) both; }
+@keyframes trash-view-in { from { opacity: 0; transform: translateX(-12px); filter: blur(3px); } to { opacity: 1; transform: translateX(0); filter: blur(0); } }
 .trash-view-head { display: flex; align-items: center; gap: 8px; padding: 0 4px 12px 8px; }
 .trash-view-head strong { flex: 1; color: #f1f1f1; font-size: 15px; font-weight: 600; }
 .trash-view-close { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 6px; border: 0; border-radius: 6px; color: #999; background: transparent; cursor: pointer; }
@@ -495,14 +513,14 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
    panel just grows to fill the viewport at the narrow breakpoint. */
 /* flex-start, or the palette stretches to the full height of the overlay and
    two results sit in a mostly empty box. */
-.search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 20px 20px; background: rgba(0, 0, 0, .5); animation: search-fade .12s ease; }
+.search-overlay { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 12vh 20px 20px; background: rgba(0, 0, 0, .5); animation: search-fade 180ms ease-out both; }
 @keyframes search-fade { from { opacity: 0; } to { opacity: 1; } }
 /* The bar is last in the DOM because that is the phone order — results above,
    field at the bottom riding the keyboard. `column-reverse` lifts it back to
    the top here, where a palette's field belongs; the mobile block drops the
    reverse and takes the DOM order as written. */
-.search-panel { display: flex; width: 100%; max-width: 560px; max-height: 62vh; flex-direction: column-reverse; overflow: hidden; border: 1px solid #333; border-radius: 13px; background: #1c1c1c; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); animation: search-rise .14s cubic-bezier(.22, 1, .36, 1); }
-@keyframes search-rise { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+.search-panel { display: flex; width: 100%; max-width: 560px; max-height: 62vh; flex-direction: column-reverse; overflow: hidden; border: 1px solid #333; border-radius: 13px; background: #1c1c1c; box-shadow: 0 24px 60px rgba(0, 0, 0, .55); animation: search-rise 260ms var(--motion-spring) both; }
+@keyframes search-rise { from { opacity: 0; transform: translateY(-12px) scale(.975); filter: blur(4px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
 .search-bar { display: flex; align-items: center; gap: 8px; flex: none; padding: 12px 14px; border-bottom: 1px solid #2c2c2c; }
 .search-field { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; }
 .search-field > svg { width: 18px; height: 18px; flex: none; color: #7d7d7d; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
@@ -523,7 +541,13 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .search-empty { display: grid; justify-items: center; gap: 14px; padding: 30px 14px; color: #7c7c7c; text-align: center; }
 .search-empty svg { width: 34px; height: 34px; color: #6a6a6a; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
 .search-empty p { margin: 0; font-size: 15px; }
-.search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.search-result { display: flex; width: 100%; align-items: center; gap: 11px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; animation: result-in 220ms var(--motion-spring) both; transition: background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.search-result:nth-of-type(2) { animation-delay: 25ms; }
+.search-result:nth-of-type(3) { animation-delay: 50ms; }
+.search-result:nth-of-type(4) { animation-delay: 75ms; }
+.search-result:nth-of-type(n+5) { animation-delay: 90ms; }
+.search-result:active { transform: scale(.985); }
+@keyframes result-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 .search-result-icon { width: 16px; height: 16px; flex: none; color: #6e6e6e; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
 .search-result-text { display: grid; min-width: 0; flex: 1; gap: 2px; }
 .search-result-title { overflow: hidden; color: #ededed; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
@@ -533,7 +557,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 
 /* Hangs below the fixed icon row, so it starts where the tree starts rather than
    covering the button that opened it. */
-.notification-center { position: absolute; top: 60px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); }
+.notification-center { position: absolute; top: 60px; right: 10px; left: 10px; z-index: 20; overflow: hidden; border-radius: 9px; color: #aaa; background: #272727; box-shadow: 0 12px 30px rgba(0, 0, 0, .42); transform-origin: top right; animation: popup-in 220ms var(--motion-spring) both; }
 .notification-empty { margin: 0; padding: 14px; color: #888; font-size: 12px; text-align: center; }
 .invitation-list { display: grid; }
 .invitation-item { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 9px 9px 9px 12px; }
@@ -617,9 +641,14 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 @media (hover: hover) { .block-type-trigger:hover { background: #292929 !important; color: #f1f1f1 !important; } }
 .block-type-trigger[aria-expanded='true'] { background: #232323 !important; color: #f1f1f1 !important; }
 .block-type-trigger-icon { width: 14px; height: 14px; flex: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
-.block-type-trigger-caret { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; }
-.block-type-menu { z-index: 60; display: flex; flex-direction: column; gap: 2px; min-width: 80px; max-height: min(340px, 62vh); padding: 4px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #3d3d3d; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
-.block-type-item { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: #c9c9c9; font: inherit; font-size: 14px; text-align: left; white-space: nowrap; cursor: pointer; }
+.block-type-trigger-caret { width: 14px; height: 14px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; opacity: .8; transition: transform 200ms var(--motion-spring); }
+.block-type-trigger[aria-expanded='true'] .block-type-trigger-caret { transform: rotate(180deg); }
+.block-type-menu { z-index: 60; display: flex; flex-direction: column; gap: 2px; min-width: 80px; max-height: min(340px, 62vh); padding: 4px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid #3d3d3d; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; animation: block-menu-down 210ms var(--motion-spring) both; transform-origin: top left; }
+.block-type-menu.placement-up { animation-name: block-menu-up; transform-origin: bottom left; }
+@keyframes block-menu-down { from { opacity: 0; transform: translateY(-7px) scale(.96); filter: blur(3px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+@keyframes block-menu-up { from { opacity: 0; transform: translateY(7px) scale(.96); filter: blur(3px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+.block-type-item { display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 6px; border: 0; border-radius: 7px; background: transparent; color: #c9c9c9; font: inherit; font-size: 14px; text-align: left; white-space: nowrap; cursor: pointer; transition: color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.block-type-item:active { transform: scale(.97); }
 .block-type-item-icon { width: 16px; height: 16px; flex: none; stroke-linecap: round; stroke-linejoin: round; }
 @media (hover: hover) { .block-type-item:hover { background: #303030; color: #f1f1f1; } }
 .block-type-item.active { background: #2b2b2b; color: #fff; }
@@ -665,7 +694,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 /* Universal trigger menu ([[ links and / commands) */
 /* touch-action pairs with the touchmove guard in editorMenu: the menu itself
    never pans anything, the result list scrolls only itself. */
-.editor-menu { position: fixed; z-index: 40; display: flex; flex-direction: column; overflow: hidden; touch-action: none; border: 1px solid #4a4a4a; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); }
+.editor-menu { position: fixed; z-index: 40; display: flex; flex-direction: column; overflow: hidden; touch-action: none; border: 1px solid #4a4a4a; border-radius: 11px; background: #232323; box-shadow: 0 1px 0 rgba(255, 255, 255, .04) inset, 0 18px 46px rgba(0, 0, 0, .62); transform-origin: center; animation: editor-menu-in 200ms var(--motion-spring) both; }
+@keyframes editor-menu-in { from { opacity: 0; transform: scale(.97); filter: blur(3px); } to { opacity: 1; transform: scale(1); filter: blur(0); } }
 /* The outer box carries the measured height budget (see placeMenu); the list
    takes what is left after the pinned actions and scrolls within it. */
 .editor-menu-list { flex: 1 1 auto; min-height: 0; padding: 6px; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: thin; scrollbar-color: #4a4a4a transparent; }
@@ -674,8 +704,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .editor-menu-list::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 8px; background-clip: padding-box; background-color: #4a4a4a; }
 .editor-menu-list::-webkit-scrollbar-thumb:hover { background-color: #5f5f5f; }
 .editor-menu-empty { padding: 9px 11px; color: var(--baseSolid); font-size: 13px; }
-.editor-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
-.editor-menu-item .editor-menu-icon { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border: 1px solid var(--baseLine); border-radius: 6px; background: var(--baseBgSubtle); }
+.editor-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 9px; border: 0; border-radius: 7px; color: var(--baseTextContrast); background: transparent; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
+.editor-menu-item:active { transform: scale(.985); }
+.editor-menu-item .editor-menu-icon { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border: 1px solid var(--baseLine); border-radius: 6px; background: var(--baseBgSubtle); transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, transform 180ms var(--motion-spring); }
 .editor-menu-item svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; opacity: .85; }
 .editor-menu-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The location hint yields to the title: it truncates from its own end rather
@@ -687,7 +718,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .editor-menu-actions .editor-menu-item { flex: 1 1 0; width: auto; gap: 8px; min-width: 0; padding: 6px 8px; font-size: 13px; }
 .editor-menu-actions .editor-menu-icon { width: 22px; height: 22px; }
 .editor-menu-item.active { background: #333; color: #fff; }
-.editor-menu-item.active .editor-menu-icon { border-color: #6a6a6a; background: #3a3a3a; }
+.editor-menu-item.active .editor-menu-icon { border-color: #6a6a6a; background: #3a3a3a; transform: scale(1.06); }
 .editor-menu-item.active .editor-menu-detail { color: #dcdcdc; }
 
 /* Linked references (backlinks) */
@@ -709,7 +740,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 @media (hover: hover) { .landing-dismiss:hover { color: var(--baseTextContrast); background: var(--baseBgSubtle); } }
 
 /* Transient status toast */
-.flash-toast { position: fixed; left: 50%; bottom: 28px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 11px 18px; border: 1px solid #4a4a4a; border-radius: 10px; color: var(--baseTextContrast); background: #232323; box-shadow: 0 14px 36px rgba(0, 0, 0, .55); font-size: 14px; }
+.flash-toast { position: fixed; left: 50%; bottom: 28px; z-index: 60; transform: translateX(-50%); max-width: min(92vw, 460px); padding: 11px 18px; border: 1px solid #4a4a4a; border-radius: 10px; color: var(--baseTextContrast); background: #232323; box-shadow: 0 14px 36px rgba(0, 0, 0, .55); font-size: 14px; animation: toast-in 320ms var(--motion-spring) both; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, 14px) scale(.94); filter: blur(3px); } to { opacity: 1; transform: translate(-50%, 0) scale(1); filter: blur(0); } }
 
 @media (max-width: 760px) {
   /* Lock the page so ONLY <main> can scroll. Without this, iOS scrolls the
@@ -884,7 +916,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      everything above it. The panel's padding-bottom is the keyboard inset,
      written inline from visualViewport. */
   .search-overlay { align-items: stretch; padding: 0; background: #111; }
-  .search-panel { max-width: none; max-height: none; flex: 1; flex-direction: column; border: 0; border-radius: 0; background: #111; box-shadow: none; animation: none; transition: padding-bottom .18s cubic-bezier(.22, 1, .36, 1); }
+  .search-panel { max-width: none; max-height: none; flex: 1; flex-direction: column; border: 0; border-radius: 0; background: #111; box-shadow: none; animation: mobile-search-in 220ms ease-out both; transition: padding-bottom .18s var(--motion-smooth); }
+  @keyframes mobile-search-in { from { opacity: 0; } to { opacity: 1; } }
+  .search-bar { animation: mobile-search-bar-in 300ms var(--motion-spring) both; }
+  @keyframes mobile-search-bar-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
   .search-bar { order: 2; gap: 10px; padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); border-top: 1px solid #1e1e1e; border-bottom: 0; }
   /* A pill, so the field reads as the one live control on the screen. */
   .search-field { height: 46px; padding: 0 14px; border-radius: 999px; background: #262626; }
@@ -931,7 +966,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
      overlay riding just above the software keyboard. Its transform (and the
      kb-visible class) are driven by useMobileKeyboard / mobileKeyboard.ts;
      CSS only supplies the look and the off-screen default. */
-  .editor-toolbar { position: fixed; top: -10px; left: 10px; right: 10px; z-index: 50; height: auto; margin: 0; padding: 8px; gap: 0; background: rgba(28, 28, 28, .86); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; box-shadow: 0 -8px 28px rgba(0, 0, 0, .32); overflow-x: visible; scrollbar-width: none; touch-action: pan-x; transform: translateY(-9999px); opacity: 0; transition: opacity .28s ease-out; justify-content: space-around; width: auto; left: 10px; right: 10px; }
+  .editor-toolbar { position: fixed; top: -10px; left: 10px; right: 10px; z-index: 50; height: auto; margin: 0; padding: 8px; gap: 0; background: rgba(28, 28, 28, .86); backdrop-filter: blur(20px) saturate(1.4); -webkit-backdrop-filter: blur(20px) saturate(1.4); border: 1px solid rgba(255, 255, 255, .08); border-radius: 16px; box-shadow: 0 -8px 28px rgba(0, 0, 0, .32); overflow-x: visible; scrollbar-width: none; touch-action: pan-x; transform: translateY(-9999px); opacity: 0; transition: opacity .22s ease-out, filter .22s ease-out; filter: blur(4px); justify-content: space-around; width: auto; left: 10px; right: 10px; }
+  .editor-toolbar.kb-visible { opacity: 1; filter: blur(0); }
   .editor-toolbar .core-tools { justify-content: space-around; gap: 8px; }
   .editor-toolbar .extra-tools { justify-content: space-around; gap: 8px; }
   .editor-toolbar::-webkit-scrollbar { display: none; }
@@ -973,4 +1009,29 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .page-menu button:disabled { opacity: .4; cursor: default; }
 @media (hover: hover) { .page-menu button:disabled:hover { background: transparent; } }
 .page-options-button svg circle { fill: currentColor; stroke: none; }
+
+/* Touch needs physical feedback because it has no hover preview. Keep it on
+   controls whose transform is not used for layout or drawer gestures. */
+@media (pointer: coarse) {
+  .sidebar-icon, .notification-button, .show-sidebar-button, .header-button,
+  .page-menu-button, .trash-view-close, .search-close, .copy-link {
+    transition: color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring);
+  }
+  .sidebar-icon:active, .notification-button:active, .show-sidebar-button:active,
+  .header-button:active, .page-menu-button:active, .trash-view-close:active,
+  .search-close:active, .copy-link:active { transform: scale(.9); }
+}
+
+/* Motion is enhancement, never a prerequisite. This also covers CSS animations
+   emitted by editor dependencies, while preserving every final layout state. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    transition-delay: 0ms !important;
+  }
+}
 .copied-flash { align-self: center; margin-right: 2px; color: #8bb8a0; font-size: 12px; }
