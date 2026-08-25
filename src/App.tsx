@@ -911,6 +911,11 @@ export default function App() {
     const shell = shellRef.current
     if (!shell || !isMobile || mobileView !== 'editor' || !activeNote) return
     if (event.pointerType === 'mouse' || event.clientX < DRAWER_EDGE_GUARD) return
+    // An image owns every gesture that begins on it. In particular, dragging a
+    // resize handle can travel mostly sideways; treating that as navigation
+    // opens the page drawer under the image and cancels the resize. Vertical
+    // page scrolling still works because we only decline our drawer handler.
+    if ((event.target as HTMLElement | null)?.closest('[data-editor-block-type="image"]')) return
     // Selection handles also produce pointer drags. Claiming a rightward handle
     // adjustment as drawer navigation makes it impossible to refine a range, so
     // an existing body/title selection owns the gesture until it is collapsed.

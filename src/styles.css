@@ -629,8 +629,24 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .motion-md-content blockquote { margin-left: 0; padding-left: 15px; border-left: 3px solid #aaa; color: #bababa; }
 .motion-md-content code { padding: 2px 4px; border-radius: 4px; background: #252525; }
 .motion-md-content mark { color: #00011c; background: #66adff; }
-.motion-md-content img { display: block; width: auto; max-width: 100%; height: auto; margin: 20px auto; border-radius: 10px; }
+.motion-md-content [data-editor-block-type="image"] { display: block; width: fit-content; max-width: 100%; margin: 20px 0; }
+.motion-md-content [data-editor-block-type="image"]:has(img.motion-image-center) { margin-right: auto; margin-left: auto; }
+.motion-md-content [data-editor-block-type="image"]:has(img.motion-image-right) { margin-left: auto; }
+.motion-md-content img { display: block; width: auto; max-width: 100%; height: auto; margin: 0; border-radius: 10px; }
 .motion-md-content img[alt="Pad logo"] { width: 192px; height: 192px; }
+.motion-image-alignment { position: absolute; z-index: 3; top: 8px; right: 8px; display: flex; gap: 2px; padding: 3px; border: 1px solid #444; border-radius: 8px; background: rgba(24, 24, 24, .9); box-shadow: 0 4px 16px rgba(0, 0, 0, .32); touch-action: none; }
+.motion-image-alignment button { display: grid; width: 28px; height: 28px; place-items: center; padding: 3px; border: 0; border-radius: 5px; color: #999; background: transparent; cursor: pointer; }
+.motion-image-alignment button[aria-pressed="true"] { color: #f1f1f1; background: #3b3b3b; }
+.motion-image-alignment svg { width: 19px; height: 19px; }
+@media (hover: hover) { .motion-image-alignment button:hover { color: #eee; background: #333; } }
+/* Touch-action has to be present before pointerdown. MDXEditor's built-in
+   resizer adds it only after the drag starts, which is too late for a browser
+   that already assigned that pointer to page scrolling. */
+[data-editor-block-type="image"] [class*="_imageResizer_"] { touch-action: none; }
+@media (pointer: coarse) {
+  [data-editor-block-type="image"] [class*="_imageResizer_"] { width: 14px; height: 14px; border-radius: 50%; }
+  [data-editor-block-type="image"] [class*="_imageResizerN_"], [data-editor-block-type="image"] [class*="_imageResizerE_"], [data-editor-block-type="image"] [class*="_imageResizerS_"], [data-editor-block-type="image"] [class*="_imageResizerW_"] { display: none; }
+}
 .motion-md-content pre { padding: 12px; border: 1px solid #2d2d2d; border-radius: 8px; background: #191919; }
 .motion-md-content table { border-collapse: collapse; }
 .motion-md-content td, .motion-md-content th { padding: 6px; border: 1px solid #3a3a3a; }

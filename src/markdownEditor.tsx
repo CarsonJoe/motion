@@ -8,10 +8,11 @@
 // local store is up) is what lets a cold PWA launch paint local data without
 // first parsing the editor.
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { usePublisher } from '@mdxeditor/gurx'
-import { BoldItalicUnderlineToggles, ButtonWithTooltip, headingsPlugin, HighlightToggle, iconComponentFor$, imagePlugin, insertImage$, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, readOnly$, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo, useCellValue } from '@mdxeditor/editor'
+import { activeEditor$, BoldItalicUnderlineToggles, ButtonWithTooltip, headingsPlugin, HighlightToggle, iconComponentFor$, ImageNode, imagePlugin, insertImage$, InsertTable, linkDialogPlugin, linkPlugin, listsPlugin, ListsToggle, markdownShortcutPlugin, MDXEditor, type MDXEditorMethods, quotePlugin, readOnly$, tablePlugin, thematicBreakPlugin, toolbarPlugin, UndoRedo, useCellValue } from '@mdxeditor/editor'
+import { $createNodeSelection, $getNodeByKey, $setSelection } from 'lexical'
 import { BlockTypeMenu } from './blockTypeMenu'
 import { persistentBlankLinesPlugin } from './blankLinesPlugin'
 import { InsertPageLink, pageLinkPlugin } from './pageLink'
@@ -73,6 +74,48 @@ function InsertImagePicker() {
 }
 
 const NoImageUi = () => null
+
+type ImageAlignment = 'left' | 'center' | 'right'
+const IMAGE_ALIGNMENT_CLASS = /^(?:motion-image-)(?:left|center|right)$/
+
+// Alignment is a direct formatting action, not an image settings sheet. The
+// class is stored on the image's HTML form alongside dimensions, so it survives
+// export/sync without inventing another asset metadata authority.
+function ImageAlignmentToolbar({ nodeKey }: { nodeKey?: string }) {
+  const editor = useCellValue(activeEditor$)
+  const iconComponentFor = useCellValue(iconComponentFor$)
+  const [alignment, setAlignment] = useState<ImageAlignment>('left')
+  useEffect(() => editor?.getEditorState().read(() => {
+    const node = nodeKey ? $getNodeByKey(nodeKey) : null
+    if (!(node instanceof ImageNode)) return
+    const classes = node.getRest().flatMap((attribute) => attribute.type === 'mdxJsxAttribute' && (attribute.name === 'class' || attribute.name === 'className') && typeof attribute.value === 'string' ? attribute.value.split(/\s+/) : [])
+    setAlignment(classes.includes('motion-image-center') ? 'center' : classes.includes('motion-image-right') ? 'right' : 'left')
+  }), [editor, nodeKey])
+  const align = (next: ImageAlignment) => {
+    if (!editor || !nodeKey) return
+    editor.update(() => {
+      const node = $getNodeByKey(nodeKey)
+      if (!(node instanceof ImageNode)) return
+      const rest = node.getRest()
+      const classAttribute = rest.find((attribute) => attribute.type === 'mdxJsxAttribute' && (attribute.name === 'class' || attribute.name === 'className') && typeof attribute.value === 'string')
+      const classes = classAttribute && typeof classAttribute.value === 'string'
+        ? classAttribute.value.split(/\s+/).filter((name) => name && !IMAGE_ALIGNMENT_CLASS.test(name))
+        : []
+      if (next !== 'left') classes.push(`motion-image-${next}`)
+      const nextRest = rest.filter((attribute) => attribute !== classAttribute)
+      if (classes.length) nextRest.push({ type: 'mdxJsxAttribute', name: 'class', value: classes.join(' ') })
+      const replacement = new ImageNode(node.getSrc(), node.getAltText(), node.getTitle(), node.getWidth(), node.getHeight(), nextRest)
+      node.replace(replacement)
+      const selection = $createNodeSelection()
+      selection.add(replacement.getKey())
+      $setSelection(selection)
+    })
+    setAlignment(next)
+  }
+  return <div className="motion-image-alignment" aria-label="Image alignment" onPointerDown={(event) => { event.preventDefault(); event.stopPropagation() }}>
+    {(['left', 'center', 'right'] as const).map((value) => <button key={value} type="button" title={`Align ${value}`} aria-label={`Align image ${value}`} aria-pressed={alignment === value} onClick={() => align(value)}>{iconComponentFor(`format_align_${value}`)}</button>)}
+  </div>
+}
 
 export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOnly = false, selectionRestore, onUploadImage, resolveImage }: { markdown: string; onChange: (value: string) => void; toolbarHost: HTMLElement; readOnly?: boolean; selectionRestore?: { revision: number; value: Selection } | null; onUploadImage?: (file: File) => Promise<string>; resolveImage?: (source: string) => Promise<string> }) {
   const editor = useRef<MDXEditorMethods>(null)
@@ -174,7 +217,7 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
     }))
   }, [editorMarkdown, selectionRestore?.revision])
   return <div ref={container} onPointerDownCapture={() => { selectionActivity.current += 1 }} onKeyDownCapture={() => { selectionActivity.current += 1 }}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
-    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageUi, EditImageToolbar: NoImageUi, imagePlaceholder: NoImageUi }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
+    headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageUi, EditImageToolbar: ImageAlignmentToolbar, imagePlaceholder: NoImageUi }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
     toolbarPlugin({ toolbarClassName: 'motion-md-toolbar', toolbarContents: () => createPortal(<><span className="core-tools"><UndoRedo /><BlockTypeMenu /><BoldItalicUnderlineToggles /><HighlightToggle /><ListsToggle /><InsertPageLink /><InsertImagePicker /></span><span className="extra-tools"><InsertTable /></span></>, toolbarHost) })
   ]} /></div>
 }
