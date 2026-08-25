@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
 import { $createParagraphNode, $createTextNode, $getRoot, $getSelection, $isRangeSelection, $isTextNode, createEditor, DELETE_CHARACTER_COMMAND, ParagraphNode } from 'lexical'
 import { registerPersistentBlankLines } from './blankLinesPlugin'
 
 const settleNormalization = () => new Promise((resolve) => setTimeout(resolve, 0))
 
-function testEditor() {
+function testEditor(includeDivider = false) {
   const editor = createEditor({
     namespace: 'blank-lines-test',
-    nodes: [ParagraphNode],
+    nodes: includeDivider ? [ParagraphNode, HorizontalRuleNode] : [ParagraphNode],
     onError: (error) => { throw error }
   })
   const cleanup = registerPersistentBlankLines(editor)
@@ -86,6 +87,33 @@ describe('persistent blank lines', () => {
       const selection = $getSelection()
       expect($isRangeSelection(selection)).toBe(true)
       if ($isRangeSelection(selection)) expect(selection.anchor.offset).toBe(3)
+    })
+    cleanup()
+  })
+
+  it('deletes a divider from its trailing blank block and keeps the block', async () => {
+    const { editor, cleanup } = testEditor(true)
+    editor.update(() => {
+      const divider = $createHorizontalRuleNode()
+      const blank = $createParagraphNode()
+      $getRoot().append(divider, blank)
+      blank.selectStart()
+    }, { discrete: true })
+    await settleNormalization()
+
+    editor.dispatchCommand(DELETE_CHARACTER_COMMAND, true)
+    await settleNormalization()
+
+    editor.update(() => {
+      const selection = $getSelection()
+      if ($isRangeSelection(selection)) selection.insertText('a')
+    }, { discrete: true })
+    await settleNormalization()
+
+    editor.getEditorState().read(() => {
+      expect($getRoot().getChildrenSize()).toBe(1)
+      expect($getRoot().getFirstChild()).toBeInstanceOf(ParagraphNode)
+      expect($getRoot().getTextContent()).toBe('a')
     })
     cleanup()
   })

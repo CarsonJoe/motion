@@ -1,4 +1,5 @@
 import { createRootEditorSubscription$, realmPlugin } from '@mdxeditor/editor'
+import { $isHorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
 import { $createTextNode, $getSelection, $isElementNode, $isRangeSelection, $nodesOfType, COMMAND_PRIORITY_HIGH, DELETE_CHARACTER_COMMAND, ParagraphNode, type LexicalEditor } from 'lexical'
 
 // CommonMark discards surplus blank lines. A zero-width space is valid
@@ -85,6 +86,15 @@ export function registerPersistentBlankLines(editor: LexicalEditor) {
     // Nothing to merge back into: swallow the key rather than let the marker
     // be deleted and immediately re-added.
     if (!previous) return true
+    // A divider is an atomic decorator rather than an editable block. On
+    // mobile there are no arrow keys with which to select it, so Backspace from
+    // its trailing paragraph must remove the divider and keep that paragraph
+    // (and its caret) available for typing.
+    if ($isHorizontalRuleNode(previous)) {
+      previous.remove()
+      paragraph.selectStart()
+      return true
+    }
     for (const child of paragraph.getAllTextNodes()) markerKeys.delete(child.getKey())
     if ($isElementNode(previous)) previous.selectEnd()
     else previous.selectNext()
