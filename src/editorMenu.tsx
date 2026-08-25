@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { $createParagraphNode, $createRangeSelection, $createTextNode, $getRoot, $getSelection, $insertNodes, $isElementNode, $isRangeSelection, $isTextNode, $setSelection, COMMAND_PRIORITY_CRITICAL, KEY_ENTER_COMMAND, type LexicalEditor } from 'lexical'
+import { $createParagraphNode, $createRangeSelection, $createTextNode, $getNodeByKey, $getRoot, $getSelection, $insertNodes, $isElementNode, $isRangeSelection, $isTextNode, $setSelection, COMMAND_PRIORITY_CRITICAL, KEY_ENTER_COMMAND, type LexicalEditor } from 'lexical'
 import { $getClipboardDataFromSelection, setLexicalClipboardDataTransfer } from '@lexical/clipboard'
 import { $createHeadingNode, $createQuoteNode } from '@lexical/rich-text'
 import { $createLinkNode, $isLinkNode } from '@lexical/link'
 import { $isListItemNode, $isListNode } from '@lexical/list'
 import { $findMatchingParent } from '@lexical/utils'
-import { HIGHLIGHT, registerMarkdownShortcuts, type ElementTransformer } from '@lexical/markdown'
-import { $createHorizontalRuleNode, HorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
+import { HIGHLIGHT, registerMarkdownShortcuts } from '@lexical/markdown'
+import { $createHorizontalRuleNode } from '@lexical/react/LexicalHorizontalRuleNode'
 import { realmPlugin, addComposerChild$, activeEditor$, applyListType$, convertSelectionToNode$, insertTable$, insertThematicBreak$, rootEditor$, useCellValue, usePublisher } from '@mdxeditor/editor'
 import { $createPageLinkNode, $isPageLinkNode } from './pageLink'
 import { usePageLinkServices, type PageOption } from './pageLinkServices'
@@ -482,31 +482,56 @@ export const editorMenuPlugin = realmPlugin({
   init(realm) { realm.pubIn({ [addComposerChild$]: EditorMenu }) }
 })
 
-// A corrected `---` / `***` / `___` shortcut. MDXEditor's built-in one inserts
-// the rule *before* the line and leaves the dashes behind when the line is last
-// in the document; this always replaces the line and drops a fresh paragraph
-// after. Register `markdownShortcutPlugin` before `thematicBreakPlugin` so the
-// built-in horizontal-rule transformer is excluded and this is the only one.
-const HORIZONTAL_RULE: ElementTransformer = {
-  dependencies: [HorizontalRuleNode],
-  export: () => null,
-  regExp: /^(-{3,}|\*{3,}|_{3,})\s?$/,
-  replace: (parentNode) => {
-    const line = $createHorizontalRuleNode()
-    parentNode.replace(line)
-    const paragraph = $createParagraphNode()
-    line.insertAfter(paragraph)
-    paragraph.select()
-  },
-  type: 'element'
+// A corrected immediate `---` / `***` / `___` shortcut. Lexical's element
+// transformers wait for a trailing space, while iOS may also smart-punctuate
+// the first two hyphens into one dash. Treat either Unicode dash plus a hyphen
+// (in either order) as the three-hyphen trigger, then replace the line directly.
+// Register `markdownShortcutPlugin` before `thematicBreakPlugin` so MDXEditor's
+// buggy built-in horizontal-rule transformer is excluded.
+export const isDividerShortcut = (value: string) => /^(?:-{3,}|\*{3,}|_{3,}|[—–]-|-[—–])$/.test(value)
+
+function registerImmediateThematicBreak(editor: LexicalEditor) {
+  let queued = false
+  let disposed = false
+  const remove = editor.registerUpdateListener(({ dirtyLeaves, editorState }) => {
+    if (queued) return
+    const parentKey = editorState.read(() => {
+      const selection = $getSelection()
+      if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null
+      const anchor = selection.anchor.getNode()
+      if (!$isTextNode(anchor) || !dirtyLeaves.has(anchor.getKey()) || selection.anchor.offset !== anchor.getTextContentSize()) return null
+      const parent = anchor.getParent()
+      if (!parent || parent.getFirstChild() !== anchor || parent.getParent() !== $getRoot()) return null
+      return isDividerShortcut(parent.getTextContent()) ? parent.getKey() : null
+    })
+    if (!parentKey) return
+    queued = true
+    queueMicrotask(() => {
+      if (disposed) return
+      editor.update(() => {
+        const parent = $getNodeByKey(parentKey)
+        if (!$isElementNode(parent) || parent.getParent() !== $getRoot() || !isDividerShortcut(parent.getTextContent())) return
+        const line = $createHorizontalRuleNode()
+        parent.replace(line)
+        const paragraph = $createParagraphNode()
+        line.insertAfter(paragraph)
+        paragraph.select()
+      }, { onUpdate: () => { queued = false } })
+    })
+  })
+  return () => { disposed = true; remove() }
 }
 
 function ThematicBreakRule() {
   const editor = useCellValue(rootEditor$) as LexicalEditor | null
   // HIGHLIGHT (`==text==`) rides along here: MDXEditor imports/exports the mark
-  // syntax but deliberately leaves its live typing shortcut unregistered, so we
-  // add it ourselves next to the corrected horizontal-rule shortcut.
-  useEffect(() => { if (editor) return registerMarkdownShortcuts(editor, [HORIZONTAL_RULE, HIGHLIGHT]) }, [editor])
+  // syntax but deliberately leaves its live typing shortcut unregistered.
+  useEffect(() => {
+    if (!editor) return
+    const removeDivider = registerImmediateThematicBreak(editor)
+    const removeHighlight = registerMarkdownShortcuts(editor, [HIGHLIGHT])
+    return () => { removeDivider(); removeHighlight() }
+  }, [editor])
   return null
 }
 
