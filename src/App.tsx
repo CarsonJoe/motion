@@ -451,6 +451,38 @@ function NoteTree({ parentId, depth, ...shared }: NoteTreeShared & { parentId: s
   return <>{rootPreview && <DropLine depth={depth} />}{shared.notes.filter((note) => visibleParentId(note, shared.notes) === parentId && !hidden?.has(note.id)).sort(byRecency(shared.recency)).map((note) => <NoteTreeNode key={note.id} {...shared} note={note} depth={depth} />)}</>
 }
 
+// Native buttons supply Tab/Shift-Tab; menu roles also promise arrow-key
+// navigation. Keep focus inside each anchored menu until Tab deliberately leaves,
+// and return it to the trigger when Escape closes the menu.
+function menuKeyDown(event: ReactKeyboardEvent<HTMLElement>, menu: HTMLElement | null, anchor: HTMLElement, onClose: () => void) {
+  const items = [...(menu?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? [])]
+  if (!items.length) return
+  const current = Math.max(0, items.indexOf(document.activeElement as HTMLButtonElement))
+  let next: number | null = null
+  if (event.key === 'ArrowDown') next = (current + 1) % items.length
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length
+  else if (event.key === 'Home') next = 0
+  else if (event.key === 'End') next = items.length - 1
+  else if (event.key === 'Escape') {
+    event.preventDefault()
+    event.stopPropagation()
+    onClose()
+    anchor.focus()
+    return
+  }
+  if (next === null) return
+  event.preventDefault()
+  items[next].focus()
+}
+
+function useInitialMenuFocus(menu: React.RefObject<HTMLDivElement | null>, visible: boolean) {
+  useEffect(() => {
+    if (!visible) return
+    const frame = window.requestAnimationFrame(() => menu.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus())
+    return () => window.cancelAnimationFrame(frame)
+  }, [visible])
+}
+
 function PageMenu({ anchor, note, canShare, canDelete, isFavorite, onShare, onToggleFavorite, onCreateChild, onRename, onDownload, onDelete, onClose }: { anchor: HTMLElement; note: Note; canShare: boolean; canDelete: boolean; isFavorite: boolean; onShare: (note: Note) => void; onToggleFavorite: (id: string) => void; onCreateChild: (note: Note) => void; onRename: (note: Note) => void; onDownload: (note: Note) => void; onDelete: (note: Note) => void; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -471,8 +503,9 @@ function PageMenu({ anchor, note, canShare, canDelete, isFavorite, onShare, onTo
     window.addEventListener('scroll', onClose, true)
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', onClose, true) }
   }, [anchor, onClose])
+  useInitialMenuFocus(ref, Boolean(pos))
   return createPortal(
-    <div ref={ref} className="page-menu" role="menu" style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
+    <div ref={ref} className="page-menu" role="menu" onKeyDown={(event) => menuKeyDown(event, ref.current, anchor, onClose)} style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
       <button role="menuitem" onClick={() => onToggleFavorite(note.id)}><svg viewBox="0 0 24 24" aria-hidden="true" fill={isFavorite ? 'currentColor' : 'none'}><path d="m12 3 2.7 5.5 6 .9-4.35 4.24 1.03 6-5.38-2.83L6.62 19.6l1.03-6L3.3 9.4l6-.9z" /></svg>{isFavorite ? 'Remove from favorites' : 'Add to favorites'}</button>
       <button role="menuitem" onClick={() => onRename(note)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 20h4l10-10-4-4L4 16z" /><path d="M14 6l4 4" /></svg>Rename</button>
       <button role="menuitem" onClick={() => onCreateChild(note)}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 6v12M6 12h12" /></svg>New subpage</button>
@@ -516,8 +549,9 @@ function HeaderMenu({ anchor, canShare, onShare, onCopyMarkdown, onDownload, onC
     window.addEventListener('scroll', onClose, true)
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', onClose, true) }
   }, [anchor, onClose])
+  useInitialMenuFocus(ref, Boolean(pos))
   return createPortal(
-    <div ref={ref} className="page-menu header-menu" role="menu" style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
+    <div ref={ref} className="page-menu header-menu" role="menu" onKeyDown={(event) => menuKeyDown(event, ref.current, anchor, onClose)} style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
       <button role="menuitem" disabled={!canShare} onClick={onShare}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 3v12m0-12L8 7m4-4 4 4" /><path d="M7 10H5v10h14V10h-2" /></svg>Share</button>
       <button role="menuitem" onClick={onCopyMarkdown}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15H4V4h11v1" /></svg>Copy as Markdown</button>
       <button role="menuitem" onClick={onDownload}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M12 4v11m0 0 4-4m-4 4-4-4" /><path d="M5 19h14" /></svg>Download</button>
@@ -562,9 +596,10 @@ function IdentityMenu({ anchor, name, connected, signOutBlocked, trashCount, onT
     window.addEventListener('scroll', onClose, true)
     return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', onClose, true) }
   }, [anchor, onClose])
+  useInitialMenuFocus(ref, Boolean(pos))
   return createPortal(<>
     <div className="menu-scrim" onMouseDown={onClose} />
-    <div ref={ref} className="page-menu identity-menu" role="menu" style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
+    <div ref={ref} className="page-menu identity-menu" role="menu" onKeyDown={(event) => menuKeyDown(event, ref.current, anchor, onClose)} style={{ position: 'fixed', top: pos?.top ?? -9999, left: pos?.left ?? -9999, visibility: pos ? 'visible' : 'hidden' }}>
       <div className="identity-menu-head">{name}</div>
       <button role="menuitem" onClick={onTrash}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>Recently deleted{trashCount > 0 && <span className="identity-menu-count">{trashCount}</span>}</button>
       {connected
@@ -1096,6 +1131,10 @@ export default function App() {
   const [identityAnchor, setIdentityAnchor] = useState<HTMLElement | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [paletteMode, setPaletteMode] = useState<'all' | 'commands'>('all')
+  const [paletteSelected, setPaletteSelected] = useState(0)
+  const palettePreviousFocus = useRef<HTMLElement | null>(null)
+  const paletteResultsRef = useRef<HTMLDivElement>(null)
   const [trashViewOpen, setTrashViewOpen] = useState(false)
   const [reviewKind, setReviewKind] = useState<ReviewKind | null>(null)
   const [anonReviewStore, setAnonReviewStore] = useState<LocalStore | null>(null)
@@ -2037,29 +2076,23 @@ export default function App() {
   }
 
   // --- sidebar surfaces ------------------------------------------------------
-  const searchResults = useMemo(() => searchOpen ? searchPages(notes, searchQuery) : [], [searchOpen, searchQuery, notes])
-  const openSearch = useCallback(() => { setIdentityOpen(false); setNotificationsOpen(false); setSearchQuery(''); setSearchOpen(true) }, [])
+  const openSearch = useCallback((mode: 'all' | 'commands' = 'all') => {
+    palettePreviousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setIdentityOpen(false)
+    setNotificationsOpen(false)
+    setNoteMenuId(null)
+    setHeaderMenuOpen(false)
+    setSearchQuery('')
+    setPaletteMode(mode)
+    setPaletteSelected(0)
+    setSearchOpen(true)
+  }, [])
+  const closeSearch = useCallback((restoreFocus = true) => {
+    setSearchOpen(false)
+    if (restoreFocus) window.requestAnimationFrame(() => palettePreviousFocus.current?.focus())
+  }, [])
   const keyboardInset = useKeyboardInset(searchOpen)
   const accountName = sync.connected && sync.user ? sync.user.name : 'Local'
-  // ⌘K/Ctrl-K opens search from anywhere, including mid-sentence in the editor,
-  // so it has to win over the browser default. Escape closes whichever surface
-  // is open — deepest first, so it never skips one.
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        openSearch()
-        return
-      }
-      if (event.key !== 'Escape') return
-      if (searchOpen) setSearchOpen(false)
-      else if (trashViewOpen) setTrashViewOpen(false)
-      else if (identityOpen) setIdentityOpen(false)
-      else if (notificationsOpen) setNotificationsOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [openSearch, searchOpen, trashViewOpen, identityOpen, notificationsOpen])
   // Modifier combinations and navigation keys are how someone reads a page —
   // scrolling, selecting, copying. Only a key that would have produced text is
   // treated as an attempt to edit.
@@ -2502,28 +2535,119 @@ export default function App() {
     event.stopPropagation()
     button?.click()
   }
+  // The command palette is the keyboard front door to the whole app, not just a
+  // page search. Commands and pages share one ranked list; a leading `>` (or
+  // Cmd/Ctrl-Shift-P) narrows it to commands for people who prefer a prompt.
+  type PaletteItem = { key: string; kind: 'command' | 'page'; title: string; detail: string; shortcut?: string; keywords?: string; run: () => void | Promise<void> }
+  const isApple = /Mac|iPhone|iPad/.test(navigator.platform)
+  const mod = isApple ? '⌘' : 'Ctrl'
+  const focusTitle = () => window.requestAnimationFrame(() => { titleInputRef.current?.focus(); titleInputRef.current?.select() })
+  const focusBody = () => window.requestAnimationFrame(focusEditorBody)
+  const commandItems: PaletteItem[] = [
+    { key: 'command:new-page', kind: 'command', title: 'New page', detail: 'Create a top-level page', shortcut: `${mod} N`, keywords: 'create note', run: () => void createNote() },
+    ...(activeNote && canWriteNote(activeNote) && !activeTrashed ? [{ key: 'command:new-subpage', kind: 'command' as const, title: 'New subpage', detail: `Create inside ${activeNote.title || 'Untitled'}`, shortcut: `${mod} ⇧ N`, keywords: 'create child nested note', run: () => void createNote(activeNote) }] : []),
+    ...(activeNote ? [
+      ...(canEditActiveNote ? [{ key: 'command:focus-title', kind: 'command' as const, title: 'Rename current page', detail: 'Focus and select the page title', keywords: 'focus title edit', run: focusTitle }] : []),
+      { key: 'command:focus-body', kind: 'command' as const, title: 'Focus editor', detail: 'Move the caret to the page body', keywords: 'write body content', run: focusBody },
+      { key: 'command:favorite', kind: 'command' as const, title: favorites.has(activeNote.id) ? 'Remove current page from favorites' : 'Add current page to favorites', detail: activeNote.title || 'Untitled', keywords: 'star pin', run: () => toggleFavorite(activeNote.id) },
+      { key: 'command:copy-link', kind: 'command' as const, title: 'Copy page link', detail: activeNote.title || 'Untitled', keywords: 'url clipboard share', run: () => void copyPageLink() },
+      { key: 'command:copy-markdown', kind: 'command' as const, title: 'Copy as Markdown', detail: activeNote.title || 'Untitled', keywords: 'clipboard export', run: () => void copyMarkdown() },
+      { key: 'command:download', kind: 'command' as const, title: 'Download current page', detail: 'Export a Markdown file', keywords: 'save export markdown', run: downloadMarkdown },
+      ...(sync.connected && online ? [{ key: 'command:share', kind: 'command' as const, title: 'Share current page', detail: 'Manage workspace access', keywords: 'invite access collaborate', run: openSharing }] : []),
+    ] : []),
+    { key: 'command:sidebar', kind: 'command', title: isMobile ? 'Show page list' : sidebarOpen ? 'Collapse sidebar' : 'Open sidebar', detail: 'Navigate your page tree', shortcut: `${mod} \\`, keywords: 'toggle pages navigation', run: () => { if (isMobile) showSidebar(); else if (sidebarOpen) collapseSidebar(); else openSidebar() } },
+    { key: 'command:trash', kind: 'command', title: 'Recently deleted', detail: trashed.length ? `${trashed.length} page${trashed.length === 1 ? '' : 's'}` : 'No deleted pages', keywords: 'trash restore recover', run: () => { setTrashViewOpen(true); if (isMobile && activeNote) setMenuOpen(true); else openSidebar() } },
+    ...(syncNotice?.action ? [{ key: 'command:sync', kind: 'command' as const, title: syncNotice.action, detail: syncNotice.label, keywords: 'sync connect retry tallpond', run: runSyncAction }] : []),
+  ]
+  const commandQuery = searchQuery.trim().replace(/^>\s*/, '').toLowerCase()
+  const commandOnly = paletteMode === 'commands' || /^>/.test(searchQuery.trim())
+  const matchedCommands = commandItems
+    .map((item) => {
+      const haystack = `${item.title} ${item.detail} ${item.keywords ?? ''}`.toLowerCase()
+      const title = item.title.toLowerCase()
+      const rank = !commandQuery ? 3 : title === commandQuery ? 0 : title.startsWith(commandQuery) ? 1 : haystack.includes(commandQuery) ? 2 : 99
+      return { item, rank }
+    })
+    .filter(({ rank }) => rank < 99)
+    .sort((a, b) => a.rank - b.rank)
+    .map(({ item }) => item)
+  const pageItems: PaletteItem[] = commandOnly ? [] : searchPages(notes, searchQuery).slice(0, searchQuery.trim() ? SEARCH_RESULT_LIMIT : 8).map(({ note, path }) => ({
+    key: `page:${note.id}`, kind: 'page', title: note.title || 'Untitled', detail: path || 'Top level', run: () => openNote(note.id),
+  }))
+  const paletteItems = [...matchedCommands, ...pageItems]
+  const runPaletteItem = (item: PaletteItem | undefined) => {
+    if (!item) return
+    closeSearch(false)
+    window.requestAnimationFrame(() => { void item.run() })
+  }
+  useEffect(() => { setPaletteSelected(0) }, [searchQuery, paletteMode])
+  useEffect(() => {
+    if (!searchOpen || !paletteItems.length) return
+    if (paletteSelected >= paletteItems.length) { setPaletteSelected(paletteItems.length - 1); return }
+    paletteResultsRef.current?.querySelector<HTMLElement>(`#palette-option-${paletteSelected}`)?.scrollIntoView({ block: 'nearest' })
+  }, [searchOpen, paletteSelected, paletteItems.length])
+
+  // Global shortcuts intentionally win over browser defaults only when they are
+  // complete app commands. Plain typing and browser/navigation combinations are
+  // left untouched. Escape peels off one transient surface at a time.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const primary = (event.metaKey || event.ctrlKey) && !event.altKey
+      const key = event.key.toLowerCase()
+      if (primary && key === 'k') { event.preventDefault(); openSearch(event.shiftKey ? 'commands' : 'all'); return }
+      if (primary && event.shiftKey && key === 'p') { event.preventDefault(); openSearch('commands'); return }
+      const target = event.target as HTMLElement | null
+      const typing = Boolean(target?.closest('input, textarea, select, [contenteditable="true"]'))
+      if (!primary && !event.altKey && !event.shiftKey && event.key === '?' && !typing) { event.preventDefault(); openSearch('commands'); return }
+      if (searchOpen) return
+      if (primary && !event.shiftKey && key === 'n') { event.preventDefault(); if (!document.querySelector('[aria-modal="true"]')) void createNote(); return }
+      if (primary && event.shiftKey && key === 'n') { event.preventDefault(); if (activeNote && canWriteNote(activeNote) && !activeTrashed && !document.querySelector('[aria-modal="true"]')) void createNote(activeNote); return }
+      if (primary && !event.shiftKey && event.key === '\\') { event.preventDefault(); if (isMobile) showSidebar(); else if (sidebarOpen) collapseSidebar(); else openSidebar(); return }
+      if (event.key !== 'Escape') return
+      if (trashViewOpen) setTrashViewOpen(false)
+      else if (identityOpen) setIdentityOpen(false)
+      else if (notificationsOpen) setNotificationsOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [openSearch, searchOpen, activeNote, activeTrashed, isMobile, sidebarOpen, trashViewOpen, identityOpen, notificationsOpen])
+
+  const paletteKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') { event.preventDefault(); closeSearch(); return }
+    if (!paletteItems.length) return
+    if (event.key === 'ArrowDown') { event.preventDefault(); setPaletteSelected((current) => (current + 1) % paletteItems.length) }
+    else if (event.key === 'ArrowUp') { event.preventDefault(); setPaletteSelected((current) => (current - 1 + paletteItems.length) % paletteItems.length) }
+    else if (event.key === 'Home') { event.preventDefault(); setPaletteSelected(0) }
+    else if (event.key === 'End') { event.preventDefault(); setPaletteSelected(paletteItems.length - 1) }
+    else if (event.key === 'Enter') { event.preventDefault(); runPaletteItem(paletteItems[paletteSelected]) }
+  }
+
   return <div ref={shellRef} className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'} ${drag ? 'dragging-page' : ''} ${noSlide ? 'no-slide' : ''} ${drawerDragging ? 'drawer-dragging' : ''} ${drawerSettling ? 'drawer-settling' : ''} ${drawerIconX ? 'drawer-x' : ''}`}>
-    <aside><div className="sidebar-top"><button className="sidebar-icon" aria-label="Search pages" title="Search pages (⌘K)" onClick={openSearch}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-icon" aria-label="Settings" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><SettingsIcon /></button><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><SidebarIcon /></button></div></div>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}<button className="new-page-action" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New page</span></button>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === FAVORITES_DROP ? 'drop-target' : ''}`} data-drop-id={FAVORITES_DROP}>FAVORITES</div><nav className="favorites-nav">{previewParentId === FAVORITES_DROP && <DropLine depth={0} />}{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{reviewKind && <ReviewPanel title={reviewKind === 'anonymous' ? 'Pages on this device' : 'Deleted elsewhere'} detail={reviewKind === 'anonymous' ? 'Review before merging these pages into your account.' : 'Review the local changes before deciding what to keep.'} notes={reviewKind === 'anonymous' ? anonReviewNotes : deletedElsewhereNotes} activeId={reviewPreview?.kind === reviewKind ? reviewPreview.note.id : null} busy={reviewBusy} keepLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Merge (${anonReviewSelectedIds.size})` : 'Merge all' : 'Keep'} deleteLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Delete (${anonReviewSelectedIds.size})` : 'Delete all' : 'Delete'} selectedIds={reviewKind === 'anonymous' ? anonReviewSelectedIds : undefined} onToggleSelected={reviewKind === 'anonymous' ? (id) => setAnonReviewSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) : undefined} onOpen={(note) => void openReviewPage(note)} onKeep={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(adoptAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? adoptAnonymousWork : keepDeletedElsewhere))} onDelete={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(discardAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? discardAnonymousWork : trashDeletedElsewhere))} onNotNow={() => closeReview(true)} />}{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><CloseIcon /></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => openNote(note.id)}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
-    {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label="Search pages" onMouseDown={(event) => { if (event.target === event.currentTarget) setSearchOpen(false) }}>
-      <div className="search-panel" style={{ paddingBottom: keyboardInset }}>
-        <div className={`search-results ${searchResults.length === 0 ? 'is-empty' : ''}`}>
-          {searchResults.length === 0
+    <aside><div className="sidebar-top"><button className="sidebar-icon" aria-label="Open command palette" title={`Command palette (${mod} K)`} aria-keyshortcuts="Meta+K Control+K" onClick={() => openSearch('all')}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-icon" aria-label="Settings" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><SettingsIcon /></button><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><SidebarIcon /></button></div></div>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}<button className="new-page-action" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New page</span></button>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === FAVORITES_DROP ? 'drop-target' : ''}`} data-drop-id={FAVORITES_DROP}>FAVORITES</div><nav className="favorites-nav">{previewParentId === FAVORITES_DROP && <DropLine depth={0} />}{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{reviewKind && <ReviewPanel title={reviewKind === 'anonymous' ? 'Pages on this device' : 'Deleted elsewhere'} detail={reviewKind === 'anonymous' ? 'Review before merging these pages into your account.' : 'Review the local changes before deciding what to keep.'} notes={reviewKind === 'anonymous' ? anonReviewNotes : deletedElsewhereNotes} activeId={reviewPreview?.kind === reviewKind ? reviewPreview.note.id : null} busy={reviewBusy} keepLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Merge (${anonReviewSelectedIds.size})` : 'Merge all' : 'Keep'} deleteLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Delete (${anonReviewSelectedIds.size})` : 'Delete all' : 'Delete'} selectedIds={reviewKind === 'anonymous' ? anonReviewSelectedIds : undefined} onToggleSelected={reviewKind === 'anonymous' ? (id) => setAnonReviewSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) : undefined} onOpen={(note) => void openReviewPage(note)} onKeep={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(adoptAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? adoptAnonymousWork : keepDeletedElsewhere))} onDelete={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(discardAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? discardAnonymousWork : trashDeletedElsewhere))} onNotNow={() => closeReview(true)} />}{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><CloseIcon /></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => openNote(note.id)}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
+    {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSearch() }}>
+      <div className="search-panel command-panel" style={{ paddingBottom: keyboardInset }}>
+        <div ref={paletteResultsRef} id="command-palette-results" className={`search-results ${paletteItems.length === 0 ? 'is-empty' : ''}`} role="listbox" aria-label="Commands and pages">
+          {paletteItems.length === 0
             ? <div className="search-empty">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg>
-              <p>{searchQuery ? 'No pages match that name.' : 'Search your pages'}</p>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h9M5 17h6" /></svg>
+              <p>No commands or pages found.</p>
             </div>
-            : <>{!searchQuery && <div className="search-section">Recent</div>}{searchResults.map(({ note, path }) => <button key={note.id} className="search-result" onClick={() => { setSearchOpen(false); openNote(note.id) }}>
-              <svg className="search-result-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>
-              <span className="search-result-text"><span className="search-result-title">{note.title || 'Untitled'}</span><span className="search-result-path">{path || 'Top level'}</span></span>
-            </button>)}</>}
+            : <>{matchedCommands.length > 0 && <div className="search-section" aria-hidden="true">Commands</div>}{paletteItems.map((item, index) => <Fragment key={item.key}>{index === matchedCommands.length && pageItems.length > 0 && <div className="search-section" aria-hidden="true">{searchQuery ? 'Pages' : 'Recent pages'}</div>}<button id={`palette-option-${index}`} role="option" aria-selected={paletteSelected === index} tabIndex={-1} className={`search-result command-result ${paletteSelected === index ? 'selected' : ''}`} onMouseMove={() => setPaletteSelected(index)} onClick={() => runPaletteItem(item)}>
+              {item.kind === 'page'
+                ? <svg className="search-result-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3v5h5M14 3H6v18h12V8z" /></svg>
+                : <svg className="search-result-icon command-result-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7 4 5-4 5M14 17h3" /></svg>}
+              <span className="search-result-text"><span className="search-result-title">{item.title}</span><span className="search-result-path">{item.detail}</span></span>
+              {item.shortcut && <kbd>{item.shortcut}</kbd>}
+            </button></Fragment>)}</>}
         </div>
         <div className="search-bar">
           <div className="search-field">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg>
-            <input autoFocus type="search" enterKeyHint="go" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder="Search" aria-label="Search pages" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && searchResults[0]) { setSearchOpen(false); openNote(searchResults[0].note.id) } }} />
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h9M5 17h6" /></svg>
+            <input autoFocus type="search" enterKeyHint="go" autoComplete="off" autoCorrect="off" spellCheck={false} placeholder={paletteMode === 'commands' ? 'Type a command…' : 'Search pages or type a command…'} aria-label="Search commands and pages" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-palette-results" aria-activedescendant={paletteItems.length ? `palette-option-${paletteSelected}` : undefined} value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} onKeyDown={paletteKeyDown} />
             {searchQuery && <button className="search-clear" aria-label="Clear search" onClick={() => setSearchQuery('')}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="currentColor" stroke="none" /><path d="M9.5 9.5l5 5M14.5 9.5l-5 5" stroke="#1c1c1c" /></svg></button>}
           </div>
-          <button className="search-close" aria-label="Close search" onClick={() => setSearchOpen(false)}><CloseIcon /></button>
+          <span className="command-hint" aria-hidden="true"><kbd>↑↓</kbd><span>navigate</span><kbd>↵</kbd><span>open</span><kbd>esc</kbd></span>
+          <button className="search-close" aria-label="Close command palette" onClick={() => closeSearch()}><CloseIcon /></button>
         </div>
       </div>
     </div>}

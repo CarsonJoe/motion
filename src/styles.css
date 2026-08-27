@@ -553,7 +553,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .search-result-title { overflow: hidden; color: #ededed; font-size: 14px; text-overflow: ellipsis; white-space: nowrap; }
 .search-result-path { overflow: hidden; color: #6f6f6f; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 @media (hover: hover) { .search-result:hover { background: #272727; } }
-.search-result:focus-visible { background: #272727; outline: none; }
+.search-result:focus-visible, .search-result.selected { background: #2a2a2a; outline: none; }
+.command-result kbd, .command-hint kbd { min-width: 25px; padding: 3px 6px; border: 1px solid #3b3b3b; border-radius: 5px; color: #999; background: #222; box-shadow: 0 1px 0 #0d0d0d; font: inherit; font-size: 10px; line-height: 1.2; text-align: center; white-space: nowrap; }
+.command-result-icon { stroke-linecap: round; stroke-linejoin: round; }
+.command-hint { display: flex; flex: none; align-items: center; gap: 5px; color: #717171; font-size: 10px; }
+.command-hint span { margin-right: 3px; }
+.command-panel .search-section + .search-result { margin-top: 1px; }
 
 /* Hangs below the fixed icon row, so it starts where the tree starts rather than
    covering the button that opened it. */
@@ -926,6 +931,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .search-field input { font-size: 17px; }
   .search-clear { width: 24px; height: 24px; }
   .search-close { display: grid; width: 46px; height: 46px; flex: none; place-items: center; padding: 13px; border: 0; border-radius: 50%; color: #e8e8e8; background: #262626; cursor: pointer; }
+  .command-hint { display: none; }
+  .command-result kbd { display: none; }
   .search-close svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
   .search-results { order: 1; flex: 1; padding: 8px 8px 4px; }
   .search-empty { gap: 18px; padding: 0 20px 12vh; }
