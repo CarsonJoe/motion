@@ -859,7 +859,7 @@ export default function App() {
   const titleInputRef = useRef<HTMLTextAreaElement>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(() => localStorage.getItem('motion-sidebar-collapsed') !== 'true')
-  const [showBacklinks, setShowBacklinks] = useState(() => localStorage.getItem('motion-show-backlinks') !== 'false')
+  const [showBacklinks, setShowBacklinks] = useState(() => localStorage.getItem('motion-show-backlinks') === 'true')
   const toggleBacklinks = () => setShowBacklinks((visible) => {
     const next = !visible
     localStorage.setItem('motion-show-backlinks', String(next))
