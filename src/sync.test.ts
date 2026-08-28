@@ -89,6 +89,19 @@ describe('share promotion', () => {
     expect(await store.countOps()).toBeGreaterThan(0)
   })
 
+  it('can share only the selected page without promoting its subpages', async () => {
+    const store = await openLocalStore('user-a')
+    await store.putNote(note({ id: 'root', title: 'Plan', updatedAt: 10 }))
+    await store.putNote(note({ id: 'child', title: 'Private detail', parentId: 'root', updatedAt: 11 }))
+    const { client, calls } = fakeClient()
+
+    await migrateNoteTreeToShare(client, store, store.getNote('root')!, 'share-1', '', false)
+
+    expect(store.getNote('root')?.shareId).toBe('share-1')
+    expect(store.getNote('child')?.shareId).toBe('')
+    expect(calls.filter((call) => call.scope === 'share-1' && call.table === 'member_notes' && call.op === 'insert')).toHaveLength(1)
+  })
+
   it('preserves a private canonical parent when sharing a nested subtree', async () => {
     const store = await openLocalStore('user-a')
     await store.putNote(note({ id: 'private-parent', title: 'Work' }))
@@ -176,6 +189,37 @@ describe('room moves', () => {
     expect(store.getNote(root.id)?.roomId).toBe('room-1')
     expect(store.getNote(child.id)?.roomId).toBe('room-1')
     expect(store.getNote(nested.id)?.roomId).toBe('existing-room')
+  })
+
+  it('can change access for only the selected page', async () => {
+    const store = await openLocalStore('user-a')
+    const root = note({ id: 'root', shareId: 'share-1' })
+    const child = note({ id: 'child', parentId: root.id, shareId: root.shareId })
+    for (const value of [root, child]) await store.putNote(value)
+    const rows = {
+      member_notes: [{ id: 'meta-root', noteId: root.id }, { id: 'meta-child', noteId: child.id }],
+      member_note_updates: [{ id: 'update-root', noteId: root.id }, { id: 'update-child', noteId: child.id }]
+    } as Record<string, Array<Record<string, unknown>>>
+    const moves: Array<{ table: string; ids: string[] }> = []
+    const table = (name: string) => {
+      let noteIds: string[] = []
+      const query: Record<string, unknown> = {
+        select: () => query,
+        in: (_column: string, values: string[]) => { noteIds = values; return query },
+        after: () => query,
+        limit: () => query,
+        page: () => Promise.resolve({ rows: rows[name].filter((row) => noteIds.includes(String(row.noteId))), nextCursor: null }),
+        moveRoom: (ids: string[]) => { moves.push({ table: name, ids }); return Promise.resolve() }
+      }
+      return query
+    }
+    const client = { resource: () => ({ table, room: () => ({ table }) }) } as unknown as TallpondClient
+
+    await moveNoteTreeToRoom(client, store, root, 'room-1', false)
+
+    expect(moves.every((move) => move.ids.every((id) => id.endsWith('root')))).toBe(true)
+    expect(store.getNote(root.id)?.roomId).toBe('room-1')
+    expect(store.getNote(child.id)?.roomId).toBe('')
   })
 })
 

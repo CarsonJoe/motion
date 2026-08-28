@@ -1250,7 +1250,7 @@ async function rowIdsForNotes(table: () => TableQuery, noteIds: string[]) {
   return ids
 }
 
-export async function moveNoteTreeToRoom(client: TallpondClient, store: LocalStore, root: Note, destinationRoomId: string) {
+export async function moveNoteTreeToRoom(client: TallpondClient, store: LocalStore, root: Note, destinationRoomId: string, includeSubpages = true) {
   if (!root.shareId) throw new Error('Share this page before changing its access scope.')
   if (root.roomId === destinationRoomId) return
 
@@ -1258,7 +1258,7 @@ export async function moveNoteTreeToRoom(client: TallpondClient, store: LocalSto
   // ancestor. Only the contiguous subtree in the root's current scope moves.
   const eligible = store.getSnapshot().filter((note) =>
     !note.deletedAt && note.shareId === root.shareId && note.roomId === root.roomId)
-  const ids = subtreeIds(eligible, root.id)
+  const ids = includeSubpages ? subtreeIds(eligible, root.id) : new Set([root.id])
   const tree = eligible.filter((note) => ids.has(note.id))
   if (!tree.some((note) => note.id === root.id)) throw new Error('This page belongs to a different access scope.')
 
@@ -1302,14 +1302,14 @@ export async function createEmptyNoteRoom(shareId: string, name: string): Promis
   }
 }
 
-export async function createNoteRoom(store: LocalStore, root: Note): Promise<RoomInfo> {
+export async function createNoteRoom(store: LocalStore, root: Note, includeSubpages = true): Promise<RoomInfo> {
   if (!tallpond) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to change access for this page.')
   if (!root.shareId) throw new Error('Share this page before changing its access scope.')
   const resource = tallpond.resource(root.shareId)
   const room = await createEmptyNoteRoom(root.shareId, root.title || 'Untitled Note')
   try {
-    await moveNoteTreeToRoom(tallpond, store, root, room.id)
+    await moveNoteTreeToRoom(tallpond, store, root, room.id, includeSubpages)
     subscribeLiveForCurrentShares(store)
     return room
   } catch (error) {
@@ -1331,11 +1331,11 @@ const roomRoleForMember = (role: string): ShareRole => role === 'reader' ? 'read
 
 // Applies one explicit access boundary. Moving only touches descendants that
 // still share the root's old room, so narrower boundaries below it survive.
-export async function setPageAccess(store: LocalStore, root: Note, mode: PageAccessMode, parentRoomId: string, selectedUserIds: string[] = []) {
+export async function setPageAccess(store: LocalStore, root: Note, mode: PageAccessMode, parentRoomId: string, selectedUserIds: string[] = [], includeSubpages = true) {
   if (!tallpond || !root.shareId) throw new Error('Add this page to a workspace before changing access.')
   if (!navigator.onLine) throw new Error('Reconnect to change access for this page.')
   if (mode === 'workspace' || mode === 'parent') {
-    await moveNoteTreeToRoom(tallpond, store, root, mode === 'workspace' ? '' : parentRoomId)
+    await moveNoteTreeToRoom(tallpond, store, root, mode === 'workspace' ? '' : parentRoomId, includeSubpages)
     subscribeLiveForCurrentShares(store)
     return
   }
@@ -1345,7 +1345,7 @@ export async function setPageAccess(store: LocalStore, root: Note, mode: PageAcc
   // could silently change a sibling or parent that inherits that same scope.
   // Room cleanup can happen later; correctness here means never widening or
   // narrowing another subtree as a side effect of editing this one.
-  const created = await createNoteRoom(store, root)
+  const created = await createNoteRoom(store, root, includeSubpages)
   const room = tallpond.resource(root.shareId).room(created.id)
   const userId = state.user?.id
   if (!userId) throw new Error('Reconnect before changing access for this page.')
@@ -1386,12 +1386,12 @@ async function interruptedShare(client: TallpondClient, rootId: string) {
   return null
 }
 
-export async function migrateNoteTreeToShare(client: TallpondClient, store: LocalStore, root: Note, shareId: string, roomId = '') {
+export async function migrateNoteTreeToShare(client: TallpondClient, store: LocalStore, root: Note, shareId: string, roomId = '', includeSubpages = true) {
   // A nested page already belonging to another share is a scope boundary, not
   // part of this promotion. This mirrors moveBlockedBy's cross-scope invariant.
   const eligible = store.getSnapshot().filter((note) =>
     !note.deletedAt && (!note.shareId || note.shareId === shareId))
-  const ids = subtreeIds(eligible, root.id)
+  const ids = includeSubpages ? subtreeIds(eligible, root.id) : new Set([root.id])
   const tree = eligible.filter((note) => ids.has(note.id))
   if (!tree.some((note) => note.id === root.id)) throw new Error('This page belongs to a different shared space.')
   // The selected page is the resource entry for collaborators, but its
@@ -1428,7 +1428,7 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
 
 // Sharing is an online operation: create (or recover) the resource, durably
 // re-home the subtree, drain its full state, and only then retire private rows.
-export async function shareNoteTree(store: LocalStore, root: Note, destination?: { shareId: string; roomId: string }, workspaceName?: string) {
+export async function shareNoteTree(store: LocalStore, root: Note, destination?: { shareId: string; roomId: string }, workspaceName?: string, includeSubpages = true) {
   const client = tallpond
   if (!client) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to share this page.')
@@ -1450,7 +1450,7 @@ export async function shareNoteTree(store: LocalStore, root: Note, destination?:
   localStorage.setItem(roleKey(resource.id), role)
   setState({ roles: { ...state.roles, [resource.id]: role } })
 
-  await migrateNoteTreeToShare(client, store, root, resource.id, destination?.roomId ?? '')
+  await migrateNoteTreeToShare(client, store, root, resource.id, destination?.roomId ?? '', includeSubpages)
   localStorage.removeItem(migrationKey)
   subscribeLiveForCurrentShares(store)
   return resource.id
