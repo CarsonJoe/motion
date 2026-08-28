@@ -44,13 +44,18 @@ export type NoteDocController = {
 const presenceColors = ['#ff6b6b', '#f59f00', '#51cf66', '#22b8cf', '#748ffc', '#b197fc', '#f06595']
 const colorFor = (value: string) => presenceColors[[...value].reduce((total, char) => total + char.charCodeAt(0), 0) % presenceColors.length]
 
-async function fetchAllUpdates(shareId: string, roomId: string, noteId: string) {
+async function fetchAllUpdates(shareId: string, roomId: string, noteId: string, signal: AbortSignal) {
   const rows: Row[] = []
   let cursor: string | undefined
   do {
     let query = updatesTable(tallpond!, shareId, roomId).select().eq('noteId', noteId).limit(200)
     if (cursor) query = query.after(cursor)
-    const page = await query.page()
+    const page = await tallpond!.gateway.request<{ rows: Row[]; nextCursor?: string | null }>('/v1/db/query', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(query.toRequest()),
+      signal,
+    })
     rows.push(...page.rows)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
@@ -186,40 +191,46 @@ export async function openNoteDoc(options: {
   let liveSubscription: { close: () => void } | null = null
   let presenceSubscription: { close: () => void } | null = null
   let presenceCleanup = () => {}
+  let backfillAbort: AbortController | null = null
+  let backfillSettled = Promise.resolve()
 
   const online = options.connected && navigator.onLine && Boolean(tallpond)
   if (online) {
     options.onTransport('connecting')
-    // Subscribe before fetching and buffer inserts until the backfill lands,
-    // so no update can fall between the two.
-    let bootstrap: Row[] | null = []
     const applyRows = (rows: Row[]) => {
       const updates = rows.flatMap((row) => {
         try { return row.payload ? [fromBase64(String(row.payload))] : [] } catch { return [] }
       })
       if (updates.length) Y.applyUpdate(doc, Y.mergeUpdates(updates), REMOTE_ORIGIN)
     }
-    liveSubscription = updatesTable(tallpond!, note.shareId, note.roomId).select().eq('noteId', note.id).live()
-      .on('insert', (row) => { if (bootstrap) bootstrap.push(row); else applyRows([row]) })
-      .on('status', (status) => {
-        if (closed) return
-        if (status === 'live') options.onTransport('live')
-        else if (status === 'offline') options.onTransport('offline')
-        else options.onTransport('connecting')
-      })
-      .on('error', options.onError)
+    const startLive = () => {
+      if (closed || liveSubscription) return
+      // The subscription's own initial snapshot closes the gap between the
+      // backfill and this live tail. Yjs makes replaying those rows harmless.
+      liveSubscription = updatesTable(tallpond!, note.shareId, note.roomId).select().eq('noteId', note.id).live()
+        .on('insert', (row) => applyRows([row]))
+        .on('status', (status) => {
+          if (closed) return
+          if (status === 'live') options.onTransport('live')
+          else if (status === 'offline') options.onTransport('offline')
+          else options.onTransport('connecting')
+        })
+        .on('error', options.onError)
+    }
 
-    void (async () => {
-      const rows = await fetchAllUpdates(note.shareId, note.roomId, note.id)
+    backfillAbort = new AbortController()
+    backfillSettled = (async () => {
+      // Only the active page gets a body backfill. Closing the controller aborts
+      // this request before the next page starts instead of leaving every page
+      // visited during startup competing for the browser's network slots.
+      const rows = await fetchAllUpdates(note.shareId, note.roomId, note.id, backfillAbort!.signal)
       if (closed) return
       const payloads = rows.flatMap((row) => {
         try { return row.payload ? [fromBase64(String(row.payload))] : [] } catch { return [] }
       })
       const merged = payloads.length ? Y.mergeUpdates(payloads) : null
       if (merged) Y.applyUpdate(doc, merged, REMOTE_ORIGIN)
-      const buffered = bootstrap ?? []
-      bootstrap = null
-      applyRows(buffered)
+      startLive()
 
       // Self-heal: anything this device knows that the fetched log does not —
       // edits made before sharing, or updates lost to a failed flush — is
@@ -243,7 +254,11 @@ export async function openNoteDoc(options: {
           await updatesTable(tallpond!, note.shareId, note.roomId).delete().in('updateId', ids.slice(index, index + 100))
         }
       }
-    })().catch((error) => { if (!isAuthError(error)) options.onError(error) })
+    })().catch((error) => {
+      if (closed || (error instanceof DOMException && error.name === 'AbortError')) return
+      startLive()
+      if (!isAuthError(error)) options.onError(error)
+    })
   } else {
     options.onTransport(options.connected ? 'offline' : 'local')
   }
@@ -267,6 +282,7 @@ export async function openNoteDoc(options: {
     let selectionFocusRel: string | null = null
     let inFlight = false
     let queued = false
+    let presenceReady = false
     let published = false
     let lastPublishAt = 0
     let publishTimer: number | null = null
@@ -310,7 +326,7 @@ export async function openNoteDoc(options: {
     const activeSelection = () => Boolean(selection) && document.visibilityState !== 'hidden'
     const publishPresence = async () => {
       if (closed || !options.writable || !navigator.onLine) return
-      if (inFlight) { queued = true; return }
+      if (!presenceReady || inFlight) { queued = true; return }
       inFlight = true
       lastPublishAt = Date.now()
       const { userId, displayName } = identity()
@@ -350,8 +366,16 @@ export async function openNoteDoc(options: {
       }, wait)
     }
 
-    presenceSubscription = resourceTable(tallpond!, note.shareId, note.roomId, 'member_presence').select().eq('noteId', note.id).live()
-      .on('insert', receivePresence).on('update', receivePresence).on('error', () => {})
+    // Presence uses another snapshot read. Do not start it for a page whose body
+    // backfill is still pending: rapid navigation should leave no network work
+    // behind for pages that never became ready.
+    void backfillSettled.then(() => {
+      if (closed) return
+      presenceReady = true
+      presenceSubscription = resourceTable(tallpond!, note.shareId, note.roomId, 'member_presence').select().eq('noteId', note.id).live()
+        .on('insert', receivePresence).on('update', receivePresence).on('error', () => {})
+      if (queued || selection) { queued = false; schedulePresence() }
+    })
     // The profile normally lands a round trip after the document opens. Republish
     // it only if this session has actually announced presence; opening a shared
     // note without focusing its editor should cost no presence write at all.
@@ -396,6 +420,7 @@ export async function openNoteDoc(options: {
       flushed: () => persistChain,
       close: () => {
         closed = true
+        backfillAbort?.abort()
         liveSubscription?.close(); presenceSubscription?.close(); presenceCleanup()
         text.unobserve(textChanged); doc.off('update', documentChanged)
         doc.destroy()
@@ -409,6 +434,7 @@ export async function openNoteDoc(options: {
     flushed: () => persistChain,
     close: () => {
       closed = true
+      backfillAbort?.abort()
       liveSubscription?.close()
       text.unobserve(textChanged); doc.off('update', documentChanged)
       doc.destroy()
