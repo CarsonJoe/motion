@@ -21,6 +21,7 @@ import { lexicalBridgePlugin } from './lexicalBridge'
 import { toEditorMarkdown } from './markdown'
 import { sourceOffsetToRendered } from './cursorMap'
 import type { Selection } from './doc'
+import { preserveScrollDuringImport } from './scrollPreservation'
 import './editorVendor.css'
 
 // The stored document IS this Markdown string, so serialization has to be a
@@ -178,7 +179,8 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
       focusNodeOffset: selection!.focusOffset
     } : null
     const activityAtImport = selectionActivity.current
-    editor.current?.setMarkdown(editorMarkdown)
+    const scroller = container.current?.closest<HTMLElement>('main') ?? null
+    const stopScrollRestore = preserveScrollDuringImport(scroller, () => editor.current?.setMarkdown(editorMarkdown))
     if (saved) window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
       // A tap or keystroke after the import owns the newer caret location. Do
       // not let this delayed reconciliation overwrite it.
@@ -215,6 +217,7 @@ export default function MarkdownEditor({ markdown, onChange, toolbarHost, readOn
       const nextSelection = window.getSelection()
       nextSelection?.setBaseAndExtent(anchor.node, anchor.offset, focus.node, focus.offset)
     }))
+    return stopScrollRestore
   }, [editorMarkdown, selectionRestore?.revision])
   return <div ref={container} onPointerDownCapture={() => { selectionActivity.current += 1 }} onKeyDownCapture={() => { selectionActivity.current += 1 }}><MDXEditor ref={editor} markdown={editorMarkdown} readOnly={readOnly} contentEditableClassName="motion-md-content" toMarkdownOptions={MARKDOWN_OPTIONS} onChange={(value) => { current.current = value; if (!applying.current) onChange(value) }} plugins={[
     headingsPlugin(), listsPlugin(), quotePlugin(), linkPlugin(), linkDialogPlugin(), imagePlugin({ imageUploadHandler: onUploadImage ?? null, imagePreviewHandler: resolveImage ?? null, allowSetImageDimensions: false, disableImageSettingsButton: true, ImageDialog: NoImageUi, EditImageToolbar: ImageAlignmentToolbar, imagePlaceholder: NoImageUi }), markdownShortcutPlugin(), thematicBreakPlugin(), tablePlugin(), pageLinkPlugin(), editorMenuPlugin(), thematicBreakRulePlugin(), lexicalBridgePlugin(), persistentBlankLinesPlugin({}),
