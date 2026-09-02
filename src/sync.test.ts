@@ -423,6 +423,18 @@ describe('authoritative absence', () => {
     expect(getSyncState().deletedElsewhere).toBeNull()
   })
 
+  it('does not delete a page that changed scope after inventory started', async () => {
+    const store = await openLocalStore()
+    await store.applyRemoteNote(note({ id: 'moving', title: 'Plan' }))
+    const scopeAtStart = new Map([['moving', '']])
+    await store.putNote(note({ id: 'moving', title: 'Plan', shareId: 'share-1', remoteKnown: true }))
+
+    await reconcileAuthoritativeAbsence(store, new Map([['share-1', new Set()]]), scopeAtStart)
+
+    expect(store.getNote('moving')).toMatchObject({ shareId: 'share-1', deletedAt: 0 })
+    expect(getSyncState().deletedElsewhere).toBeNull()
+  })
+
   it('pauses a previously synced page that has queued local changes', async () => {
     const store = await openLocalStore()
     await store.applyRemoteNote(note({ id: 'changed', title: 'draft' }))

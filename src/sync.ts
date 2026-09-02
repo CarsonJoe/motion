@@ -367,6 +367,10 @@ let flushQueued = false
 let retryTimer: number | null = null
 let retryAttempt = 0
 let fullSyncPromise: Promise<void> | null = null
+// Scope migrations and authoritative inventory reconciliation must never run
+// over one another: a half-moved page is absent from both snapshots and can be
+// incorrectly removed, then resurrected by its private tombstone.
+let shareMigrationPromise: Promise<void> | null = null
 let sessionRefreshPromise: Promise<void> | null = null
 let flushTimer: number | null = null
 // resources.live() covers every resource type in the app, including retained
@@ -600,12 +604,17 @@ async function membershipEnded(resourceId: string) {
   }
 }
 
-export async function reconcileAuthoritativeAbsence(store: LocalStore, seenByScope: Map<string, Set<string>>) {
+export async function reconcileAuthoritativeAbsence(store: LocalStore, seenByScope: Map<string, Set<string>>, scopeAtStart?: ReadonlyMap<string, string>) {
   const ops = await store.listOps()
   const pending = new Set(ops.map((op) => op.noteId))
   const conflicts: Note[] = []
 
   for (const note of store.getSnapshot()) {
+    // An inventory can become stale while it is in flight. In particular,
+    // sharing moves a page from private to a resource before the destination
+    // write finishes. Never interpret absence from the old snapshot as a
+    // deletion when the page changed scope after this sync began.
+    if (scopeAtStart && scopeAtStart.get(note.id) !== note.shareId) continue
     const seen = seenByScope.get(note.shareId)
     // A scope not fetched completely says nothing about absence. Explicit
     // false marks a page created locally by this version; undefined is legacy
@@ -634,6 +643,7 @@ export async function reconcileAuthoritativeAbsence(store: LocalStore, seenBySco
 }
 
 export async function fullSync() {
+  if (shareMigrationPromise) await shareMigrationPromise
   fullSyncPromise ??= (async () => {
     try {
       const client = tallpond
@@ -643,7 +653,9 @@ export async function fullSync() {
 
       // Captured before the resource list is fetched: a share created
       // concurrently by this device is absent here and so is never pruned.
-      const sharesBefore = new Set(local.getSnapshot().map((note) => note.shareId).filter(Boolean))
+      const startingNotes = local.getSnapshot()
+      const sharesBefore = new Set(startingNotes.map((note) => note.shareId).filter(Boolean))
+      const scopeAtStart = new Map(startingNotes.map((note) => [note.id, note.shareId]))
       const seenByScope = new Map<string, Set<string>>()
 
       // Neither inventory depends on the other. Starting both together removes
@@ -712,7 +724,7 @@ export async function fullSync() {
         else if (note.localParentId !== undefined) await local.setLocalParent(note.id, undefined)
       }
 
-      await reconcileAuthoritativeAbsence(local, seenByScope)
+      await reconcileAuthoritativeAbsence(local, seenByScope, scopeAtStart)
 
       // A share that has dropped out of the list may be one this user is no
       // longer a member of — deleted, or access revoked, on another device.
@@ -1436,27 +1448,45 @@ export async function shareNoteTree(store: LocalStore, root: Note, destination?:
   if (!client) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to share this page.')
 
-  const migrationKey = shareMigrationKey(root.id)
-  if (root.shareId && localStorage.getItem(migrationKey) !== root.shareId) return root.shareId
+  // Finish any inventory already in flight before changing scope, then block
+  // new inventories until both destination writes and private retirement are
+  // complete. This makes promotion one serialized operation rather than a race
+  // between migration, active-page effects, and absence reconciliation.
+  if (shareMigrationPromise) await shareMigrationPromise
+  if (fullSyncPromise) await fullSyncPromise
+  let releaseMigration!: () => void
+  const barrier = new Promise<void>((resolve) => { releaseMigration = resolve })
+  shareMigrationPromise = barrier
+  closeLiveSubscriptions()
 
-  let resource = destination
-    ? await client.resource(destination.shareId).get()
-    : root.shareId
-      ? await client.resource(root.shareId).get()
-      : await interruptedShare(client, root.id)
-  if (!resource) {
-    resource = await client.resource.create('shared_notes', { name: workspaceName?.trim() || root.title || 'Untitled Note', visibility: 'members' })
+  try {
+    const migrationKey = shareMigrationKey(root.id)
+    if (root.shareId && localStorage.getItem(migrationKey) !== root.shareId) return root.shareId
+
+    let resource = destination
+      ? await client.resource(destination.shareId).get()
+      : root.shareId
+        ? await client.resource(root.shareId).get()
+        : await interruptedShare(client, root.id)
+    if (!resource) {
+      resource = await client.resource.create('shared_notes', { name: workspaceName?.trim() || root.title || 'Untitled Note', visibility: 'members' })
+    }
+
+    localStorage.setItem(migrationKey, resource.id)
+    const role = resource.currentMember?.role || 'owner'
+    localStorage.setItem(roleKey(resource.id), role)
+    setState({ roles: { ...state.roles, [resource.id]: role } })
+
+    await migrateNoteTreeToShare(client, store, root, resource.id, destination?.roomId ?? '', includeSubpages)
+    localStorage.removeItem(migrationKey)
+    return resource.id
+  } finally {
+    // Reopen feeds only after local and remote scopes agree. Any active-page
+    // catch-up waiting on the barrier may replace these subscriptions once.
+    subscribeLiveForCurrentShares(store)
+    releaseMigration()
+    if (shareMigrationPromise === barrier) shareMigrationPromise = null
   }
-
-  localStorage.setItem(migrationKey, resource.id)
-  const role = resource.currentMember?.role || 'owner'
-  localStorage.setItem(roleKey(resource.id), role)
-  setState({ roles: { ...state.roles, [resource.id]: role } })
-
-  await migrateNoteTreeToShare(client, store, root, resource.id, destination?.roomId ?? '', includeSubpages)
-  localStorage.removeItem(migrationKey)
-  subscribeLiveForCurrentShares(store)
-  return resource.id
 }
 
 function subscribeLiveForCurrentShares(store: LocalStore) {
