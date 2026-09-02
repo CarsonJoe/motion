@@ -297,20 +297,15 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .modal-close { width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: #b5b5b5; background: #292929; font: inherit; font-size: 22px; line-height: 1; cursor: pointer; transition: color var(--motion-fast) ease, background var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring); }
 .modal-close:active { transform: scale(.88) rotate(5deg); }
 @media (hover: hover) { .modal-close:hover { color: #fff; background: #353535; } }
-.invite-row { display: flex; gap: 7px; }
-.invite-row input, .invite-row select { min-width: 0; padding: 8px; border: none; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
-.invite-row input { flex: 1; }
-.invite-row .new { padding: 6px 12px; font-size: 12px; }
-.invite-link-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 7px; padding: 10px 11px; border: 1px solid #31577e; border-radius: 8px; background: #172230; }
+.invite-row { display: grid; grid-template-columns: minmax(0, 1fr) 136px auto; gap: 8px; }
+.invite-row input, .invite-row select { min-width: 0; min-height: 42px; padding: 9px 11px; border: none; border-radius: 7px; color: #ddd; background: #121212; font: inherit; font-size: 13px; }
+.invite-row .new { padding: 8px 14px; font-size: 13px; }
+.invite-link-row { display: grid; grid-template-columns: minmax(0, 1fr) 124px auto; align-items: center; gap: 8px; padding: 12px; border-radius: 9px; background: #121212; }
 .invite-link-row > span { display: grid; gap: 2px; }
-.invite-link-row strong { color: #c6def5; font-size: 12px; }
-.invite-link-row small, .invite-link-result small { color: #7ea5cc; font-size: 11px; line-height: 1.35; }
-.invite-link-row select { min-width: 0; padding: 8px; border: 0; border-radius: 6px; color: #ddd; background: #121212; font: inherit; font-size: 12px; }
-.invite-link-row .new { padding: 7px 11px; font-size: 12px; white-space: nowrap; }
-.invite-link-result { display: flex; align-items: center; gap: 8px; padding: 8px 9px; border-radius: 7px; background: #121a23; }
-.invite-link-result > span { display: grid; min-width: 0; flex: 1; gap: 3px; }
-.invite-link-result input { width: 100%; min-width: 0; padding: 6px 7px; border: 1px solid #30465d; border-radius: 5px; color: #b9d4ef; background: #0d1218; font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.invite-link-result .copy-link { flex: none; white-space: nowrap; }
+.invite-link-row strong { color: #bdbdbd; font-size: 13px; }
+.invite-link-row small { color: #707070; font-size: 12px; line-height: 1.35; }
+.invite-link-row select { min-width: 0; min-height: 38px; padding: 8px 10px; border: 0; border-radius: 7px; color: #ddd; background: #1b1b1b; font: inherit; font-size: 13px; }
+.invite-link-row .copy-link { min-height: 38px; padding-inline: 14px; white-space: nowrap; }
 .share-modal .share-permission-note, .share-modal .share-empty { margin: -4px 0 0; color: #888; font-size: 12px; }
 .share-modal .share-error { margin: -4px 0 0; padding: 8px 10px; border-radius: 6px; color: #f0a0a0; background: #2b1c1c; font-size: 12px; }
 .separate-workspace-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 2px; }
@@ -326,8 +321,8 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .member-list span button { padding: 0 2px; color: #888; background: transparent; font-size: 14px; line-height: 1; }
 .member-list span button:hover { color: #eee; }
 
-.workspace-share-modal { align-content: start; grid-auto-rows: max-content; gap: 13px; width: min(500px, 100%); }
-.share-section-label { color: #777; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
+.workspace-share-modal { align-content: start; grid-auto-rows: max-content; gap: 16px; width: min(625px, 100%); padding: 22px 23px; }
+.share-section-label { color: #777; font-size: 11px; font-weight: 700; letter-spacing: .06em; }
 .workspace-choice-list, .access-choice-list, .workspace-create { display: grid; gap: 7px; }
 .workspace-choice-list > p { margin: 0; color: #777; font-size: 12px; }
 .workspace-choice { display: flex; align-items: center; width: 100%; gap: 10px; padding: 10px 11px; border: 1px solid #333; border-radius: 8px; color: #ccc; background: #151515; text-align: left; }
@@ -377,10 +372,13 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .share-modal-actions .new { padding: 8px 13px; font-size: 12px; }
 .workspace-settings-link, .workspace-back { padding: 0; border: 0; color: #75a8dc; background: transparent; font: inherit; font-size: 12px; }
 .workspace-settings-link { font-weight: 600; }
+.workspace-back { justify-self: stretch; padding-top: 16px; border-top: 1px solid #303030; text-align: center; }
+.share-modal header.workspace-modal-header { align-items: center; margin: -2px 0 8px; border-bottom: 1px solid #303030; }
+.share-modal header.workspace-modal-header .workspace-tabs { display: flex; flex: 1; gap: 20px; border: 0; }
 .workspace-tabs { display: flex; gap: 16px; border-bottom: 1px solid #333; }
-.workspace-tabs button { padding: 4px 0 9px; border: 0; border-bottom: 2px solid transparent; color: #888; background: transparent; font: inherit; }
+.workspace-tabs button { padding: 8px 0 11px; border: 0; border-bottom: 2px solid transparent; color: #888; background: transparent; font: inherit; font-size: 15px; }
 .workspace-tabs button.active { border-color: #ddd; color: #ddd; }
-.workspace-admin-note { padding: 9px 10px; border-radius: 7px; color: #91b9e2; background: #182534; font-size: 11px; }
+.workspace-admin-note { color: #999; font-size: 12px; line-height: 1.45; }
 .workspace-roster { display: grid; max-height: 260px; overflow-y: auto; }
 .workspace-roster > div { display: flex; align-items: center; gap: 7px; padding: 8px 2px; border-bottom: 1px solid #292929; }
 .workspace-roster span { display: grid; flex: 1; color: #ccc; }
@@ -399,7 +397,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .workspace-share-modal { width: 100%; height: 100dvh; max-height: none; overflow-y: auto; padding: calc(14px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom)); border-width: 0; border-radius: 0; }
   .workspace-share-modal header { position: sticky; top: calc(-14px - env(safe-area-inset-top)); z-index: 2; margin: calc(-14px - env(safe-area-inset-top)) -16px 0; padding: calc(14px + env(safe-area-inset-top)) 16px 12px; background: #1b1b1b; }
   .workspace-share-modal .workspace-tabs { margin: 0 -16px; padding: 0 16px; }
-  .workspace-share-modal .workspace-admin-note { padding: 10px 11px; line-height: 1.4; }
+  .workspace-share-modal header.workspace-modal-header { margin: calc(-14px - env(safe-area-inset-top)) -16px 4px; padding: calc(14px + env(safe-area-inset-top)) 16px 0; }
+  .workspace-share-modal header.workspace-modal-header .workspace-tabs { margin: 0; padding: 0; }
+  .workspace-share-modal .workspace-admin-note { line-height: 1.4; }
   .workspace-share-modal .invite-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
   .workspace-share-modal .invite-row input { grid-column: 1 / -1; width: 100%; }
   .workspace-share-modal .invite-row select, .workspace-share-modal .invite-row button { min-height: 40px; }
@@ -407,11 +407,9 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .workspace-share-modal .invite-link-row { grid-template-columns: minmax(0, 1fr) auto; }
   .workspace-share-modal .invite-link-row > span { grid-column: 1 / -1; }
   .workspace-share-modal .invite-link-row select, .workspace-share-modal .invite-link-row button { min-height: 40px; }
-  .workspace-share-modal .invite-link-result { align-items: stretch; flex-direction: column; }
-  .workspace-share-modal .invite-link-result .copy-link { min-height: 40px; }
   .workspace-share-modal .workspace-roster { max-height: none; }
   .workspace-share-modal .workspace-roster > div { min-height: 52px; padding: 8px 4px; }
-  .workspace-share-modal .workspace-back { justify-self: start; padding: 8px 0; }
+  .workspace-share-modal .workspace-back { justify-self: stretch; padding: 14px 0 0; text-align: center; }
   .share-modal-actions { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); margin: 0 -16px calc(-18px - env(safe-area-inset-bottom)); padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); border-top: 1px solid #292929; background: #1b1b1b; }
   .access-scope-banner-wrap { margin-top: 8px; padding: 0 20px; }
   .access-scope-banner { align-items: flex-start; flex-wrap: wrap; }
