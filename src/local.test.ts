@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { IDBFactory } from 'fake-indexeddb'
-import { adoptScope, ANON_SCOPE, discardScopeNotes, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, workspaceMountBlockedBy, type Note, type NoteOp } from './local'
+import { adoptScope, ANON_SCOPE, discardScopeNotes, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, SURVEY_TITLE_LIMIT, visibleParentId, visibleSubtreeIds, workspaceMountBlockedBy, type Note, type NoteOp } from './local'
 
 const note = (patch: Partial<Note>): Note => ({
   id: crypto.randomUUID(), title: '', parentId: '', shareId: '', roomId: '', deletedAt: 0, updatedAt: 0, ...patch
@@ -216,6 +216,13 @@ describe('visible hierarchy', () => {
     const parent = note({ id: 'parent', shareId: 'resource' })
     const child = note({ id: 'child', parentId: parent.id, shareId: 'resource' })
     expect(visibleParentId(child, [parent, child])).toBe(parent.id)
+  })
+
+  it('includes a workspace mounted beneath a private page in its visible subtree', () => {
+    const parent = note({ id: 'parent' })
+    const workspace = note({ id: 'workspace', parentId: 'canonical-root', localParentId: parent.id, shareId: 'resource' })
+    const child = note({ id: 'child', parentId: workspace.id, shareId: 'resource' })
+    expect([...visibleSubtreeIds([parent, workspace, child], parent.id)].sort()).toEqual(['child', 'parent', 'workspace'])
   })
 })
 

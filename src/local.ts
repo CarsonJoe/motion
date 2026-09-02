@@ -77,6 +77,14 @@ export function subtreeIds(notes: Note[], rootId: string) {
   return ids
 }
 
+// The sidebar can place a workspace root beneath a private page without
+// changing its canonical parent for other members. UI decisions about what the
+// current user sees beneath a page must follow that projected edge.
+export function visibleSubtreeIds(notes: Note[], rootId: string) {
+  const projected = notes.map((note) => ({ ...note, parentId: visibleParentId(note, notes) }))
+  return subtreeIds(projected, rootId)
+}
+
 // Why a move is allowed or not. Dropping a note inside its own subtree would
 // detach that whole ring from the root, where nothing renders it and nothing
 // can drag it back, so the check is a hard invariant rather than a UI nicety.

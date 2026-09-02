@@ -1,7 +1,7 @@
 import { Fragment, lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { InvitationInfo, MemberInfo } from '@tallpond/sdk'
-import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, visibleParentId, workspaceMountBlockedBy, type LocalStore, type Note } from './local'
+import { ANON_SCOPE, moveBlockedBy, openLocalStore, subtreeIds, surveyScope, visibleParentId, visibleSubtreeIds, workspaceMountBlockedBy, type LocalStore, type Note } from './local'
 import { openNoteDoc, readNoteText, type CollaboratorPresence, type DocTransport, type NoteDocController, type Selection } from './doc'
 import { setPageLinkServices, type PageOption } from './pageLinkServices'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
@@ -149,7 +149,7 @@ function inferShareDestination(note: Note, notes: Note[]): ShareDestination {
     if (parent.shareId) return { kind: 'existing', shareId: parent.shareId, roomId: parent.roomId, source: 'ancestor' }
     parent = byId.get(parent.parentId)
   }
-  const descendants = subtreeIds(notes.filter((candidate) => !candidate.deletedAt), note.id)
+  const descendants = visibleSubtreeIds(notes.filter((candidate) => !candidate.deletedAt), note.id)
   const shared = notes.filter((candidate) => candidate.id !== note.id && descendants.has(candidate.id) && candidate.shareId)
   const shareIds = [...new Set(shared.map((candidate) => candidate.shareId))]
   if (shareIds.length === 1) return { kind: 'existing', shareId: shareIds[0], roomId: '', source: 'descendant' }
