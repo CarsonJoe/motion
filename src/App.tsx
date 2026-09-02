@@ -2138,7 +2138,18 @@ export default function App() {
     catch (error) { setActionError(error instanceof Error ? error.message : 'Could not sign out') }
   }
 
-  const workspaceNameFor = (shareId: string) => workspaces.find((workspace) => workspace.id === shareId)?.name || 'Workspace'
+  const workspaceNameFor = (shareId: string) => {
+    const resourceName = workspaces.find((workspace) => workspace.id === shareId)?.name?.trim()
+    if (resourceName) return resourceName
+    // The resource list arrives after the sheet opens. Use the workspace root
+    // immediately instead of flashing an indistinguishable “Workspace” row.
+    const root = notes.find((note) => {
+      if (note.shareId !== shareId) return false
+      const parent = notes.find((candidate) => candidate.id === note.parentId)
+      return parent?.shareId !== shareId
+    })
+    return root?.title.trim() || `Workspace ${shareId.slice(0, 6)}`
+  }
   const activeWorkspaceId = () => {
     if (!activeNote) return ''
     const inferred = inferShareDestination(activeNote, notes)
@@ -2151,8 +2162,12 @@ export default function App() {
     setShareError(null)
     setSharingInfoOpen(false)
     setInviteLinkCopied(false)
+    const inferredDestination = inferShareDestination(activeNote, notes)
     setWorkspaceName(inferredWorkspaceName(activeNote, notes))
-    setIncludeSubpages(true)
+    // Joining a child's workspace means “add this page” by default. Migrating
+    // every private descendant can turn one click into hundreds of requests;
+    // the user can still explicitly include them with the toggle.
+    setIncludeSubpages(!(inferredDestination.kind === 'ambiguous' || inferredDestination.kind === 'existing' && inferredDestination.source === 'descendant'))
     setSelectedMemberIds(new Set())
     setParentAccessMembers([])
     setMemberSearch('')
@@ -2220,7 +2235,9 @@ export default function App() {
             ? { shareId: inferred.shareId, roomId: inferred.roomId }
             : undefined
       const shareId = await shareNoteTree(store, activeNote, destination, workspaceName, includeSubpages)
-      await fullSync()
+      // shareNoteTree has already persisted and drained the migration. The
+      // active-workspace effect owns any needed catch-up; a second fullSync here
+      // duplicated every inventory request at the most expensive moment.
       const [loadedWorkspaces, roster] = await Promise.all([
         listWorkspaces(), listMembers(shareId)
       ])
