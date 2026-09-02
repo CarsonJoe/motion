@@ -225,6 +225,25 @@ async function selectAll(build: (cursor?: string) => TableQuery) {
   return rows
 }
 
+// Promise.all over every item fires every request at once — fine for a
+// handful of shares, but an account in dozens of shared workspaces turns
+// startup into a burst the gateway's connection pool can't absorb, and
+// unrelated requests (even static assets) start failing alongside it. A small
+// worker pool keeps the total in flight bounded regardless of how many
+// resources the account belongs to.
+async function mapWithConcurrency<T, R>(items: T[], limit: number, run: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  async function worker() {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await run(items[index])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
 const rowToNote = (row: Row, shareId: string): Note => ({
   id: String(row.noteId),
   title: String(row.title ?? ''),
@@ -676,10 +695,12 @@ export async function fullSync() {
       seenByScope.set('', new Set(privateRows.map((row) => String(row.noteId))))
       for (const row of privateRows) await local.applyRemoteNote(rowToNote(row, ''))
 
-      // Shared resources are independent scopes too. Fetch them concurrently;
-      // applying their rows remains ordered below so IndexedDB writes stay
+      // Shared resources are independent scopes too. Fetch them with bounded
+      // concurrency — three requests per resource, and an account in a dozen
+      // workspaces must not turn startup into a several-dozen-request burst.
+      // Applying their rows remains ordered below so IndexedDB writes stay
       // simple and deterministic.
-      const sharedInventories = await Promise.all(resources.map(async (resource) => {
+      const sharedInventories = await mapWithConcurrency(resources, 4, async (resource) => {
         const handle = client.resource(resource.id)
         const [rows, rooms, settings] = await Promise.all([
           selectAll((cursor) => {
@@ -690,7 +711,7 @@ export async function fullSync() {
           handle.table('member_workspace_settings').select('settingKey,value')
         ])
         return { resource, rows, rooms, settings }
-      }))
+      })
       const roles = { ...state.roles }
       const roomRoles: Record<string, string> = {}
       for (const { resource, rows, rooms, settings } of sharedInventories) {
