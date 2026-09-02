@@ -2786,6 +2786,11 @@ export default function App() {
       const inferredDestination = inferShareDestination(activeNote, notes)
       const shareId = activeNote.shareId || parent?.shareId || (inferredDestination.kind === 'existing' ? inferredDestination.shareId : '')
       const subpageCount = subtreeIds(notes.filter((note) => !note.deletedAt), activeNote.id).size - 1
+      const childWorkspaceIds = inferredDestination.kind === 'ambiguous'
+        ? inferredDestination.shareIds
+        : inferredDestination.kind === 'existing' && inferredDestination.source === 'descendant'
+          ? [inferredDestination.shareId]
+          : []
       const canManageWorkspace = !shareId || ['owner', 'admin'].includes(sync.roles[shareId] ?? '')
       const activeWorkspaceMembers = workspaceMembers.filter((member) => {
         if (member.state !== 'active' || member.userId === sync.user?.id) return false
@@ -2812,8 +2817,7 @@ export default function App() {
         {sharingInfoOpen && <aside className="sharing-info-note"><strong>How sharing works</strong><p>Inviting someone adds them to the workspace containing this page. Page access controls whether everyone or only selected people can open it. Subpages inherit access unless you change it.</p></aside>}
         {shareView === 'initial' ? <>
           <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `${subpageCount} subpage${subpageCount === 1 ? '' : 's'} beneath this page` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
-          {inferredDestination.kind === 'existing' && inferredDestination.source === 'descendant' && <div className="workspace-choice-list"><p>A child page is already shared.</p><button className="workspace-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(inferredDestination.shareId)}><span><strong>Add this page to its workspace</strong><small>Keep the parent and shared child together</small></span><i>›</i></button><button className="workspace-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(undefined, true)}><span><strong>Create a separate workspace</strong><small>Keep their sharing independent</small></span><i>›</i></button></div>}
-          {inferredDestination.kind === 'ambiguous' && <div className="workspace-choice-list"><p>Child pages use different workspaces. Choose one for this page.</p>{inferredDestination.shareIds.map((id) => <button className="workspace-choice" key={id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(id)}><span><strong>{workspaceNameFor(id)}</strong><small>Use this existing workspace</small></span><i>›</i></button>)}<button className="workspace-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(undefined, true)}><span><strong>Create a separate workspace</strong><small>Keep this page independent</small></span><i>›</i></button></div>}
+          {childWorkspaceIds.length > 0 && <div className="workspace-choice-list"><button className="new workspace-new-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(undefined, true)}>New workspace</button><p>Or add this page to an existing workspace:</p>{childWorkspaceIds.map((id) => <button className="workspace-choice" key={id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(id)}><span><strong>{workspaceNameFor(id)}</strong><small>Add this page</small></span><i>›</i></button>)}</div>}
           {shareError && <p className="share-error" role="alert">{shareError}</p>}
           {(inferredDestination.kind === 'new' || inferredDestination.kind === 'existing' && inferredDestination.source !== 'descendant') && <div className="share-modal-actions"><span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button><button className="new" disabled={inviteBusy || (inferredDestination.kind === 'new' && !workspaceName.trim())} onClick={() => void addPageToWorkspace()}>{inviteBusy ? 'Sharing…' : 'Share'}</button></div>}
         </> : shareView === 'access' ? <>
