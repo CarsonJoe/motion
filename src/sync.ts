@@ -1636,14 +1636,37 @@ export async function inviteByHandle(shareId: string, handle: string, role: Shar
 // 'requested' state until an admin accepts it.
 export type AccessRequest = { resourceId: string; userId: string; role: string; handle: string | null; displayName: string | null }
 
+async function hydrateMemberProfiles(members: MemberInfo[]): Promise<MemberInfo[]> {
+  if (!tallpond) return members
+  const missing = members.filter((member) => !member.ownerDisplayName && !member.ownerHandle)
+  if (!missing.length) return members
+  try {
+    const profiles = await tallpond.users([...new Set(missing.map((member) => member.userId))]).profiles()
+    return members.map((member) => ({
+      ...member,
+      ownerDisplayName: member.ownerDisplayName || profiles[member.userId]?.displayName || null,
+      ownerHandle: member.ownerHandle || profiles[member.userId]?.handle || null
+    }))
+  } catch { return members }
+}
+
 export async function listAccessRequests(): Promise<AccessRequest[]> {
   if (!tallpond) return []
-  const adminShares = Object.entries(state.roles).filter(([, role]) => role === 'owner' || role === 'admin').map(([id]) => id)
+  // Tallpond has no cross-resource admin-request inbox. Scanning every
+  // workspace made startup O(workspaces), and live member snapshots multiplied
+  // that into thousands of requests. The active workspace is the only one Pad
+  // is currently managing and the only roster feed it keeps live.
+  const adminShares = activeLiveShareId && ['owner', 'admin'].includes(state.roles[activeLiveShareId] ?? '')
+    ? [activeLiveShareId]
+    : []
   const requests: AccessRequest[] = []
   for (const resourceId of adminShares) {
     try {
-      for (const member of await listMembers(resourceId)) {
-        if (member.state === 'requested') requests.push({ resourceId, userId: member.userId, role: member.role, handle: member.ownerHandle, displayName: member.ownerDisplayName })
+      // Most workspaces have no requests. Filter the raw roster first so normal
+      // startup never performs profile lookups for every existing member.
+      const pending = (await tallpond.resource(resourceId).members.list()).filter((member) => member.state === 'requested')
+      for (const member of await hydrateMemberProfiles(pending)) {
+        requests.push({ resourceId, userId: member.userId, role: member.role, handle: member.ownerHandle, displayName: member.ownerDisplayName })
       }
     } catch { /* a resource we lost access to just contributes nothing */ }
   }
@@ -1683,13 +1706,5 @@ export async function listMembers(shareId: string, roomId = ''): Promise<MemberI
       ownerId: null, ownerHandle: null, ownerDisplayName: null
     }))
     : await resource.members.list()
-  if (!members.length) return members
-  try {
-    const profiles = await tallpond.users(members.map((member) => member.userId)).profiles()
-    return members.map((member) => ({
-      ...member,
-      ownerDisplayName: member.ownerDisplayName || profiles[member.userId]?.displayName || null,
-      ownerHandle: member.ownerHandle || profiles[member.userId]?.handle || null
-    }))
-  } catch { return members }
+  return hydrateMemberProfiles(members)
 }

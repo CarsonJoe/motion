@@ -1159,6 +1159,7 @@ export default function App() {
   const [requests, setRequests] = useState<AccessRequest[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [notificationsLoading, setNotificationsLoading] = useState(false)
+  const notificationLoadRef = useRef<Promise<void> | null>(null)
   // The three sidebar surfaces that open over the tree. Only one at a time —
   // each opener closes the others, since they all cover the same column.
   const [identityOpen, setIdentityOpen] = useState(false)
@@ -1325,16 +1326,23 @@ export default function App() {
     return () => window.removeEventListener('resize', resize)
   }, [])
 
-  const loadInvitations = useCallback(async () => {
-    if (!getSyncState().connected || !navigator.onLine) return
+  const loadInvitations = useCallback(() => {
+    if (!getSyncState().connected || !navigator.onLine) return Promise.resolve()
+    // Live membership snapshots arrive as a burst. Every event used to launch
+    // another all-workspace member/profile scan, turning N workspaces into N²
+    // requests. All callers now share one authoritative refresh.
+    if (notificationLoadRef.current) return notificationLoadRef.current
     setNotificationsLoading(true)
-    try {
-      const [invites, incoming] = await Promise.all([listInvitations(), listAccessRequests()])
-      setInvitations(invites)
-      setRequests(incoming)
-    }
-    catch (error) { setActionError(error instanceof Error ? error.message : 'Could not load notifications') }
-    finally { setNotificationsLoading(false) }
+    notificationLoadRef.current = (async () => {
+      try {
+        const [invites, incoming] = await Promise.all([listInvitations(), listAccessRequests()])
+        setInvitations(invites)
+        setRequests(incoming)
+      }
+      catch (error) { setActionError(error instanceof Error ? error.message : 'Could not load notifications') }
+      finally { setNotificationsLoading(false); notificationLoadRef.current = null }
+    })()
+    return notificationLoadRef.current
   }, [])
 
   // Fetch an authoritative snapshot on connect and when returning to a tab.
@@ -1840,16 +1848,24 @@ export default function App() {
   // No-op on desktop; re-binds when the open note remounts the editor.
   useMobileKeyboard({ toolbar: toolbarHost, main: mainEl, enabled: isMobile, noteId: activeNote?.id ?? null })
 
+  // Membership snapshots can contain one event per person. Coalesce the burst
+  // into one notification refresh, and only fetch the active roster while the
+  // share sheet is actually visible.
   useEffect(() => {
-    if (!activeNote?.shareId || !sync.connected) { setWorkspaceMembers([]); setShareError(null); return }
-    void listMembers(activeNote.shareId).then(setWorkspaceMembers).catch(() => {})
-  }, [activeNote?.shareId, sync.connected])
-
-  // Membership changes update workspace administration and access pickers.
-  useEffect(() => subscribeMembershipChanges(({ resourceId }) => {
-    void loadInvitations()
-    if (activeNote?.shareId === resourceId) void listMembers(resourceId).then(setWorkspaceMembers).catch(() => {})
-  }), [activeNote?.shareId, loadInvitations])
+    let timer: number | null = null
+    let refreshActiveRoster = false
+    const unsubscribe = subscribeMembershipChanges(({ resourceId }) => {
+      refreshActiveRoster ||= Boolean(shareOpen && activeNote?.shareId === resourceId)
+      if (timer !== null) window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        timer = null
+        void loadInvitations()
+        if (refreshActiveRoster && activeNote?.shareId) void listMembers(activeNote.shareId).then(setWorkspaceMembers).catch(() => {})
+        refreshActiveRoster = false
+      }, 150)
+    })
+    return () => { if (timer !== null) window.clearTimeout(timer); unsubscribe() }
+  }, [activeNote?.shareId, shareOpen, loadInvitations])
 
   useEffect(() => {
     if (!shareOpen || shareView !== 'workspace') return
@@ -2163,10 +2179,7 @@ export default function App() {
     setSharingInfoOpen(false)
     setInviteLinkCopied(false)
     setWorkspaceName(inferredWorkspaceName(activeNote, notes))
-    // Sharing means this page. Moving an entire subtree is both surprising and
-    // potentially hundreds of network operations, so subpages are always an
-    // explicit opt-in.
-    setIncludeSubpages(false)
+    setIncludeSubpages(true)
     setSelectedMemberIds(new Set())
     setParentAccessMembers([])
     setMemberSearch('')
