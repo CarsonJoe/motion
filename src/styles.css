@@ -335,9 +335,6 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .workspace-create .new { justify-self: end; padding: 8px 12px; font-size: 12px; }
 .access-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .access-summary-row > span { display: grid; }
-.share-space-summary { display: grid; gap: 2px; padding: 10px 11px; border: 1px solid #333; border-radius: 8px; background: #151515; }
-.share-space-summary strong { font-size: 13px; }
-.share-space-summary small { color: #777; font-size: 11px; }
 .include-subpages { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 11px; border: 1px solid #333; border-radius: 8px; background: #151515; }
 .include-subpages > span { display: grid; gap: 1px; }
 .include-subpages strong { font-size: 13px; }
