@@ -1387,10 +1387,13 @@ async function interruptedShare(client: TallpondClient, rootId: string) {
 }
 
 export async function migrateNoteTreeToShare(client: TallpondClient, store: LocalStore, root: Note, shareId: string, roomId = '', includeSubpages = true) {
-  // A nested page already belonging to another share is a scope boundary, not
-  // part of this promotion. This mirrors moveBlockedBy's cross-scope invariant.
+  // An already-synced shared descendant is a scope boundary, even when it is
+  // in the destination workspace. Sharing its private parent must not rewrite
+  // that child's room or access. `remoteKnown: false` identifies pages this
+  // same interrupted promotion already re-homed locally, so retries still
+  // finish the complete original migration.
   const eligible = store.getSnapshot().filter((note) =>
-    !note.deletedAt && (!note.shareId || note.shareId === shareId))
+    !note.deletedAt && (!note.shareId || note.id === root.id || (note.shareId === shareId && note.remoteKnown === false)))
   const ids = includeSubpages ? subtreeIds(eligible, root.id) : new Set([root.id])
   const tree = eligible.filter((note) => ids.has(note.id))
   if (!tree.some((note) => note.id === root.id)) throw new Error('This page belongs to a different shared space.')

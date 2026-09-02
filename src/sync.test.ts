@@ -102,6 +102,21 @@ describe('share promotion', () => {
     expect(calls.filter((call) => call.scope === 'share-1' && call.table === 'member_notes' && call.op === 'insert')).toHaveLength(1)
   })
 
+  it('preserves an already-shared child when its private parent joins the same workspace', async () => {
+    const store = await openLocalStore('user-a')
+    await store.putNote(note({ id: 'parent', title: 'Plan', updatedAt: 10 }))
+    await store.putNote(note({ id: 'shared-child', title: 'Shared detail', parentId: 'parent', shareId: 'share-1', roomId: 'custom-room', remoteKnown: true, updatedAt: 11 }))
+    await store.putNote(note({ id: 'private-child', title: 'Private detail', parentId: 'parent', updatedAt: 12 }))
+    const { client, calls } = fakeClient()
+
+    await migrateNoteTreeToShare(client, store, store.getNote('parent')!, 'share-1')
+
+    expect(store.getNote('parent')).toMatchObject({ shareId: 'share-1', roomId: '' })
+    expect(store.getNote('private-child')).toMatchObject({ shareId: 'share-1', roomId: '' })
+    expect(store.getNote('shared-child')).toMatchObject({ shareId: 'share-1', roomId: 'custom-room', remoteKnown: true })
+    expect(calls.filter((call) => call.scope === 'share-1' && call.table === 'member_notes' && call.op === 'insert')).toHaveLength(2)
+  })
+
   it('preserves a private canonical parent when sharing a nested subtree', async () => {
     const store = await openLocalStore('user-a')
     await store.putNote(note({ id: 'private-parent', title: 'Work' }))

@@ -138,21 +138,21 @@ type SyncTone = 'gray' | 'red'
 // or a request to the owner.
 type LandingStatus = 'checking' | 'sign-in' | 'invited' | 'join' | 'request' | 'requested' | 'unknown'
 type Landing = { note: string; resource: string | null; status: LandingStatus; name: string | null }
-type ShareDestination = { kind: 'new' } | { kind: 'existing'; shareId: string; roomId: string } | { kind: 'ambiguous'; shareIds: string[] }
+type ShareDestination = { kind: 'new' } | { kind: 'existing'; shareId: string; roomId: string; source: 'self' | 'ancestor' | 'descendant' } | { kind: 'ambiguous'; shareIds: string[] }
 const EMPTY_NOTES: Note[] = []
 
 function inferShareDestination(note: Note, notes: Note[]): ShareDestination {
-  if (note.shareId) return { kind: 'existing', shareId: note.shareId, roomId: note.roomId }
+  if (note.shareId) return { kind: 'existing', shareId: note.shareId, roomId: note.roomId, source: 'self' }
   const byId = new Map(notes.map((candidate) => [candidate.id, candidate]))
   let parent = byId.get(note.parentId)
   while (parent) {
-    if (parent.shareId) return { kind: 'existing', shareId: parent.shareId, roomId: parent.roomId }
+    if (parent.shareId) return { kind: 'existing', shareId: parent.shareId, roomId: parent.roomId, source: 'ancestor' }
     parent = byId.get(parent.parentId)
   }
   const descendants = subtreeIds(notes.filter((candidate) => !candidate.deletedAt), note.id)
   const shared = notes.filter((candidate) => candidate.id !== note.id && descendants.has(candidate.id) && candidate.shareId)
   const shareIds = [...new Set(shared.map((candidate) => candidate.shareId))]
-  if (shareIds.length === 1) return { kind: 'existing', shareId: shareIds[0], roomId: '' }
+  if (shareIds.length === 1) return { kind: 'existing', shareId: shareIds[0], roomId: '', source: 'descendant' }
   return shareIds.length > 1 ? { kind: 'ambiguous', shareIds } : { kind: 'new' }
 }
 
@@ -2207,16 +2207,18 @@ export default function App() {
     openNote(note.id)
   }
 
-  const addPageToWorkspace = async (chosenShareId?: string) => {
+  const addPageToWorkspace = async (chosenShareId?: string, createSeparate = false) => {
     if (!store || !activeNote || inviteBusy) return
     setInviteBusy(true); setShareError(null)
     try {
       const inferred = inferShareDestination(activeNote, notes)
-      const destination = chosenShareId
-        ? { shareId: chosenShareId, roomId: '' }
-        : inferred.kind === 'existing'
-          ? { shareId: inferred.shareId, roomId: inferred.roomId }
-          : undefined
+      const destination = createSeparate
+        ? undefined
+        : chosenShareId
+          ? { shareId: chosenShareId, roomId: '' }
+          : inferred.kind === 'existing'
+            ? { shareId: inferred.shareId, roomId: inferred.roomId }
+            : undefined
       const shareId = await shareNoteTree(store, activeNote, destination, workspaceName, includeSubpages)
       await fullSync()
       const [loadedWorkspaces, roster] = await Promise.all([
@@ -2810,9 +2812,10 @@ export default function App() {
         {sharingInfoOpen && <aside className="sharing-info-note"><strong>How sharing works</strong><p>Inviting someone adds them to the workspace containing this page. Page access controls whether everyone or only selected people can open it. Subpages inherit access unless you change it.</p></aside>}
         {shareView === 'initial' ? <>
           <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `${subpageCount} subpage${subpageCount === 1 ? '' : 's'} beneath this page` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
-          {inferredDestination.kind === 'ambiguous' && <div className="workspace-choice-list">{inferredDestination.shareIds.map((id) => <button className="workspace-choice" key={id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(id)}><span><strong>{workspaceNameFor(id)}</strong><small>Use this existing workspace</small></span><i>›</i></button>)}</div>}
+          {inferredDestination.kind === 'existing' && inferredDestination.source === 'descendant' && <div className="workspace-choice-list"><p>A child page is already shared.</p><button className="workspace-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(inferredDestination.shareId)}><span><strong>Add this page to its workspace</strong><small>Keep the parent and shared child together</small></span><i>›</i></button><button className="workspace-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(undefined, true)}><span><strong>Create a separate workspace</strong><small>Keep their sharing independent</small></span><i>›</i></button></div>}
+          {inferredDestination.kind === 'ambiguous' && <div className="workspace-choice-list"><p>Child pages use different workspaces. Choose one for this page.</p>{inferredDestination.shareIds.map((id) => <button className="workspace-choice" key={id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(id)}><span><strong>{workspaceNameFor(id)}</strong><small>Use this existing workspace</small></span><i>›</i></button>)}<button className="workspace-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(undefined, true)}><span><strong>Create a separate workspace</strong><small>Keep this page independent</small></span><i>›</i></button></div>}
           {shareError && <p className="share-error" role="alert">{shareError}</p>}
-          {inferredDestination.kind !== 'ambiguous' && <div className="share-modal-actions"><span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button><button className="new" disabled={inviteBusy || (inferredDestination.kind === 'new' && !workspaceName.trim())} onClick={() => void addPageToWorkspace()}>{inviteBusy ? 'Sharing…' : 'Share'}</button></div>}
+          {(inferredDestination.kind === 'new' || inferredDestination.kind === 'existing' && inferredDestination.source !== 'descendant') && <div className="share-modal-actions"><span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button><button className="new" disabled={inviteBusy || (inferredDestination.kind === 'new' && !workspaceName.trim())} onClick={() => void addPageToWorkspace()}>{inviteBusy ? 'Sharing…' : 'Share'}</button></div>}
         </> : shareView === 'access' ? <>
           <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `Apply access to ${subpageCount} subpage${subpageCount === 1 ? '' : 's'}` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
           <div className="access-choice-list" role="radiogroup" aria-label="Page access">
