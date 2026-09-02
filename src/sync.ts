@@ -1554,6 +1554,15 @@ export async function rejectInvitation(resourceId: string) {
 }
 
 export type ShareRole = 'reader' | 'writer' | 'admin'
+export type WorkspaceInviteLink = { url: string; role: string; expiresAt: string }
+
+// Claim links can reach someone before they have a Tallpond account or handle.
+// Tallpond owns signup, app consent, and the final workspace membership; Pad
+// only chooses the workspace role and hands the resulting URL to the inviter.
+export async function createWorkspaceInviteLink(shareId: string, role: ShareRole): Promise<WorkspaceInviteLink> {
+  if (!tallpond) throw new Error('Sync is not configured for this deployment.')
+  return tallpond.resource(shareId).members.createInviteLink({ role })
+}
 
 // Resolving the handle first means a typo costs nothing: an unshared note is
 // still unshared, with no empty resource left behind.
