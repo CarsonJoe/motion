@@ -1137,6 +1137,7 @@ export default function App() {
   const markdownRef = useRef<{ noteId: string; value: string } | null>(null)
   const [selectionRestore, setSelectionRestore] = useState<{ noteId: string; revision: number; value: Selection } | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
+  const [sharingInfoOpen, setSharingInfoOpen] = useState(false)
   const [inviteHandle, setInviteHandle] = useState('')
   const inviteInputRef = useRef<HTMLInputElement>(null)
   const [inviteRole, setInviteRole] = useState<ShareRole>('writer')
@@ -2148,6 +2149,7 @@ export default function App() {
     if (!activeNote) return
     const parent = notes.find((note) => note.id === activeNote.parentId)
     setShareError(null)
+    setSharingInfoOpen(false)
     setInviteLinkCopied(false)
     setWorkspaceName(inferredWorkspaceName(activeNote, notes))
     setIncludeSubpages(true)
@@ -2800,9 +2802,12 @@ export default function App() {
         <span className="share-section-label">INVITE BY HANDLE</span>
         <div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(event) => { setInviteHandle(event.target.value); setShareError(null) }} placeholder="Tallpond handle" onKeyDown={(event) => { if (event.key === 'Enter') void invite() }} /><select aria-label="Workspace role" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>Invite</button></div>
       </>
-      return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal workspace-share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}>
-        <header><div><strong id="share-title">Share “{activeNote.title || 'Untitled'}”</strong></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header>
-        {shareView !== 'initial' && <div className="share-view-tabs" role="tablist" aria-label="Sharing options"><button role="tab" aria-selected={shareView === 'workspace'} className={shareView === 'workspace' ? 'active' : ''} onClick={() => setShareView('workspace')}>People</button><button role="tab" aria-selected={shareView === 'access'} className={shareView === 'access' ? 'active' : ''} onClick={() => setShareView('access')}>Page access</button></div>}
+      return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal workspace-share-modal" role="dialog" aria-modal="true" aria-label="Share page" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="share-sheet-header">
+          {shareView !== 'initial' ? <nav className="share-view-tabs" role="tablist" aria-label="Sharing options"><button role="tab" aria-selected={shareView === 'workspace'} className={shareView === 'workspace' ? 'active' : ''} onClick={() => setShareView('workspace')}>People</button><button role="tab" aria-selected={shareView === 'access'} className={shareView === 'access' ? 'active' : ''} onClick={() => setShareView('access')}>Page access</button></nav> : <span />}
+          <div className="share-header-actions"><button className="sharing-info-button" aria-label="How sharing works" aria-expanded={sharingInfoOpen} onClick={() => setSharingInfoOpen((open) => !open)}>i</button><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></div>
+        </header>
+        {sharingInfoOpen && <aside className="sharing-info-note"><strong>How sharing works</strong><p>Inviting someone adds them to the workspace containing this page. Page access controls whether everyone or only selected people can open it. Subpages inherit access unless you change it.</p></aside>}
         {shareView === 'initial' ? <>
           <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `${subpageCount} subpage${subpageCount === 1 ? '' : 's'} beneath this page` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
           {inferredDestination.kind === 'ambiguous' && <div className="workspace-choice-list">{inferredDestination.shareIds.map((id) => <button className="workspace-choice" key={id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(id)}><span><strong>{workspaceNameFor(id)}</strong><small>Use this existing workspace</small></span><i>›</i></button>)}</div>}
