@@ -334,6 +334,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .share-divider { height: 1px; background: #303030; }
 .workspace-create input { padding: 9px; border: 0; border-radius: 6px; color: #ddd; background: #121212; font: inherit; }
 .workspace-create .new { justify-self: end; padding: 8px 12px; font-size: 12px; }
+.workspace-create p { margin: 0; color: #999; font-size: 12px; line-height: 1.45; }
 .access-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .access-summary-row > span { display: grid; }
 .include-subpages { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 11px; border: 1px solid #333; border-radius: 8px; background: #151515; }
@@ -342,6 +343,10 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .include-subpages small { color: #777; font-size: 11px; }
 .include-subpages input { width: 34px; height: 20px; margin: 0; accent-color: #397fc7; cursor: pointer; }
 .include-subpages input:disabled { cursor: default; opacity: .45; }
+.include-subpages.minor { padding: 2px 1px; border: 0; background: transparent; }
+.include-subpages.minor strong { font-size: 12px; font-weight: 500; color: #999; }
+.include-subpages.minor small { color: #666; }
+.include-subpages.minor input { width: 28px; height: 17px; }
 .access-choice { display: flex; align-items: center; width: 100%; gap: 10px; padding: 10px; border: 1px solid #333; border-radius: 8px; color: #ccc; background: #151515; text-align: left; }
 .access-choice > i { display: grid; width: 16px; height: 16px; flex: none; place-items: center; border: 1px solid #666; border-radius: 50%; }
 .access-choice.selected { border-color: #427fbd; background: #172230; }

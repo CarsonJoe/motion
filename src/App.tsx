@@ -2845,8 +2845,13 @@ export default function App() {
         </header>
         {sharingInfoOpen && <aside className="sharing-info-note"><strong>How sharing works</strong><p>Inviting someone adds them to the workspace containing this page. Page access controls whether everyone or only selected people can open it. Subpages inherit access unless you change it.</p></aside>}
         {shareView === 'initial' ? <>
-          <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `${subpageCount} subpage${subpageCount === 1 ? '' : 's'} beneath this page` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
+          {inferredDestination.kind === 'new' && <div className="workspace-create">
+            <strong>Create workspace</strong>
+            <p>Workspaces are an access boundary for multiple notes. To share a page, it has to be within a workspace.</p>
+            <input aria-label="Workspace name" value={workspaceName} disabled={inviteBusy} onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Workspace name" />
+          </div>}
           {childWorkspaceIds.length > 0 && <div className="workspace-choice-list"><button className="new workspace-new-choice" disabled={inviteBusy} onClick={() => void addPageToWorkspace(undefined, true)}>New workspace</button><p>Or add this page to an existing workspace:</p>{childWorkspaceIds.map((id) => <button className="workspace-choice" key={id} disabled={inviteBusy} onClick={() => void addPageToWorkspace(id)}><span><strong>{workspaceNameFor(id)}</strong><small>Add this page</small></span><i>›</i></button>)}</div>}
+          <label className="include-subpages minor"><span><strong>Include subpages</strong><small>{subpageCount ? `${subpageCount} subpage${subpageCount === 1 ? '' : 's'} beneath this page` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
           {shareError && <p className="share-error" role="alert">{shareError}</p>}
           {(inferredDestination.kind === 'new' || inferredDestination.kind === 'existing' && inferredDestination.source !== 'descendant') && <div className="share-modal-actions"><span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button><button className="new" disabled={inviteBusy || (inferredDestination.kind === 'new' && !workspaceName.trim())} onClick={() => void addPageToWorkspace()}>{inviteBusy ? inferredDestination.kind === 'new' ? 'Creating…' : 'Adding…' : inferredDestination.kind === 'new' ? 'Create workspace' : 'Add to workspace'}</button></div>}
         </> : shareView === 'access' ? <>
