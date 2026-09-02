@@ -334,7 +334,6 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .share-divider { height: 1px; background: #303030; }
 .workspace-create input { padding: 9px; border: 0; border-radius: 6px; color: #ddd; background: #121212; font: inherit; }
 .workspace-create .new { justify-self: end; padding: 8px 12px; font-size: 12px; }
-.workspace-create p { margin: 0; color: #999; font-size: 12px; line-height: 1.45; }
 .access-summary-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .access-summary-row > span { display: grid; }
 .include-subpages { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 11px; border: 1px solid #333; border-radius: 8px; background: #151515; }
@@ -371,10 +370,12 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .workspace-empty-invite span { color: #7ea5cc; font-size: 11px; }
 .share-modal-actions { display: flex; align-items: center; gap: 7px; }
 .share-modal-actions > span { flex: 1; }
+.share-modal-actions .include-subpages { flex: 1; min-width: 0; }
 .share-modal-actions .new { padding: 8px 13px; font-size: 12px; }
 .share-sheet-header { align-items: center !important; min-height: 28px; }
 .share-sheet-header > span { flex: 1; }
 .share-sheet-header > .share-view-tabs { align-self: stretch; flex: 1; }
+.share-sheet-header > .share-header-title { flex: 1; }
 .share-view-tabs { display: flex; gap: 22px; border-bottom: 1px solid #303030; }
 .share-view-tabs button { padding: 3px 0 8px; border: 0; border-bottom: 2px solid transparent; color: #777; background: transparent; font: inherit; font-size: 13px; }
 .share-view-tabs button.active { border-color: #ddd; color: #ddd; }
