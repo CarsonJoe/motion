@@ -363,21 +363,15 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 .custom-member-list > button.selected > i { border-color: #397fc7; background: #397fc7; }
 .custom-member-list > button span { display: grid; }
 .custom-member-list p { margin: 5px 7px 3px; color: #777; font-size: 11px; }
-.custom-member-list .custom-invite-link { justify-content: center; border: 1px solid #31577e; color: #8ab7e4; background: #172230; text-align: center; }
 .workspace-empty-invite { display: grid; gap: 2px; width: 100%; padding: 10px 11px; border: 1px solid #31577e; border-radius: 8px; color: #9bc5ee; background: #172230; font: inherit; text-align: left; }
 .workspace-empty-invite strong { color: #c6def5; font-size: 12px; }
 .workspace-empty-invite span { color: #7ea5cc; font-size: 11px; }
 .share-modal-actions { display: flex; align-items: center; gap: 7px; }
 .share-modal-actions > span { flex: 1; }
 .share-modal-actions .new { padding: 8px 13px; font-size: 12px; }
-.workspace-settings-link, .workspace-back { padding: 0; border: 0; color: #75a8dc; background: transparent; font: inherit; font-size: 12px; }
-.workspace-settings-link { font-weight: 600; }
-.workspace-back { justify-self: stretch; padding-top: 16px; border-top: 1px solid #303030; text-align: center; }
-.share-modal header.workspace-modal-header { align-items: center; margin: -2px 0 8px; border-bottom: 1px solid #303030; }
-.share-modal header.workspace-modal-header .workspace-tabs { display: flex; flex: 1; gap: 20px; border: 0; }
-.workspace-tabs { display: flex; gap: 16px; border-bottom: 1px solid #333; }
-.workspace-tabs button { padding: 8px 0 11px; border: 0; border-bottom: 2px solid transparent; color: #888; background: transparent; font: inherit; font-size: 15px; }
-.workspace-tabs button.active { border-color: #ddd; color: #ddd; }
+.share-view-tabs { display: flex; gap: 22px; border-bottom: 1px solid #303030; }
+.share-view-tabs button { padding: 4px 0 10px; border: 0; border-bottom: 2px solid transparent; color: #777; background: transparent; font: inherit; font-size: 13px; }
+.share-view-tabs button.active { border-color: #ddd; color: #ddd; }
 .workspace-admin-note { color: #999; font-size: 12px; line-height: 1.45; }
 .workspace-roster { display: grid; max-height: 260px; overflow-y: auto; }
 .workspace-roster > div { display: flex; align-items: center; gap: 7px; padding: 8px 2px; border-bottom: 1px solid #292929; }
@@ -396,9 +390,7 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .share-modal-backdrop:has(.workspace-share-modal) { place-items: stretch; padding: 0; }
   .workspace-share-modal { width: 100%; height: 100dvh; max-height: none; overflow-y: auto; padding: calc(14px + env(safe-area-inset-top)) 16px calc(18px + env(safe-area-inset-bottom)); border-width: 0; border-radius: 0; }
   .workspace-share-modal header { position: sticky; top: calc(-14px - env(safe-area-inset-top)); z-index: 2; margin: calc(-14px - env(safe-area-inset-top)) -16px 0; padding: calc(14px + env(safe-area-inset-top)) 16px 12px; background: #1b1b1b; }
-  .workspace-share-modal .workspace-tabs { margin: 0 -16px; padding: 0 16px; }
-  .workspace-share-modal header.workspace-modal-header { margin: calc(-14px - env(safe-area-inset-top)) -16px 4px; padding: calc(14px + env(safe-area-inset-top)) 16px 0; }
-  .workspace-share-modal header.workspace-modal-header .workspace-tabs { margin: 0; padding: 0; }
+  .workspace-share-modal .share-view-tabs { margin: 0 -16px; padding: 0 16px; }
   .workspace-share-modal .workspace-admin-note { line-height: 1.4; }
   .workspace-share-modal .invite-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 7px; }
   .workspace-share-modal .invite-row input { grid-column: 1 / -1; width: 100%; }
@@ -409,7 +401,6 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
   .workspace-share-modal .invite-link-row select, .workspace-share-modal .invite-link-row button { min-height: 40px; }
   .workspace-share-modal .workspace-roster { max-height: none; }
   .workspace-share-modal .workspace-roster > div { min-height: 52px; padding: 8px 4px; }
-  .workspace-share-modal .workspace-back { justify-self: stretch; padding: 14px 0 0; text-align: center; }
   .share-modal-actions { position: sticky; bottom: calc(-18px - env(safe-area-inset-bottom)); margin: 0 -16px calc(-18px - env(safe-area-inset-bottom)); padding: 10px 16px calc(18px + env(safe-area-inset-bottom)); border-top: 1px solid #292929; background: #1b1b1b; }
   .access-scope-banner-wrap { margin-top: 8px; padding: 0 20px; }
   .access-scope-banner { align-items: flex-start; flex-wrap: wrap; }

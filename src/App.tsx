@@ -10,7 +10,7 @@ import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } fr
 import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
 import { CloseIcon, MoreHorizontalIcon, SettingsIcon, SidebarIcon } from './icons'
 import { resolveVisualAsset, stageVisualAsset, syncVisualAsset, syncVisualAssets, visualAssetSource } from './visualAssets'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDefault, connectInteractive, createEmptyNoteRoom, createWorkspaceInviteLink, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, getWorkspaceDefault, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, listWorkspaces, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, setPageAccess, setWorkspaceDefault, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type PageAccessDefault, type PageAccessMode, type ShareRole, type WorkspaceInfo } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDefault, connectInteractive, createEmptyNoteRoom, createWorkspaceInviteLink, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, listWorkspaces, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, setPageAccess, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type PageAccessMode, type ShareRole, type WorkspaceInfo } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -1148,8 +1148,6 @@ export default function App() {
   const [accessMode, setAccessMode] = useState<PageAccessMode>('workspace')
   const [selectedMemberIds, setSelectedMemberIds] = useState<Set<string>>(() => new Set())
   const [memberSearch, setMemberSearch] = useState('')
-  const [workspaceTab, setWorkspaceTab] = useState<'people' | 'defaults'>('people')
-  const [workspaceDefault, setWorkspaceDefaultState] = useState<PageAccessDefault>('parent')
   const [parentAccessMembers, setParentAccessMembers] = useState<MemberInfo[]>([])
   const [shareRequestedId, setShareRequestedId] = useState<string | null>(null)
   const [scopeBannerNote, setScopeBannerNote] = useState<Note | null>(null)
@@ -1853,10 +1851,10 @@ export default function App() {
   }), [activeNote?.shareId, loadInvitations])
 
   useEffect(() => {
-    if (!shareOpen || shareView !== 'workspace' || workspaceTab !== 'people') return
+    if (!shareOpen || shareView !== 'workspace') return
     const frame = window.requestAnimationFrame(() => inviteInputRef.current?.focus())
     return () => window.cancelAnimationFrame(frame)
-  }, [shareOpen, shareView, workspaceTab])
+  }, [shareOpen, shareView])
 
   // The page creator gets one unobtrusive explanation when the page first
   // becomes shared. Access changes never reset it.
@@ -2163,16 +2161,14 @@ export default function App() {
     const roomId = activeNote.shareId ? activeNote.roomId : parent!.roomId
     const inheritsParent = Boolean(parent?.shareId === shareId && parent.roomId === roomId)
     setAccessMode(inheritsParent ? 'parent' : roomId ? 'custom' : 'workspace')
-    setShareView('access')
+    setShareView('workspace')
     void Promise.all([
       listMembers(shareId),
       roomId ? listMembers(shareId, roomId) : Promise.resolve([]),
-      getWorkspaceDefault(shareId),
       parent?.shareId === shareId && parent.roomId ? listMembers(shareId, parent.roomId) : Promise.resolve([])
-    ]).then(([workspaceRoster, roomRoster, defaultValue, parentRoster]) => {
+    ]).then(([workspaceRoster, roomRoster, parentRoster]) => {
       setWorkspaceMembers(workspaceRoster)
       setParentAccessMembers(parent?.shareId === shareId ? (parent.roomId ? parentRoster : workspaceRoster) : [])
-      setWorkspaceDefaultState(defaultValue)
       if (roomId && !inheritsParent) {
         const activeIds = roomRoster.filter((member) => member.state === 'active' && member.userId !== sync.user?.id).map((member) => member.userId)
         setSelectedMemberIds(new Set(activeIds))
@@ -2221,14 +2217,13 @@ export default function App() {
           : undefined
       const shareId = await shareNoteTree(store, activeNote, destination, workspaceName, includeSubpages)
       await fullSync()
-      const [loadedWorkspaces, roster, defaultValue] = await Promise.all([
-        listWorkspaces(), listMembers(shareId), getWorkspaceDefault(shareId)
+      const [loadedWorkspaces, roster] = await Promise.all([
+        listWorkspaces(), listMembers(shareId)
       ])
       setWorkspaces(loadedWorkspaces)
       setWorkspaceMembers(roster)
-      setWorkspaceDefaultState(defaultValue)
       setAccessMode(destination?.roomId ? 'parent' : 'workspace')
-      setShareView('access')
+      setShareView('workspace')
     } catch (error) { setShareError(error instanceof Error ? error.message : 'Could not share this page.') }
     finally { setInviteBusy(false) }
   }
@@ -2313,24 +2308,6 @@ export default function App() {
       await removeMemberAccess(shareId, '', member.userId)
       setWorkspaceMembers((current) => current.filter((candidate) => candidate.userId !== member.userId))
     } catch (error) { setShareError(error instanceof Error ? error.message : 'Could not remove this workspace member.') }
-    finally { setInviteBusy(false) }
-  }
-
-  const openWorkspaceSettings = (shareId: string) => {
-    setWorkspaceTab('people')
-    void Promise.all([listMembers(shareId), getWorkspaceDefault(shareId)]).then(([roster, defaultValue]) => {
-      setWorkspaceMembers(roster)
-      setWorkspaceDefaultState(defaultValue)
-    }).catch(() => {})
-    setShareView('workspace')
-  }
-
-  const saveWorkspaceDefault = async () => {
-    const shareId = activeWorkspaceId()
-    if (!shareId || inviteBusy) return
-    setInviteBusy(true); setShareError(null)
-    try { await setWorkspaceDefault(shareId, workspaceDefault) }
-    catch (error) { setShareError(error instanceof Error ? error.message : 'Could not save the page default.') }
     finally { setInviteBusy(false) }
   }
 
@@ -2817,7 +2794,6 @@ export default function App() {
       const parentAudience = parentAccessMembers.filter((member) => member.state === 'active')
       const customAudience = workspaceAudience.filter((member) => member.userId === sync.user?.id || selectedMemberIds.has(member.userId))
       const audienceFor = (mode: PageAccessMode) => mode === 'workspace' ? workspaceAudience : mode === 'parent' ? parentAudience : customAudience
-      const accessLabel = accessMode === 'workspace' ? `Everyone in ${workspaceLabel}` : accessMode === 'parent' ? `Same access as ${parent?.title || 'parent'}` : selectedMemberIds.size ? `${customAudience.length} people` : 'Only you'
       const audiencePreview = (audience: MemberInfo[]) => <span className="access-audience" title={audience.map((member) => member.ownerDisplayName || member.ownerHandle || member.userId).join(', ')}><b>{audience.length}</b>{audience.slice(0, 3).map((member) => <i key={member.userId}>{(member.ownerDisplayName || member.ownerHandle || '?').slice(0, 1).toUpperCase()}</i>)}</span>
       const invitePeopleControls = <>
         <span className="share-section-label">INVITE ANYONE</span>
@@ -2826,7 +2802,8 @@ export default function App() {
         <div className="invite-row"><input ref={inviteInputRef} aria-label="Tallpond handle" value={inviteHandle} onChange={(event) => { setInviteHandle(event.target.value); setShareError(null) }} placeholder="Tallpond handle" onKeyDown={(event) => { if (event.key === 'Enter') void invite() }} /><select aria-label="Workspace role" value={inviteRole} onChange={(event) => setInviteRole(event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button className="new" disabled={inviteBusy || !inviteHandle.trim()} onClick={() => void invite()}>Invite</button></div>
       </>
       return createPortal(<div className="share-modal-backdrop" role="presentation" onPointerDownCapture={() => controllerRef.current?.setSelection(null)} onMouseDown={() => setShareOpen(false)}><section className="share-modal workspace-share-modal" role="dialog" aria-modal="true" aria-labelledby="share-title" onMouseDown={(event) => event.stopPropagation()}>
-        <header className={shareView === 'workspace' ? 'workspace-modal-header' : ''}>{shareView === 'workspace' ? <div id="share-title" className="workspace-tabs" role="tablist" aria-label={`${workspaceLabel} workspace settings`}><button className={workspaceTab === 'people' ? 'active' : ''} onClick={() => setWorkspaceTab('people')}>People</button><button className={workspaceTab === 'defaults' ? 'active' : ''} onClick={() => setWorkspaceTab('defaults')}>Page defaults</button></div> : <div><strong id="share-title">{shareView === 'initial' ? `Share “${activeNote.title || 'Untitled'}”` : `Access for “${activeNote.title || 'Untitled'}”`}</strong><span>{shareView === 'initial' ? 'Confirm the workspace and page scope.' : `Choose who in ${workspaceLabel} can access this page.`}</span></div>}<button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header>
+        <header><div><strong id="share-title">Share “{activeNote.title || 'Untitled'}”</strong><span>{shareView === 'initial' ? 'Set up sharing for this page.' : workspaceLabel}</span></div><button className="modal-close" aria-label="Close sharing" onClick={() => setShareOpen(false)}>×</button></header>
+        {shareView !== 'initial' && <div className="share-view-tabs" role="tablist" aria-label="Sharing options"><button role="tab" aria-selected={shareView === 'workspace'} className={shareView === 'workspace' ? 'active' : ''} onClick={() => setShareView('workspace')}>People</button><button role="tab" aria-selected={shareView === 'access'} className={shareView === 'access' ? 'active' : ''} onClick={() => setShareView('access')}>Page access</button></div>}
         {shareView === 'initial' ? <>
           <div className="share-space-summary"><span className="share-section-label">WORKSPACE</span><strong>{inferredDestination.kind === 'new' ? workspaceName : inferredDestination.kind === 'existing' ? workspaceLabel : 'Choose a workspace'}</strong><small>{inferredDestination.kind === 'new' ? 'A new workspace will be created automatically.' : inferredDestination.kind === 'existing' ? 'Inferred from this page’s position.' : 'This page contains multiple shared spaces.'}</small></div>
           <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `${subpageCount} subpage${subpageCount === 1 ? '' : 's'} beneath this page` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
@@ -2834,22 +2811,22 @@ export default function App() {
           {shareError && <p className="share-error" role="alert">{shareError}</p>}
           {inferredDestination.kind !== 'ambiguous' && <div className="share-modal-actions"><span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button><button className="new" disabled={inviteBusy || (inferredDestination.kind === 'new' && !workspaceName.trim())} onClick={() => void addPageToWorkspace()}>{inviteBusy ? 'Sharing…' : 'Share'}</button></div>}
         </> : shareView === 'access' ? <>
-          <div className="access-summary-row"><span><strong>{accessMode[0].toUpperCase() + accessMode.slice(1)}</strong><small>{accessLabel}</small></span>{activeNote.shareId && <button className="copy-link" onClick={() => void copyPageLink()}>{copiedLink ? 'Copied' : 'Copy link'}</button>}</div>
           <label className="include-subpages"><span><strong>Include subpages</strong><small>{subpageCount ? `Apply access to ${subpageCount} subpage${subpageCount === 1 ? '' : 's'}` : 'No subpages yet'}</small></span><input type="checkbox" checked={includeSubpages} disabled={!subpageCount || inviteBusy} onChange={(event) => setIncludeSubpages(event.target.checked)} /></label>
           <div className="access-choice-list" role="radiogroup" aria-label="Page access">
             {(['workspace', 'parent', 'custom'] as PageAccessMode[]).map((mode) => {
               const parentAvailable = Boolean(parent?.shareId === shareId)
               if (mode === 'parent' && !parentAvailable) return null
               const detail = mode === 'workspace' ? `Everyone in ${workspaceLabel}` : mode === 'parent' ? `Same access as ${parent?.title || 'parent'}` : 'Choose workspace members, or nobody for only you'
-              return <Fragment key={mode}><button className={`access-choice ${accessMode === mode ? 'selected' : ''}`} role="radio" aria-checked={accessMode === mode} disabled={!canManageWorkspace || inviteBusy} onClick={() => setAccessMode(mode)}><i /><span><strong>{mode[0].toUpperCase() + mode.slice(1)}</strong><small>{detail}</small></span>{audiencePreview(audienceFor(mode))}</button>{mode === 'custom' && accessMode === 'custom' && <div className="custom-member-list"><input className="custom-member-search" type="search" aria-label="Search workspace members" placeholder="Search workspace members" value={memberSearch} onChange={(event) => setMemberSearch(event.target.value)} />{activeWorkspaceMembers.map((member) => { const selected = selectedMemberIds.has(member.userId); const name = member.ownerDisplayName || (member.ownerHandle ? `@${member.ownerHandle}` : member.userId.slice(0, 8)); return <button key={member.userId} className={selected ? 'selected' : ''} disabled={member.userId === sync.user?.id} onClick={() => setSelectedMemberIds((current) => { const next = new Set(current); if (selected) next.delete(member.userId); else next.add(member.userId); return next })}><i>{selected ? '✓' : ''}</i><span>{name}<small>{member.role}</small></span></button> })}{activeWorkspaceMembers.length === 0 && <p>No other workspace members to choose yet.</p>}<button className="custom-invite-link" onClick={() => openWorkspaceSettings(shareId)}>Invite users to workspace</button></div>}</Fragment>
+              return <Fragment key={mode}><button className={`access-choice ${accessMode === mode ? 'selected' : ''}`} role="radio" aria-checked={accessMode === mode} disabled={!canManageWorkspace || inviteBusy} onClick={() => setAccessMode(mode)}><i /><span><strong>{mode[0].toUpperCase() + mode.slice(1)}</strong><small>{detail}</small></span>{audiencePreview(audienceFor(mode))}</button>{mode === 'custom' && accessMode === 'custom' && <div className="custom-member-list"><input className="custom-member-search" type="search" aria-label="Search workspace members" placeholder="Search workspace members" value={memberSearch} onChange={(event) => setMemberSearch(event.target.value)} />{activeWorkspaceMembers.map((member) => { const selected = selectedMemberIds.has(member.userId); const name = member.ownerDisplayName || (member.ownerHandle ? `@${member.ownerHandle}` : member.userId.slice(0, 8)); return <button key={member.userId} className={selected ? 'selected' : ''} disabled={member.userId === sync.user?.id} onClick={() => setSelectedMemberIds((current) => { const next = new Set(current); if (selected) next.delete(member.userId); else next.add(member.userId); return next })}><i>{selected ? '✓' : ''}</i><span>{name}<small>{member.role}</small></span></button> })}{activeWorkspaceMembers.length === 0 && <p>No other people in this workspace. Add them from the People tab.</p>}</div>}</Fragment>
             })}
           </div>
-          {canManageWorkspace && invitePeopleControls}
           {shareError && <p className="share-error" role="alert">{shareError}</p>}
-          <div className="share-modal-actions">{canManageWorkspace && <button className="workspace-settings-link" onClick={() => openWorkspaceSettings(shareId)}>Workspace settings</button>}<span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button>{canManageWorkspace && <button className="new" disabled={inviteBusy} onClick={() => void savePageAccess()}>{inviteBusy ? 'Saving…' : 'Save'}</button>}</div>
+          <div className="share-modal-actions"><span /><button className="copy-link" onClick={() => setShareOpen(false)}>Cancel</button>{canManageWorkspace && <button className="new" disabled={inviteBusy} onClick={() => void savePageAccess()}>{inviteBusy ? 'Saving…' : 'Save'}</button>}</div>
         </> : <>
-          {workspaceTab === 'people' ? <><div className="workspace-admin-note">Add people to the workspace here. Page access can then select them.</div>{invitePeopleControls}<div className="workspace-roster">{workspaceMembers.map((member) => <div key={member.userId}><span>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)}<small>{member.state}</small></span>{member.role === 'owner' || member.userId === sync.user?.id ? <b>{member.role}</b> : <><select value={member.role} disabled={inviteBusy} onChange={(event) => void changeMemberRole(member, event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button aria-label="Remove member" disabled={inviteBusy} onClick={() => void removeWorkspaceMember(member)}>×</button></>}</div>)}</div></> : <><div className="workspace-admin-note">Choose how new subpages in this workspace are shared by default.</div><div className="access-choice-list">{(['parent', 'workspace', 'custom'] as PageAccessDefault[]).map((value) => <button key={value} className={`access-choice ${workspaceDefault === value ? 'selected' : ''}`} onClick={() => setWorkspaceDefaultState(value)}><i /><span><strong>{value[0].toUpperCase() + value.slice(1)}</strong><small>{value === 'parent' ? 'Use the parent page’s access' : value === 'workspace' ? `Share with everyone in ${workspaceLabel}` : 'Only the author until people are selected'}</small></span></button>)}</div><div className="share-modal-actions"><span /><button className="new" disabled={inviteBusy} onClick={() => void saveWorkspaceDefault()}>{inviteBusy ? 'Saving…' : 'Save default'}</button></div></>}
-          {shareError && <p className="share-error" role="alert">{shareError}</p>}<button className="workspace-back" onClick={() => setShareView('access')}>← Back to page access</button>
+          <div className="workspace-admin-note">{canManageWorkspace ? `Invite people to ${workspaceLabel}.` : `People in ${workspaceLabel}. Only workspace admins can make changes.`}</div>
+          {canManageWorkspace && invitePeopleControls}
+          <div className="workspace-roster">{workspaceMembers.map((member) => <div key={member.userId}><span>{member.ownerDisplayName || member.ownerHandle || member.userId.slice(0, 8)}<small>{member.state}</small></span>{!canManageWorkspace || member.role === 'owner' || member.userId === sync.user?.id ? <b>{member.role}</b> : <><select value={member.role} disabled={inviteBusy} onChange={(event) => void changeMemberRole(member, event.target.value as ShareRole)}><option value="admin">Can manage</option><option value="writer">Can edit</option><option value="reader">Can view</option></select><button aria-label="Remove member" disabled={inviteBusy} onClick={() => void removeWorkspaceMember(member)}>×</button></>}</div>)}</div>
+          {shareError && <p className="share-error" role="alert">{shareError}</p>}
         </>}
       </section></div>, document.body)
     })()}
