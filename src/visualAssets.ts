@@ -1,3 +1,4 @@
+import { diagnosticAlias, diagnosticSpan } from './diagnostics'
 import type { LocalAsset, LocalStore, Note } from './local'
 import type { TallpondClient } from './sync'
 
@@ -59,10 +60,11 @@ const handleForPlacement = (client: TallpondClient | null, placement: string) =>
 
 export async function syncVisualAsset(client: TallpondClient | null, store: LocalStore, asset: LocalAsset, note: Note, userId: string) {
   if (!client || !navigator.onLine || note.deletedAt) return
+  const trace = diagnosticSpan('assets', 'upload', { note: diagnosticAlias('note', note.id), bytes: asset.sizeBytes, scope: note.shareId ? 'workspace' : 'private', room: note.roomId ? 'custom' : 'default' })
   const desired = placementFor(note)
-  if (asset.placement === desired && asset.ownerId === userId) return
+  if (asset.placement === desired && asset.ownerId === userId) { trace.end('canceled', { reason: 'already-uploaded' }); return }
   const destination = handleForNote(client, note)
-  if (!destination) return
+  if (!destination) { trace.end('canceled', { reason: 'no-destination' }); return }
 
   // Paths are unique across rooms for one uploader. Moving between rooms in a
   // resource therefore has to release the old placement before uploading the
@@ -72,16 +74,22 @@ export async function syncVisualAsset(client: TallpondClient | null, store: Loca
   const sameResource = asset.placement?.startsWith(`resource:${note.shareId}:`) && desired.startsWith(`resource:${note.shareId}:`)
   if (previous && sameResource) await previous.delete(asset.path).catch(() => {})
 
-  await destination.upload(asset.path, asset.blob, {
-    contentType: asset.contentType,
-    cacheControl: 'private, max-age=31536000, immutable',
-    upsert: true
-  })
-  await store.putAsset({ ...asset, placement: desired, ownerId: userId })
+  try {
+    await destination.upload(asset.path, asset.blob, {
+      contentType: asset.contentType,
+      cacheControl: 'private, max-age=31536000, immutable',
+      upsert: true
+    })
+    await store.putAsset({ ...asset, placement: desired, ownerId: userId })
 
-  // Cross-scope copies can overlap safely. Remove the old copy only after the
-  // destination exists; failure here costs redundant storage, never content.
-  if (previous && !sameResource && asset.placement !== desired) await previous.delete(asset.path).catch(() => {})
+    // Cross-scope copies can overlap safely. Remove the old copy only after the
+    // destination exists; failure here costs redundant storage, never content.
+    if (previous && !sameResource && asset.placement !== desired) await previous.delete(asset.path).catch(() => {})
+    trace.end('ok', { moved: Boolean(previous && asset.placement !== desired) })
+  } catch (error) {
+    trace.end('failed', undefined, error)
+    throw error
+  }
 }
 
 export async function syncVisualAssets(client: TallpondClient | null, store: LocalStore, notes: readonly Note[], userId: string) {

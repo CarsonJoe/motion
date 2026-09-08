@@ -1,3 +1,5 @@
+import { diagnosticEvent, diagnosticFailure, diagnosticWarn } from './diagnostics'
+
 // The single local database. Four stores, one authority each:
 //   notes  — metadata mirror (title/parent/share/room/soft-delete), LWW by updatedAt
 //   docs   — merged Yjs state per note body, rewritten as edits land
@@ -139,24 +141,44 @@ const asPromise = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject
 // Fail visibly instead; if the blocker later disappears, close the now-unused
 // connection rather than leaking it from an already-rejected promise.
 const openDatabase = (name: string, version: number) => new Promise<IDBDatabase>((resolve, reject) => {
+  const began = performance.now()
+  const scopeKind = name === 'motion' ? 'anonymous' : 'account'
   const request = indexedDB.open(name, version)
   let blocked = false
   request.onblocked = () => {
     blocked = true
-    reject(new Error('Local data is open in another Pad tab. Close other Pad tabs or windows, then reload this one.'))
+    const error = new Error('Local data is open in another Pad tab. Close other Pad tabs or windows, then reload this one.')
+    diagnosticFailure('storage', 'database.open-blocked', error, { scope: scopeKind, ms: Math.round(performance.now() - began) })
+    reject(error)
   }
   request.onsuccess = () => {
     if (blocked) request.result.close()
-    else resolve(request.result)
+    else {
+      diagnosticEvent('storage', 'database.opened', { scope: scopeKind, version, ms: Math.round(performance.now() - began) })
+      resolve(request.result)
+    }
   }
-  request.onerror = () => reject(request.error)
-  request.onupgradeneeded = () => createStores(request.result)
+  request.onerror = () => {
+    diagnosticFailure('storage', 'database.open-failed', request.error, { scope: scopeKind, ms: Math.round(performance.now() - began) })
+    reject(request.error)
+  }
+  request.onupgradeneeded = (event) => {
+    diagnosticEvent('storage', 'database.upgrade', { scope: scopeKind, from: event.oldVersion, to: version })
+    createStores(request.result)
+  }
 })
 
 const done = (transaction: IDBTransaction) => new Promise<void>((resolve, reject) => {
   transaction.oncomplete = () => resolve()
-  transaction.onerror = () => reject(transaction.error)
-  transaction.onabort = () => reject(transaction.error ?? new Error('Local write was aborted.'))
+  transaction.onerror = () => {
+    diagnosticFailure('storage', 'transaction.error', transaction.error, { stores: transaction.objectStoreNames.length, mode: transaction.mode })
+    reject(transaction.error)
+  }
+  transaction.onabort = () => {
+    const error = transaction.error ?? new Error('Local write was aborted.')
+    diagnosticFailure('storage', 'transaction.aborted', error, { stores: transaction.objectStoreNames.length, mode: transaction.mode })
+    reject(error)
+  }
 })
 
 export type LocalStore = Awaited<ReturnType<typeof openLocalStore>>
@@ -180,7 +202,10 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
   // Cooperate with the next schema migration instead of making its tab hang.
   // Version changes wait for active transactions before firing this event, so
   // closing here does not interrupt a write already in progress.
-  db.onversionchange = () => db.close()
+  db.onversionchange = () => {
+    diagnosticWarn('storage', 'database.version-change', { scope: scope === ANON_SCOPE ? 'anonymous' : 'account' })
+    db.close()
+  }
 
   const cache = new Map<string, Note>()
   for (const note of await asPromise(db.transaction('notes').objectStore('notes').getAll() as IDBRequest<Note[]>)) {
@@ -188,6 +213,8 @@ export async function openLocalStore(scope: string = ANON_SCOPE) {
     // boundary keeps their existing shared rows in Tallpond's default room.
     cache.set(note.id, { ...note, roomId: note.roomId ?? '' })
   }
+
+  diagnosticEvent('storage', 'database.hydrated', { scope: scope === ANON_SCOPE ? 'anonymous' : 'account', notes: cache.size })
 
   let snapshot: Note[] | null = null
   const listeners = new Set<() => void>()

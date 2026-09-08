@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { classifyBodyConsistency, deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -481,6 +481,16 @@ describe('authoritative absence', () => {
 
     expect(store.getNote('expired-local-copy')).toBeNull()
     expect(await store.getDocState('expired-local-copy')).toBeNull()
+  })
+})
+
+describe('current-page consistency classification', () => {
+  it('separates equality, expected pending work, stale local state, and divergence', () => {
+    expect(classifyBodyConsistency(0, 0, false)).toBe('equal')
+    expect(classifyBodyConsistency(12, 0, true)).toBe('local-ahead-queued')
+    expect(classifyBodyConsistency(12, 0, false)).toBe('local-ahead-unqueued')
+    expect(classifyBodyConsistency(0, 9, false)).toBe('remote-ahead')
+    expect(classifyBodyConsistency(12, 9, true)).toBe('both-ahead')
   })
 })
 

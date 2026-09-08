@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { editorAdapter } from './editorAdapter'
+import { diagnosticCount, diagnosticWarn } from './diagnostics'
 
 // Ported from the "Notes Lab" PWA experiment. It solves the two things mobile
 // browsers get wrong for a full-screen editor and that no amount of CSS fixes:
@@ -31,18 +32,6 @@ export function dismissMobileKeyboard() {
   const active = document.activeElement
   if (active instanceof HTMLElement && active.closest('main')) active.blur()
   window.getSelection()?.removeAllRanges()
-}
-
-// The on-screen debug overlay, toggled by five taps on the sidebar title. An
-// installed PWA always launches at its fixed start_url, so `?debug` can't be
-// reached from the home screen and the flag has to be persisted.
-const DEBUG_KEY = 'motion-debug'
-export const debugEnabled = () => localStorage.getItem(DEBUG_KEY) === '1'
-export function toggleDebug() {
-  const next = !debugEnabled()
-  if (next) localStorage.setItem(DEBUG_KEY, '1')
-  else localStorage.removeItem(DEBUG_KEY)
-  return next
 }
 
 type Options = {
@@ -98,23 +87,13 @@ export function useMobileKeyboard({ toolbar, main, enabled, noteId }: Options) {
     panPin.style.cssText = 'position:fixed;top:0;left:0;right:0;height:1px;z-index:0;pointer-events:none;background:transparent'
     document.body.appendChild(panPin)
 
-    // Temporary on-screen instrumentation. Open the app with ?debug to see a
-    // live log of the focus/scroll pipeline. Remove once the land-before-
-    // keyboard behavior is nailed down.
-    // `?debug` is unreachable once the app is installed — a PWA always launches
-    // at its fixed start_url — so the flag is also readable from storage, set by
-    // the seven-tap gesture on the sidebar title (see App).
-    const DEBUG = /[?&]debug/.test(location.search) || debugEnabled()
-    let debugEl: HTMLElement | null = null
+    // Keyboard telemetry shares Pad's bounded diagnostics recorder. Routine
+    // focus/correction activity is aggregated; only an actual layout viewport
+    // pan is notable enough for the report timeline.
     const debug = (line: string) => {
-      if (!DEBUG) return
-      if (!debugEl) {
-        debugEl = document.createElement('div')
-        debugEl.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;max-height:40vh;overflow:hidden;background:rgba(0,0,0,.82);color:#5f5;font:10px/1.25 monospace;padding:4px;white-space:pre-wrap;pointer-events:none'
-        document.body.appendChild(debugEl)
-      }
-      const t = (performance.now() / 1000).toFixed(2)
-      debugEl.textContent = `${t} ${line}\n${(debugEl.textContent || '').slice(0, 3600)}`
+      const kind = line.split(/[ =]/, 1)[0] || 'event'
+      if (kind === 'PAN') diagnosticWarn('keyboard', 'viewport-pan', { geometry: line.slice(4, 120) })
+      else diagnosticCount('keyboard', kind)
     }
 
     // Best guess before we've measured the keyboard on this device; refined the

@@ -1,6 +1,7 @@
 import * as Y from 'yjs'
 import type { Row } from '@tallpond/sdk'
 import { fromBase64, patchYText, toBase64 } from './codec'
+import { diagnosticAlias, diagnosticCount, diagnosticEvent, diagnosticFailure, diagnosticRequest, diagnosticSpan } from './diagnostics'
 import type { LocalStore, Note } from './local'
 import { getSyncState, isAuthError, noteChanged, resourceTable, subscribeSyncState, tallpond, updatesTable } from './sync'
 
@@ -50,12 +51,12 @@ async function fetchAllUpdates(shareId: string, roomId: string, noteId: string, 
   do {
     let query = updatesTable(tallpond!, shareId, roomId).select().eq('noteId', noteId).limit(200)
     if (cursor) query = query.after(cursor)
-    const page = await tallpond!.gateway.request<{ rows: Row[]; nextCursor?: string | null }>('/v1/db/query', {
+    const page = await diagnosticRequest('db.note_updates.select.active-document', () => tallpond!.gateway.request<{ rows: Row[]; nextCursor?: string | null }>('/v1/db/query', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(query.toRequest()),
       signal,
-    })
+    }))
     rows.push(...page.rows)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
@@ -110,6 +111,17 @@ export async function openNoteDoc(options: {
   onError: (error: unknown) => void
 }): Promise<NoteDocController> {
   const { note, store } = options
+  const trace = diagnosticSpan('document', 'open', {
+    note: diagnosticAlias('note', note.id),
+    scope: note.shareId ? diagnosticAlias('workspace', note.shareId) : 'private',
+    room: diagnosticAlias('room', note.roomId),
+    connected: options.connected,
+    writable: options.writable,
+  })
+  const reportDocError = (name: string, error: unknown) => {
+    diagnosticFailure('document', name, error, { note: diagnosticAlias('note', note.id) }, trace.operation)
+    options.onError(error)
+  }
   const doc = new Y.Doc()
   const text = doc.getText('content')
   let closed = false
@@ -127,9 +139,17 @@ export async function openNoteDoc(options: {
   // may be allowed to stop the page OPENING: waiting forever here would leave a
   // permanently blank document, which is a worse failure than the stale read
   // this wait exists to prevent. Settled-or-timed-out is enough.
-  await settleWithin(pendingWrites.get(note.id), PERSIST_WAIT_MS)
+  const pendingBeforeOpen = pendingWrites.get(note.id)
+  const waitBegan = performance.now()
+  await settleWithin(pendingBeforeOpen, PERSIST_WAIT_MS)
+  const waited = Math.round(performance.now() - waitBegan)
+  if (pendingBeforeOpen) {
+    diagnosticEvent('document', 'previous-write-wait', { ms: waited }, waited >= PERSIST_WAIT_MS - 10 ? 'warn' : 'info', trace.operation)
+  }
 
+  const readBegan = performance.now()
   const saved = await store.getDocState(note.id)
+  diagnosticEvent('document', 'local-read', { ms: Math.round(performance.now() - readBegan), bytes: saved ? Math.ceil(saved.length * 0.75) : 0 }, 'info', trace.operation)
   if (saved) Y.applyUpdate(doc, fromBase64(saved), REMOTE_ORIGIN)
 
   const emitText = (source: 'local' | 'remote' | 'initial', transformedSelection?: Selection | null) => options.onText(text.toString(), source, transformedSelection)
@@ -171,7 +191,8 @@ export async function openNoteDoc(options: {
     // Encoded HERE, synchronously at event time — never inside the `then`,
     // where the doc may already have been destroyed by a close.
     const encoded = toBase64(Y.encodeStateAsUpdate(doc))
-    return track(persistChain.then(() => store.putDocState(note.id, encoded)).catch(options.onError))
+    diagnosticCount('document', 'persist.queued')
+    return track(persistChain.then(() => store.putDocState(note.id, encoded)).catch((error) => reportDocError('persist-failed', error)))
   }
 
   const documentChanged = (update: Uint8Array, origin: unknown) => {
@@ -180,7 +201,7 @@ export async function openNoteDoc(options: {
     track(persistState().then(async () => {
       await store.enqueueUpdate(note.id, note.shareId, note.roomId, payload)
       noteChanged()
-    }).catch(options.onError))
+    }).catch((error) => reportDocError('enqueue-failed', error)))
   }
   doc.on('update', documentChanged)
 
@@ -188,13 +209,14 @@ export async function openNoteDoc(options: {
   // improve it.
   emitText('initial')
 
+  const online = options.connected && navigator.onLine && Boolean(tallpond)
   let liveSubscription: { close: () => void } | null = null
+  let liveStatus: DocTransport = online ? 'connecting' : options.connected ? 'offline' : 'local'
   let presenceSubscription: { close: () => void } | null = null
   let presenceCleanup = () => {}
   let backfillAbort: AbortController | null = null
   let backfillSettled = Promise.resolve()
 
-  const online = options.connected && navigator.onLine && Boolean(tallpond)
   if (online) {
     options.onTransport('connecting')
     const applyRows = (rows: Row[]) => {
@@ -211,11 +233,13 @@ export async function openNoteDoc(options: {
         .on('insert', (row) => applyRows([row]))
         .on('status', (status) => {
           if (closed) return
+          liveStatus = status === 'live' ? 'live' : status === 'offline' ? 'offline' : 'connecting'
+          diagnosticEvent('realtime', 'document.status', { status, note: diagnosticAlias('note', note.id) }, status === 'offline' ? 'warn' : 'info', trace.operation)
           if (status === 'live') options.onTransport('live')
           else if (status === 'offline') options.onTransport('offline')
           else options.onTransport('connecting')
         })
-        .on('error', options.onError)
+        .on('error', (error) => reportDocError('live-failed', error))
     }
 
     backfillAbort = new AbortController()
@@ -223,8 +247,13 @@ export async function openNoteDoc(options: {
       // Only the active page gets a body backfill. Closing the controller aborts
       // this request before the next page starts instead of leaving every page
       // visited during startup competing for the browser's network slots.
+      const backfillBegan = performance.now()
       const rows = await fetchAllUpdates(note.shareId, note.roomId, note.id, backfillAbort!.signal)
       if (closed) return
+      diagnosticEvent('document', 'backfill.complete', {
+        ms: Math.round(performance.now() - backfillBegan), rows: rows.length,
+        bytes: rows.reduce((total, row) => total + (typeof row.payload === 'string' ? Math.ceil(row.payload.length * 0.75) : 0), 0)
+      }, performance.now() - backfillBegan > 3000 ? 'warn' : 'info', trace.operation)
       const payloads = rows.flatMap((row) => {
         try { return row.payload ? [fromBase64(String(row.payload))] : [] } catch { return [] }
       })
@@ -255,9 +284,12 @@ export async function openNoteDoc(options: {
         }
       }
     })().catch((error) => {
-      if (closed || (error instanceof DOMException && error.name === 'AbortError')) return
+      if (closed || (error instanceof DOMException && error.name === 'AbortError')) {
+        diagnosticCount('document', 'backfill.canceled-expected')
+        return
+      }
       startLive()
-      if (!isAuthError(error)) options.onError(error)
+      if (!isAuthError(error)) reportDocError('backfill-failed', error)
     })
   } else {
     options.onTransport(options.connected ? 'offline' : 'local')
@@ -342,7 +374,7 @@ export async function openNoteDoc(options: {
           expiresAt: Date.now() + PRESENCE_LEASE_MS
         }, { onConflict: ['presenceId'] })
         published = true
-      } catch (error) { if (!isAuthError(error)) options.onError(error) }
+      } catch (error) { if (!isAuthError(error)) reportDocError('presence-publish-failed', error) }
       finally {
         inFlight = false
         if (queued) { queued = false; schedulePresence() }
@@ -420,6 +452,7 @@ export async function openNoteDoc(options: {
       flushed: () => persistChain,
       close: () => {
         closed = true
+        trace.end('ok', { transport: liveStatus, pending_write: pendingWrites.has(note.id) })
         backfillAbort?.abort()
         liveSubscription?.close(); presenceSubscription?.close(); presenceCleanup()
         text.unobserve(textChanged); doc.off('update', documentChanged)
@@ -434,6 +467,7 @@ export async function openNoteDoc(options: {
     flushed: () => persistChain,
     close: () => {
       closed = true
+      trace.end('ok', { transport: liveStatus, pending_write: pendingWrites.has(note.id) })
       backfillAbort?.abort()
       liveSubscription?.close()
       text.unobserve(textChanged); doc.off('update', documentChanged)

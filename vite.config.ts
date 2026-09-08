@@ -2,6 +2,12 @@ import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { readFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { execSync } from 'node:child_process'
+
+const buildId = (() => {
+  try { return execSync('git rev-parse --short=9 HEAD', { encoding: 'utf8' }).trim() }
+  catch { return 'dev' }
+})()
 
 function padServiceWorker(): Plugin {
   return {
@@ -27,6 +33,9 @@ function padServiceWorker(): Plugin {
 }
 
 export default defineConfig({
+  define: {
+    __PAD_BUILD__: JSON.stringify(buildId),
+  },
   plugins: [
     react(),
     padServiceWorker()

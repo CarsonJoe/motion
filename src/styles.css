@@ -1057,6 +1057,43 @@ article { position: relative; max-width: 780px; margin: -32px auto 0; padding: 0
 
 /* Motion is enhancement, never a prerequisite. This also covers CSS animations
    emitted by editor dependencies, while preserving every final layout state. */
+.identity-build { padding: 7px 12px 5px; color: #777; font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; user-select: none; cursor: default; border-top: 1px solid rgba(255,255,255,.06); margin-top: 3px; }
+.diagnostics-backdrop { position: fixed; inset: 0; z-index: 10020; display: grid; place-items: center; padding: 18px; background: rgba(0,0,0,.52); backdrop-filter: blur(5px); }
+.diagnostics-sheet { width: min(620px, 100%); max-height: min(780px, calc(100dvh - 36px)); overflow: auto; border: 1px solid #393936; border-radius: 15px; background: #20201e; color: #e9e7e1; box-shadow: 0 24px 80px rgba(0,0,0,.48); padding: 18px; }
+.diagnostics-sheet > header { position: static; display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; background: none; padding: 0 0 15px; border-bottom: 1px solid #343431; }
+.diagnostics-sheet > header div { display: grid; gap: 4px; }
+.diagnostics-sheet > header strong { font-size: 18px; }
+.diagnostics-sheet > header span { color: #99978f; font-size: 12px; }
+.diagnostics-sheet > header button { width: 32px; height: 32px; padding: 7px; border: 0; border-radius: 8px; color: #aaa89f; background: transparent; }
+.diagnostics-sheet > header button:hover { background: #30302d; }
+.diagnostics-sheet > header svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.diagnostics-health { display: grid; gap: 4px; margin: 15px 0; padding: 13px 14px; border-radius: 10px; background: #282a25; border-left: 3px solid #78906c; }
+.diagnostics-health.degraded { background: #2d2524; border-left-color: #c96d64; }
+.diagnostics-health span { color: #aaa89f; font-size: 12px; }
+.diagnostics-last, .diagnostics-recent { display: grid; gap: 7px; margin: 15px 0; }
+.diagnostics-last small, .diagnostics-recent > small { color: #77766f; font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+.diagnostics-last span, .diagnostics-recent div, .diagnostics-recent p { color: #bbb9b1; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; overflow-wrap: anywhere; }
+.diagnostics-recent div { padding-bottom: 6px; border-bottom: 1px solid #2e2e2b; }
+.diagnostics-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 15px 0 11px; }
+.diagnostics-actions button, .diagnostics-fallback button, .diagnostics-sheet > footer button { min-height: 36px; padding: 0 12px; border: 1px solid #44443f; border-radius: 8px; background: #292926; color: #d7d5cd; }
+.diagnostics-actions button.new { border-color: #65775c; background: #617057; color: white; }
+.diagnostics-actions button:disabled { opacity: .45; }
+.diagnostics-check { display: block; padding: 10px 11px; border-radius: 8px; color: #aaa89f; background: #191918; font: 10px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diagnostics-fallback { margin: 12px 0; }
+.diagnostics-fallback p { color: #aaa89f; font-size: 12px; }
+.diagnostics-fallback textarea { width: 100%; height: 180px; resize: vertical; border: 1px solid #44443f; border-radius: 8px; padding: 10px; background: #171716; color: #d8d6cf; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.diagnostics-sheet > footer { display: flex; align-items: center; gap: 8px; padding-top: 13px; border-top: 1px solid #343431; }
+.diagnostics-sheet > footer span { margin-right: auto; color: #77766f; font: 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+@media (max-width: 760px) {
+  .diagnostics-backdrop { align-items: end; padding: 0; }
+  .diagnostics-sheet { width: 100%; max-height: 88dvh; border-radius: 17px 17px 0 0; border-width: 1px 0 0; padding: 18px max(16px, env(safe-area-inset-right)) calc(16px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+  .diagnostics-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .diagnostics-actions button:first-child { grid-column: 1 / -1; }
+  .diagnostics-sheet > footer { flex-wrap: wrap; }
+  .diagnostics-sheet > footer span { width: 100%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;

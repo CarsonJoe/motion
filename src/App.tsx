@@ -7,10 +7,11 @@ import { setPageLinkServices, type PageOption } from './pageLinkServices'
 import { backlinkSources, getLinksVersion, indexNote, rebuildLinkIndex, subscribeLinks } from './links'
 import { pageUrl, readRoute, subscribeRoute, writeRoute, type Route } from './router'
 import { exportFileName, fromImportMarkdown, seedNoteBody, toExportMarkdown } from './markdown'
-import { dismissMobileKeyboard, useMobileKeyboard, toggleDebug } from './mobileKeyboard'
+import { dismissMobileKeyboard, useMobileKeyboard } from './mobileKeyboard'
+import { buildDiagnosticReport, clearDiagnostics, diagnosticsUnlocked, formatDiagnosticEvent, getDiagnosticSummary, hideDiagnostics, setDiagnosticSnapshotProvider, subscribeDiagnostics, unlockDiagnostics } from './diagnostics'
 import { CloseIcon, MoreHorizontalIcon, SettingsIcon, SidebarIcon } from './icons'
 import { resolveVisualAsset, stageVisualAsset, syncVisualAsset, syncVisualAssets, visualAssetSource } from './visualAssets'
-import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDefault, connectInteractive, createEmptyNoteRoom, createWorkspaceInviteLink, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, listWorkspaces, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, setPageAccess, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type PageAccessMode, type ShareRole, type WorkspaceInfo } from './sync'
+import { acceptInvitation, adoptAnonymousWork, approveRequest, cachedWorkspaceDefault, checkCurrentPageConsistency, collectSyncDiagnostics, connectInteractive, createEmptyNoteRoom, createWorkspaceInviteLink, declineAnonymousWork, declineDeletedElsewhere, deleteNoteTree, denyRequest, discardAnonymousWork, dismissSyncError, fullSync, getResourceInfo, getSyncState, initialScope, inviteByHandle, joinResource, keepDeletedElsewhere, leaveShare, listAccessRequests, listInvitations, listMembers, listWorkspaces, moveWorkspaceRoot, noteChanged, rejectInvitation, purgeDueAt, refreshConnection, removeMemberAccess, requestAccess, restoreNoteTree, saveNote, setActiveLiveShare, setMemberRole, setPageAccess, shareNoteTree, signOut, startSync, subscribeMembershipChanges, subscribeSyncState, tallpond, trashDeletedElsewhere, trashRoots, type AccessRequest, type PageAccessMode, type ShareRole, type WorkspaceInfo } from './sync'
 
 // Lazily loaded, and prefetched as soon as the local store opens (see below) —
 // so in practice the chunk is warm before a page is ever opened, and the
@@ -589,15 +590,18 @@ function HeaderMenu({ anchor, canShare, onShare, onCopyMarkdown, onDownload, onC
 // deleted lives here rather than in the tree: it is a place you visit to undo
 // something, not a peer of the pages you navigate every day. Shares `.page-menu`
 // chrome with the other two dropdowns.
-function IdentityMenu({ anchor, name, connected, signOutBlocked, trashCount, showBacklinks, onTrash, onToggleBacklinks, onConnect, onSignOut, onClose }: {
+function IdentityMenu({ anchor, name, connected, signOutBlocked, trashCount, showBacklinks, diagnosticsVisible, onTrash, onToggleBacklinks, onDiagnostics, onBuildTap, onConnect, onSignOut, onClose }: {
   anchor: HTMLElement
   name: string
   connected: boolean
   signOutBlocked: boolean
   trashCount: number
   showBacklinks: boolean
+  diagnosticsVisible: boolean
   onTrash: () => void
   onToggleBacklinks: () => void
+  onDiagnostics: () => void
+  onBuildTap: () => void
   onConnect: () => void
   onSignOut: () => void
   onClose: () => void
@@ -630,11 +634,70 @@ function IdentityMenu({ anchor, name, connected, signOutBlocked, trashCount, sho
       <div className="identity-menu-head">{name}</div>
       <button role="menuitem" onClick={onTrash}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></svg>Recently deleted{trashCount > 0 && <span className="identity-menu-count">{trashCount}</span>}</button>
       <button role="menuitem" aria-pressed={showBacklinks} onClick={onToggleBacklinks}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" /><circle cx="12" cy="12" r="2.5" /></svg>Show backlinks<span className="identity-menu-count">{showBacklinks ? 'On' : 'Off'}</span></button>
+      {diagnosticsVisible && <button role="menuitem" onClick={onDiagnostics}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><circle cx="12" cy="12" r="8" /><path d="M12 8v4m0 4h.01" /></svg>Diagnostics</button>}
       {connected
         ? <button role="menuitem" disabled={signOutBlocked} title={signOutBlocked ? 'Waiting for your changes to finish syncing' : undefined} onClick={onSignOut}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M16 17l5-5-5-5M21 12H9M12 21H5V3h7" /></svg>Sign out</button>
         : <button role="menuitem" onClick={onConnect}><svg viewBox="0 0 24 24" aria-hidden="true" fill="none"><path d="M9 12H4M8 8l-4 4 4 4M15 3h4v18h-4" /></svg>Connect to Tallpond</button>}
+      <div className="identity-build" onClick={onBuildTap}>Pad · {__PAD_BUILD__}</div>
     </div>
   </>, document.body)
+}
+
+function DiagnosticsSheet({ syncPhase, pending, connected, docTransport, canCheck, onCheck, onRetry, onClose }: {
+  syncPhase: string
+  pending: number
+  connected: boolean
+  docTransport: DocTransport
+  canCheck: boolean
+  onCheck: () => Promise<string>
+  onRetry: () => void
+  onClose: () => void
+}) {
+  const summary = useSyncExternalStore(subscribeDiagnostics, getDiagnosticSummary)
+  const [check, setCheck] = useState('CHECK current_page not_run')
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [fallback, setFallback] = useState<string | null>(null)
+  const degraded = ['error', 'auth-required'].includes(syncPhase)
+
+  const copy = async () => {
+    setBusy(true); setCopied(false); setFallback(null)
+    try {
+      const report = await buildDiagnosticReport([check])
+      try {
+        await Promise.race([
+          navigator.clipboard.writeText(report),
+          new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('clipboard timeout')), 1500))
+        ])
+        setCopied(true)
+      } catch { setFallback(report) }
+    } finally { setBusy(false) }
+  }
+  const runCheck = async () => {
+    setBusy(true)
+    try { setCheck(await onCheck()) }
+    finally { setBusy(false) }
+  }
+  const download = () => {
+    if (!fallback) return
+    const url = URL.createObjectURL(new Blob([fallback], { type: 'text/plain' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = `pad-diagnostics-${Date.now()}.txt`; link.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 0)
+  }
+
+  return createPortal(<div className="diagnostics-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <section className="diagnostics-sheet" role="dialog" aria-modal="true" aria-labelledby="diagnostics-title">
+      <header><div><strong id="diagnostics-title">Diagnostics</strong><span>Local, redacted, and never uploaded automatically.</span></div><button aria-label="Close diagnostics" onClick={onClose}><CloseIcon /></button></header>
+      <div className={`diagnostics-health ${degraded ? 'degraded' : ''}`}><strong>{degraded ? 'Needs attention' : 'No known problems'}</strong><span>Sync {syncPhase} · {pending} queued · document {docTransport}</span></div>
+      {summary.lastError && <div className="diagnostics-last"><small>LAST FAILURE</small><span>{formatDiagnosticEvent(summary.lastError)}</span></div>}
+      <div className="diagnostics-actions"><button className="new" disabled={busy} onClick={() => void copy()}>{busy ? 'Preparing…' : copied ? 'Copied report' : 'Copy report'}</button><button disabled={busy || !canCheck} onClick={() => void runCheck()}>Run page check</button><button disabled={!connected} onClick={onRetry}>Retry sync</button></div>
+      <code className="diagnostics-check">{check}</code>
+      {fallback && <div className="diagnostics-fallback"><p>Clipboard access was unavailable. Select and copy this report:</p><textarea readOnly autoFocus value={fallback} onFocus={(event) => event.currentTarget.select()} /><button onClick={download}>Download .txt</button></div>}
+      <div className="diagnostics-recent"><small>RECENT NOTABLE ACTIVITY</small>{summary.recent.length ? summary.recent.map((item, index) => <div key={`${item.boot}:${item.at}:${index}`}>{formatDiagnosticEvent(item)}</div>) : <p>Nothing notable recorded.</p>}</div>
+      <footer><span>Build {__PAD_BUILD__}</span><button onClick={() => { clearDiagnostics(); setCheck('CHECK current_page not_run') }}>Clear history</button><button onClick={() => { hideDiagnostics(); onClose() }}>Hide diagnostics</button></footer>
+    </section>
+  </div>, document.body)
 }
 
 // --- `[[` picker ranking ----------------------------------------------------
@@ -992,7 +1055,7 @@ export default function App() {
     const content = document.querySelector<HTMLElement>('.motion-md-content')
     if (selection && !selection.isCollapsed && content && selection.anchorNode && selection.focusNode && content.contains(selection.anchorNode) && content.contains(selection.focusNode)) return
     const title = titleInputRef.current
-    if (document.activeElement === title && title.selectionStart !== title.selectionEnd) return
+    if (title && document.activeElement === title && title.selectionStart !== title.selectionEnd) return
     // Never taken from something that pans sideways for itself — a wide code
     // block or table. This is the case `touch-action: pan-y` on <main> would
     // have broken, which is why the axis is settled here in script instead.
@@ -1132,6 +1195,7 @@ export default function App() {
   }
   const [mainEl, setMainEl] = useState<HTMLElement | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [diagnosticsOpen, setDiagnosticsOpen] = useState(() => /(?:\?|&)pad-diagnostics=1(?:&|$)/.test(location.search))
   const [docTransport, setDocTransport] = useState<DocTransport>('local')
   const [collaborativeMarkdown, setCollaborativeMarkdown] = useState<{ noteId: string; value: string } | null>(null)
   const markdownRef = useRef<{ noteId: string; value: string } | null>(null)
@@ -1240,6 +1304,7 @@ export default function App() {
   const assetSyncRunningRef = useRef(false)
 
   const sync = useSyncExternalStore(subscribeSyncState, getSyncState)
+  const diagnosticsSummary = useSyncExternalStore(subscribeDiagnostics, getDiagnosticSummary)
   const online = useSyncExternalStore(subscribeOnline, getOnline)
   const subscribeNotes = useCallback((listener: () => void) => store ? store.subscribe(listener) : () => {}, [store])
   const getNotes = useCallback(() => store ? store.getSnapshot() : EMPTY_NOTES, [store])
@@ -1395,6 +1460,12 @@ export default function App() {
   // recovered. Everywhere that must not show deleted pages — the tree, search,
   // backlinks — filters on `notes` instead.
   const activeNote = useMemo(() => allNotes.find((note) => note.id === activeId) ?? null, [allNotes, activeId])
+  useEffect(() => {
+    setDiagnosticSnapshotProvider(() => store
+      ? collectSyncDiagnostics(store, docTransport, activeNote)
+      : Promise.resolve({ sync: sync.phase, connected: sync.connected, pending: sync.pending, docTransport }))
+    return () => setDiagnosticSnapshotProvider(null)
+  }, [store, docTransport, activeNote, sync.phase, sync.connected, sync.pending])
   const activeTrashed = Boolean(activeNote?.deletedAt)
   // Everything below the body has to wait for the body. The doc opens
   // asynchronously (and is cleared on every note switch), so for a frame or two
@@ -2407,7 +2478,7 @@ export default function App() {
   // slow enough to explain a wait, but no commentary on the per-page backfill
   // behind every page open. The footer still carries that.
   const headerBusy = useDelayedFlag(!syncNotice && heavySync, BUSY_DELAY_MS, BUSY_MIN_MS)
-  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync())
+  const runSyncAction = () => void (sync.phase === 'auth-required' || !sync.connected ? connect() : fullSync('manual'))
   // Explicit navigation clears any pending deep-link/landing so it doesn't keep
   // covering the page the user just chose.
   const clearPendingNavigation = () => { setLanding(null); setPendingRoute((current) => current.noteId ? { noteId: null, resourceId: null } : current) }
@@ -2415,18 +2486,19 @@ export default function App() {
   // tapping the row of the page already peeking sets the same id, so there is no
   // change for that effect to notice and the tap did nothing.
   const openNote = (id: string) => { setNoteMenuId(null); clearPendingNavigation(); setMenuOpen(false); setActiveId(id) }
-  // Five taps on the sidebar title toggle the keyboard debug overlay. The
-  // reload is what applies it: the flag is read once, when the effect installs.
-  const debugTaps = useRef({ count: 0, at: 0 })
-  const countDebugTap = () => {
+  // Hidden but reachable in an installed PWA, where query-string debug URLs
+  // are awkward: seven quick taps on the build row unlock diagnostics locally.
+  const diagnosticTaps = useRef({ count: 0, at: 0 })
+  const countDiagnosticTap = () => {
     const now = Date.now()
-    const taps = debugTaps.current
-    taps.count = now - taps.at < 3000 ? taps.count + 1 : 1
+    const taps = diagnosticTaps.current
+    taps.count = now - taps.at < 4000 ? taps.count + 1 : 1
     taps.at = now
-    if (taps.count < 5) return
+    if (taps.count < 7) return
     taps.count = 0
-    toggleDebug()
-    location.reload()
+    unlockDiagnostics()
+    setIdentityOpen(false)
+    setDiagnosticsOpen(true)
   }
 
   // The single header control that means "show me the sidebar". On desktop the
@@ -2736,7 +2808,7 @@ export default function App() {
   }
 
   return <div ref={shellRef} className={`app-shell mobile-${mobileView} ${sidebarOpen ? '' : 'sidebar-collapsed'} ${drag ? 'dragging-page' : ''} ${noSlide ? 'no-slide' : ''} ${drawerDragging ? 'drawer-dragging' : ''} ${drawerSettling ? 'drawer-settling' : ''} ${drawerIconX ? 'drawer-x' : ''}`}>
-    <aside><div className="sidebar-top"><button className="sidebar-icon" aria-label="Open command palette" title={`Command palette (${mod} K)`} aria-keyshortcuts="Meta+K Control+K" onClick={() => openSearch('all')}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-icon" aria-label="Settings" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { countDebugTap(); setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><SettingsIcon /></button><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><SidebarIcon /></button></div></div>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} showBacklinks={showBacklinks} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onToggleBacklinks={toggleBacklinks} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}<button className="new-page-action" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New page</span></button>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === FAVORITES_DROP ? 'drop-target' : ''}`} data-drop-id={FAVORITES_DROP}>FAVORITES</div><nav className="favorites-nav">{previewParentId === FAVORITES_DROP && <DropLine depth={0} />}{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{reviewKind && <ReviewPanel title={reviewKind === 'anonymous' ? 'Pages on this device' : 'Deleted elsewhere'} detail={reviewKind === 'anonymous' ? 'Review before merging these pages into your account.' : 'Review the local changes before deciding what to keep.'} notes={reviewKind === 'anonymous' ? anonReviewNotes : deletedElsewhereNotes} activeId={reviewPreview?.kind === reviewKind ? reviewPreview.note.id : null} busy={reviewBusy} keepLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Merge (${anonReviewSelectedIds.size})` : 'Merge all' : 'Keep'} deleteLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Delete (${anonReviewSelectedIds.size})` : 'Delete all' : 'Delete'} selectedIds={reviewKind === 'anonymous' ? anonReviewSelectedIds : undefined} onToggleSelected={reviewKind === 'anonymous' ? (id) => setAnonReviewSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) : undefined} onOpen={(note) => void openReviewPage(note)} onKeep={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(adoptAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? adoptAnonymousWork : keepDeletedElsewhere))} onDelete={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(discardAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? discardAnonymousWork : trashDeletedElsewhere))} onNotNow={() => closeReview(true)} />}{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><CloseIcon /></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => openNote(note.id)}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
+    <aside><div className="sidebar-top"><button className="sidebar-icon" aria-label="Open command palette" title={`Command palette (${mod} K)`} aria-keyshortcuts="Meta+K Control+K" onClick={() => openSearch('all')}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.6-3.6" /></svg></button><div className="sidebar-top-actions">{sync.connected && <NotificationButton count={invitations.length + requests.length} onClick={() => { setIdentityOpen(false); setNotificationsOpen((open) => !open) }} />}<button className="sidebar-icon" aria-label="Settings" aria-haspopup="menu" aria-expanded={identityOpen} onClick={(event) => { setIdentityAnchor(event.currentTarget); setNotificationsOpen(false); setIdentityOpen((open) => !open) }}><SettingsIcon /></button><button className="sidebar-close" aria-label="Collapse sidebar" onClick={collapseSidebar}><SidebarIcon /></button></div></div>{identityOpen && identityAnchor && <IdentityMenu anchor={identityAnchor} name={accountName} connected={sync.connected} signOutBlocked={sync.pending > 0} trashCount={trashed.length} showBacklinks={showBacklinks} diagnosticsVisible={diagnosticsSummary.unlocked} onTrash={() => { setIdentityOpen(false); setTrashViewOpen(true) }} onToggleBacklinks={toggleBacklinks} onDiagnostics={() => { setIdentityOpen(false); setDiagnosticsOpen(true) }} onBuildTap={countDiagnosticTap} onConnect={() => { setIdentityOpen(false); void connect() }} onSignOut={() => { setIdentityOpen(false); void leave() }} onClose={() => setIdentityOpen(false)} />}<button className="new-page-action" aria-label="New page" title="New page" onClick={() => void createNote()}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg><span>New page</span></button>{notificationsOpen && <section className="notification-center" aria-label="Notifications">{notificationsLoading && invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">Checking…</p> : invitations.length === 0 && requests.length === 0 ? <p className="notification-empty">You’re all caught up.</p> : <div className="invitation-list">{invitations.map((invitation) => <div className="invitation-item" key={invitation.resourceId}><span><strong>{invitation.name || 'Shared page'}</strong> · {invitation.role}</span><div className="invitation-actions"><button aria-label={`Decline ${invitation.name}`} disabled={notificationsLoading} onClick={() => void rejectShareInvitation(invitation.resourceId)}>×</button><button className="accept" aria-label={`Accept ${invitation.name}`} disabled={notificationsLoading} onClick={() => void acceptShareInvitation(invitation.resourceId)}>Accept</button></div></div>)}{requests.map((request) => <div className="invitation-item" key={`${request.resourceId}:${request.userId}`}><span><strong>{requesterName(request)}</strong> wants to join {requestPageName(request.resourceId)}</span><div className="invitation-actions"><button aria-label="Decline request" disabled={notificationsLoading} onClick={() => void denyAccessRequest(request.resourceId, request.userId)}>×</button><button className="accept" aria-label="Approve request" disabled={notificationsLoading} onClick={() => void approveAccessRequest(request.resourceId, request.userId)}>Approve</button></div></div>)}</div>}</section>}{(() => { const byId = new Map(notes.map((note) => [note.id, note])); const hasFavoritedAncestor = (note: Note) => { let parent = byId.get(note.parentId); while (parent) { if (favorites.has(parent.id)) return true; parent = byId.get(parent.parentId) } return false }; const favoriteRoots = notes.filter((note) => favorites.has(note.id) && !hasFavoritedAncestor(note)).sort(byRecency(subtreeRecency)); const treeProps = { notes, recency: subtreeRecency, activeId, onOpen: openNote, menuKey: noteMenuId, onToggleMenu, expandedIds: effectiveExpandedIds, onToggleExpanded, previewParentId, dimmedIds, dragEnabled: true, onDragStart: startDrag, clickSuppressed, renamingKey, onRenameSubmit: renameNote, onRenameCancel }; const hiddenRootIds = new Set(favoriteRoots.filter((note) => note.parentId === '').map((note) => note.id)); return <div className="sidebar-scroll" ref={pagesNavRef} onScroll={(event) => { listScroll.current = event.currentTarget.scrollTop }}>{favoriteRoots.length > 0 && <><div className={`section-label ${previewParentId === FAVORITES_DROP ? 'drop-target' : ''}`} data-drop-id={FAVORITES_DROP}>FAVORITES</div><nav className="favorites-nav">{previewParentId === FAVORITES_DROP && <DropLine depth={0} />}{favoriteRoots.map((note) => <NoteTreeNode key={note.id} scope="fav" {...treeProps} note={note} depth={0} />)}</nav></>}<div className={`section-label ${previewParentId === '' ? 'drop-target' : ''}`} data-drop-id="">PAGES</div><nav className="pages-nav" data-drop-id=""><NoteTree scope="pages" {...treeProps} parentId="" depth={0} hiddenRootIds={hiddenRootIds} /></nav></div> })()}{reviewKind && <ReviewPanel title={reviewKind === 'anonymous' ? 'Pages on this device' : 'Deleted elsewhere'} detail={reviewKind === 'anonymous' ? 'Review before merging these pages into your account.' : 'Review the local changes before deciding what to keep.'} notes={reviewKind === 'anonymous' ? anonReviewNotes : deletedElsewhereNotes} activeId={reviewPreview?.kind === reviewKind ? reviewPreview.note.id : null} busy={reviewBusy} keepLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Merge (${anonReviewSelectedIds.size})` : 'Merge all' : 'Keep'} deleteLabel={reviewKind === 'anonymous' ? anonReviewSelectedIds.size ? `Delete (${anonReviewSelectedIds.size})` : 'Delete all' : 'Delete'} selectedIds={reviewKind === 'anonymous' ? anonReviewSelectedIds : undefined} onToggleSelected={reviewKind === 'anonymous' ? (id) => setAnonReviewSelectedIds((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next }) : undefined} onOpen={(note) => void openReviewPage(note)} onKeep={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(adoptAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? adoptAnonymousWork : keepDeletedElsewhere))} onDelete={() => void (reviewKind === 'anonymous' && anonReviewSelectedIds.size ? runSelectedAnonymousAction(discardAnonymousWork) : runReviewAction(reviewKind === 'anonymous' ? discardAnonymousWork : trashDeletedElsewhere))} onNotNow={() => closeReview(true)} />}{trashViewOpen && <div className="trash-view" role="dialog" aria-label="Recently deleted"><div className="trash-view-head"><strong>Recently deleted</strong><button className="trash-view-close" aria-label="Close" onClick={() => setTrashViewOpen(false)}><CloseIcon /></button></div>{trashed.length === 0 ? <p className="trash-view-empty">Nothing here. Deleted pages stay for 30 days before they are removed for good.</p> : <div className="trash-list">{trashed.map((note) => <div key={note.id} className={`trash-item ${note.id === activeId ? 'active' : ''}`}><button className="trash-open" onClick={() => openNote(note.id)}><span className="trash-title">{note.title || 'Untitled'}</span><span className="trash-when">{describeRetention(note)}</span></button>{canWriteNote(note) && <button className="trash-restore" disabled={recoverBusy} onClick={() => void recover(note)}>Restore</button>}</div>)}</div>}</div>}{(syncBusy || syncNotice || syncError) && <div className="sidebar-footer">{syncBusy ? <SyncBusyLabel announce /> : syncNotice && <>{syncNotice.tone === 'red' && <span className="local-dot sync-dot-red"/>}{syncNotice.label !== syncNotice.action && <span className="sync-status" role="status" aria-live="polite">{syncNotice.label}</span>}{syncNotice.action && <button className="sync-button" disabled={!online} onClick={runSyncAction}>{syncNotice.action}</button>}</>}{syncError && <span className="sync-error" role="alert">{syncError}<button className="sync-error-dismiss" aria-label="Dismiss error" onClick={clearSyncError}>×</button></span>}</div>}</aside>
     {searchOpen && <div className="search-overlay" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSearch() }}>
       <div className="search-panel command-panel" style={{ paddingBottom: keyboardInset }}>
         <div ref={paletteResultsRef} id="command-palette-results" className={`search-results ${paletteItems.length === 0 ? 'is-empty' : ''}`} role="listbox" aria-label="Commands and pages">
@@ -2810,6 +2882,7 @@ export default function App() {
     {flash && <div className="flash-toast" role="status">{flash}</div>}
     {recoverPrompt && createPortal(<div className="confirm-modal-backdrop" role="presentation" onMouseDown={() => setRecoverPrompt(null)}><section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="recover-title" onMouseDown={(event) => event.stopPropagation()}><strong id="recover-title">Recover this page to edit it?</strong><p>{`“${recoverPrompt.title || 'Untitled'}” is in Recently deleted, so it can be read but not changed. Recovering puts it back where it was.`}</p><div className="confirm-actions"><button className="confirm-cancel" disabled={recoverBusy} onClick={() => setRecoverPrompt(null)}>Keep reading</button><button className="new" disabled={recoverBusy || !canWriteNote(recoverPrompt)} onClick={() => void recover(recoverPrompt)}>{recoverBusy ? 'Recovering…' : 'Recover'}</button></div></section></div>, document.body)}
     {attentionKind && createPortal(<div className="share-modal-backdrop adopt-backdrop" role="presentation"><AttentionDialog kind={attentionKind} count={attentionCount} onNotNow={deferAttention} onReview={() => { setTrashViewOpen(false); setIdentityOpen(false); openSidebar(); setMenuOpen(true); setReviewPreview(null); setReviewKind(attentionKind) }} /></div>, document.body)}
+    {diagnosticsOpen && <DiagnosticsSheet syncPhase={sync.phase} pending={sync.pending} connected={sync.connected} docTransport={docTransport} canCheck={Boolean(store && activeNote && sync.connected && online)} onCheck={() => store && activeNote ? checkCurrentPageConsistency(store, activeNote) : Promise.resolve('CHECK current_page inconclusive reason=no-active-page')} onRetry={() => void fullSync('manual-diagnostics')} onClose={() => setDiagnosticsOpen(false)} />}
     {shareOpen && activeNote && (() => {
       const parent = notes.find((note) => note.id === activeNote.parentId)
       const inferredDestination = inferShareDestination(activeNote, notes)

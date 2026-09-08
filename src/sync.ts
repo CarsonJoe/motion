@@ -1,5 +1,7 @@
 import { createClient, type InvitationInfo, type MemberInfo, type MembershipChange, type ResourceInfo, type RoomChange, type RoomInfo, type Row, type TableQuery, type User } from '@tallpond/sdk'
-import { mergeBase64Updates } from './codec'
+import * as Y from 'yjs'
+import { fromBase64, mergeBase64Updates } from './codec'
+import { diagnosticAlias, diagnosticCount, diagnosticEvent, diagnosticFailure, diagnosticRequest, diagnosticSpan, diagnosticWarn, type DiagnosticSnapshot } from './diagnostics'
 import { adoptScope, ANON_SCOPE, discardScopeNotes, dropScope, openLocalStore, subtreeIds, surveyScope, type LocalStore, type Note, type NoteOp, type ScopeSurvey, type UpdateOp } from './local'
 
 // Tallpond injects gateway config on its hosted origin; local Vite development
@@ -169,7 +171,16 @@ const restoreRoute = () => {
 let state: SyncState = { phase: 'checking', connected: false, error: null, user: null, roles: storedRoles(storedScope()), roomRoles: storedRoomRoles(storedScope()), pending: 0, fullSyncing: false, adoptable: null, deletedElsewhere: null }
 const listeners = new Set<() => void>()
 const setState = (patch: Partial<SyncState>) => {
+  const before = state
   state = { ...state, ...patch }
+  if (before.phase !== state.phase || before.connected !== state.connected || before.fullSyncing !== state.fullSyncing) {
+    diagnosticEvent('sync', 'state', {
+      from: before.phase, to: state.phase, connected: state.connected,
+      full: state.fullSyncing, pending: state.pending
+    }, state.phase === 'error' || state.phase === 'auth-required' ? 'warn' : 'info')
+  }
+  if (!before.error && state.error) diagnosticWarn('sync', 'error-latched', { phase: state.phase })
+  if (before.error && !state.error) diagnosticEvent('sync', 'error-cleared', { phase: state.phase })
   for (const listener of listeners) listener()
 }
 export const subscribeSyncState = (listener: () => void) => {
@@ -218,7 +229,10 @@ async function selectAll(build: (cursor?: string) => TableQuery) {
   const rows: Row[] = []
   let cursor: string | undefined
   do {
-    const page = await build(cursor).limit(200).page()
+    const query = build(cursor).limit(200)
+    const request = typeof query.toRequest === 'function' ? query.toRequest() : null
+    const signature = request ? `db.${request.table}.${request.op}.${request.scope.kind}` : 'db.query.select'
+    const page = await diagnosticRequest(signature, () => query.page())
     rows.push(...page.rows)
     cursor = page.nextCursor ?? undefined
   } while (cursor)
@@ -285,6 +299,18 @@ const isPermanentRejection = (error: unknown) => {
 }
 
 export async function drainOutbox(client: TallpondClient, store: LocalStore, blockedNoteIds: ReadonlySet<string> = new Set()) {
+  const initialOps = await store.listOps()
+  const trace = diagnosticSpan('outbox', 'drain', {
+    before: initialOps.length,
+    updates: initialOps.filter((op) => op.kind === 'update').length,
+    metadata: initialOps.filter((op) => op.kind === 'note').length,
+    blocked: blockedNoteIds.size,
+    oldest_ms: initialOps.length ? Date.now() - Math.min(...initialOps.map((op) => op.createdAt)) : 0,
+  })
+  let acceptedUpdates = 0
+  let acceptedMetadata = 0
+  let rejectedUpdates = 0
+  let passes = 0
   // Bounded by progress rather than by an empty queue. A metadata op whose
   // revision keeps moving — a title being typed — can never be dequeued, and
   // looping until it is would cost a gateway round trip per keystroke. A pass
@@ -294,6 +320,7 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore, blo
   // synced while some of their writing is stuck and going nowhere.
   let rejected = false
   while (true) {
+    passes += 1
     const ops = await store.listOps()
     if (!ops.length) break
     let progress = false
@@ -324,16 +351,20 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore, blo
         // spin: the op stays, `progress` is not set for it, so a pass that
         // achieves nothing else ends the loop rather than retrying in place.
         rejected = true
+        rejectedUpdates += group.length
+        diagnosticWarn('outbox', 'content-rejected', { status: (error as { status?: number }).status, kept: group.length }, trace.operation)
         continue
       }
       await store.removeOps(group.map((op) => op.id))
+      acceptedUpdates += group.length
+      diagnosticCount('outbox', 'updates.accepted', group.length)
       progress = true
     }
 
     for (const op of ops) {
       if (op.kind !== 'note' || blockedNoteIds.has(op.noteId)) continue
       try {
-        if (await pushNoteRow(client, store, op)) progress = true
+        if (await pushNoteRow(client, store, op)) { progress = true; acceptedMetadata += 1 }
       } catch (error) {
         if (!isPermanentRejection(error)) throw error
         await store.removeOps([op.id])
@@ -344,6 +375,11 @@ export async function drainOutbox(client: TallpondClient, store: LocalStore, blo
     if (!progress) break
   }
 
+  const after = await store.countOps()
+  trace.end(rejected ? 'partial' : 'ok', { after, accepted_updates: acceptedUpdates, accepted_metadata: acceptedMetadata, rejected_updates: rejectedUpdates, passes })
+  if (after && initialOps.length && after >= initialOps.length && navigator.onLine) {
+    diagnosticWarn('outbox', 'no-progress', { before: initialOps.length, after, passes }, trace.operation)
+  }
   if (rejected) {
     setState({ error: 'Some edits could not be synced — you may no longer have edit access. They are still saved on this device.' })
   }
@@ -462,6 +498,7 @@ function verifyThenLatch(error: unknown) {
 }
 
 function reportFailure(error: unknown) {
+  diagnosticFailure('sync', 'operation-failed', error, { phase: state.phase, pending: state.pending })
   if (isAuthError(error)) {
     // A latch already in place is the answer; re-probing on every subsequent
     // request would just hammer the gateway with the user already prompted.
@@ -483,6 +520,7 @@ function scheduleRetry(error: unknown) {
     ? { phase: 'error', error: describeError(error) }
     : { phase: 'syncing', error: null })
   const delay = Math.min(2500 * 2 ** retryAttempt, 60000)
+  diagnosticWarn('sync', 'retry-scheduled', { attempt: retryAttempt + 1, delay_ms: delay, phase: state.phase })
   retryAttempt += 1
   retryTimer = window.setTimeout(() => { retryTimer = null; void resume() }, delay)
 }
@@ -498,6 +536,7 @@ async function flush() {
     } while (flushQueued)
     await settle()
   } catch (error) {
+    diagnosticFailure('outbox', 'flush-failed', error, { pending: state.pending })
     reportFailure(error)
   } finally {
     flushing = false
@@ -512,10 +551,15 @@ const applyRemoteRow = (shareId: string) => (row: Row) => {
 
 function subscribeLive(client: TallpondClient, activeShareId: string) {
   closeLiveSubscriptions()
-  const onError = (error: unknown) => { if (isAuthError(error)) reportFailure(error) }
+  diagnosticEvent('realtime', 'subscriptions.rebuild', { active: activeShareId ? diagnosticAlias('workspace', activeShareId) : 'private' })
+  const onError = (error: unknown) => {
+    diagnosticFailure('realtime', 'subscription.error', error)
+    if (isAuthError(error)) reportFailure(error)
+  }
   const notes = ['', ...(activeShareId ? [activeShareId] : [])].map((shareId) => notesTable(client, shareId).select().live()
-    .on('insert', applyRemoteRow(shareId))
-    .on('update', applyRemoteRow(shareId))
+    .on('insert', (row) => { diagnosticCount('realtime', 'metadata.insert', 1, shareId ? 'workspace' : 'private'); applyRemoteRow(shareId)(row) })
+    .on('update', (row) => { diagnosticCount('realtime', 'metadata.update', 1, shareId ? 'workspace' : 'private'); applyRemoteRow(shareId)(row) })
+    .on('status', (status) => diagnosticEvent('realtime', 'metadata.status', { scope: shareId ? diagnosticAlias('workspace', shareId) : 'private', status }, status === 'offline' ? 'warn' : 'info'))
     .on('error', onError))
 
   // This private-scope feed covers this user's invitations and membership in
@@ -530,12 +574,12 @@ function subscribeLive(client: TallpondClient, activeShareId: string) {
 
     if (!('state' in change)) {
       // A deletion only matters to Pad if this was one of its known shares.
-      if (state.roles[resourceId]) void fullSync().finally(() => emitMembershipChange(resourceId))
+      if (state.roles[resourceId]) void fullSync('membership-delete').finally(() => emitMembershipChange(resourceId))
       return
     }
     if (change.state !== 'active' || state.roles[resourceId] === change.role) return
     if (knownLiveShareIds.has(resourceId)) {
-      void fullSync().finally(() => emitMembershipChange(resourceId))
+      void fullSync('membership-change').finally(() => emitMembershipChange(resourceId))
       return
     }
     if (ignoredMembershipResources.has(resourceId)) return
@@ -547,13 +591,14 @@ function subscribeLive(client: TallpondClient, activeShareId: string) {
     // fullSync again. Resolve the type once before widening Pad's scopes.
     void client.resource(resourceId).get().then((info) => {
       if (info.type !== 'shared_notes') { ignoredMembershipResources.add(resourceId); return }
-      return fullSync().finally(() => emitMembershipChange(resourceId))
+      return fullSync('membership-discovered').finally(() => emitMembershipChange(resourceId))
     }).catch(() => {})
   }
   const ownMembership = client.resources.live()
     .on('insert', refreshOwnMembership)
     .on('update', refreshOwnMembership)
     .on('delete', refreshOwnMembership)
+    .on('status', (status) => diagnosticEvent('realtime', 'membership.status', { status }, status === 'offline' ? 'warn' : 'info'))
     .on('error', onError)
 
   // Room grants are the per-note half of access. Snapshot rows already present
@@ -567,12 +612,13 @@ function subscribeLive(client: TallpondClient, activeShareId: string) {
     const key = roomAccessKey(resourceId, roomId)
     if ('role' in change && state.roomRoles[key] === change.role) return
     if (!('role' in change) && !state.roomRoles[key]) return
-    void fullSync().finally(() => emitMembershipChange(resourceId))
+    void fullSync('room-grant-change').finally(() => emitMembershipChange(resourceId))
   }
   const ownRooms = client.rooms.live()
     .on('insert', refreshOwnRoom)
     .on('update', refreshOwnRoom)
     .on('delete', refreshOwnRoom)
+    .on('status', (status) => diagnosticEvent('realtime', 'rooms.status', { status }, status === 'offline' ? 'warn' : 'info'))
     .on('error', onError)
 
   // Admins additionally receive changes for every member of their resources:
@@ -597,6 +643,7 @@ function subscribeLive(client: TallpondClient, activeShareId: string) {
         .on('insert', changed)
         .on('update', changed)
         .on('delete', () => emitMembershipChange(shareId))
+        .on('status', (status) => diagnosticEvent('realtime', 'roster.status', { scope: diagnosticAlias('workspace', shareId), status }, status === 'offline' ? 'warn' : 'info'))
         .on('error', onError)
     })
     : []
@@ -661,13 +708,25 @@ export async function reconcileAuthoritativeAbsence(store: LocalStore, seenBySco
   })
 }
 
-export async function fullSync() {
-  if (shareMigrationPromise) await shareMigrationPromise
-  fullSyncPromise ??= (async () => {
+export async function fullSync(trigger = 'unspecified') {
+  if (shareMigrationPromise) {
+    diagnosticEvent('sync', 'full-sync.waiting-for-migration', { trigger })
+    await shareMigrationPromise
+  }
+  if (fullSyncPromise) {
+    diagnosticCount('sync', 'full-sync.joined')
+    return fullSyncPromise
+  }
+  const trace = diagnosticSpan('sync', 'full-sync', { trigger })
+  let stage = 'preflight'
+  let resourceCount = 0
+  let privateCount = 0
+  let sharedCount = 0
+  fullSyncPromise = (async () => {
     try {
       const client = tallpond
-      if (!client || !local || !state.connected) return
-      if (!navigator.onLine) { setState({ phase: 'offline' }); return }
+      if (!client || !local || !state.connected) { trace.end('canceled', { stage, reason: 'not-connected' }); return }
+      if (!navigator.onLine) { setState({ phase: 'offline' }); trace.end('canceled', { stage, reason: 'offline' }); return }
       setState({ phase: 'syncing', error: null, fullSyncing: true })
 
       // Captured before the resource list is fetched: a share created
@@ -680,6 +739,7 @@ export async function fullSync() {
       // Neither inventory depends on the other. Starting both together removes
       // a full gateway round trip from every startup, including an account with
       // no changes at all.
+      stage = 'base-inventory'
       const [privateRows, mountRows, resources] = await Promise.all([
         selectAll((cursor) => {
           const query = client.table('notes').select()
@@ -689,9 +749,12 @@ export async function fullSync() {
           const query = client.table('workspace_mounts').select()
           return cursor ? query.after(cursor) : query
         }),
-        client.resource.list({ type: 'shared_notes' })
+        diagnosticRequest('resources.list.shared-notes', () => client.resource.list({ type: 'shared_notes' }))
       ])
 
+      privateCount = privateRows.length
+      resourceCount = resources.length
+      diagnosticEvent('sync', 'full-sync.base-inventory', { private_rows: privateRows.length, mounts: mountRows.length, resources: resources.length }, 'info', trace.operation)
       seenByScope.set('', new Set(privateRows.map((row) => String(row.noteId))))
       for (const row of privateRows) await local.applyRemoteNote(rowToNote(row, ''))
 
@@ -700,6 +763,7 @@ export async function fullSync() {
       // workspaces must not turn startup into a several-dozen-request burst.
       // Applying their rows remains ordered below so IndexedDB writes stay
       // simple and deterministic.
+      stage = 'shared-inventory'
       const sharedInventories = await mapWithConcurrency(resources, 4, async (resource) => {
         const handle = client.resource(resource.id)
         const [rows, rooms, settings] = await Promise.all([
@@ -707,11 +771,14 @@ export async function fullSync() {
             const query = handle.table('member_notes').select()
             return cursor ? query.after(cursor) : query
           }),
-          handle.rooms.list(),
-          handle.table('member_workspace_settings').select('settingKey,value')
+          diagnosticRequest('rooms.list.workspace', () => handle.rooms.list()),
+          diagnosticRequest('db.member_workspace_settings.select.resource', () => handle.table('member_workspace_settings').select('settingKey,value'))
         ])
         return { resource, rows, rooms, settings }
       })
+      sharedCount = sharedInventories.reduce((total, inventory) => total + inventory.rows.length, 0)
+      diagnosticEvent('sync', 'full-sync.shared-inventory', { resources: resourceCount, rows: sharedCount, rooms: sharedInventories.reduce((total, inventory) => total + inventory.rooms.length, 0), concurrency: 4 }, 'info', trace.operation)
+      stage = 'apply-shared'
       const roles = { ...state.roles }
       const roomRoles: Record<string, string> = {}
       for (const { resource, rows, rooms, settings } of sharedInventories) {
@@ -745,6 +812,7 @@ export async function fullSync() {
         else if (note.localParentId !== undefined) await local.setLocalParent(note.id, undefined)
       }
 
+      stage = 'reconcile-absence'
       await reconcileAuthoritativeAbsence(local, seenByScope, scopeAtStart)
 
       // A share that has dropped out of the list may be one this user is no
@@ -779,6 +847,7 @@ export async function fullSync() {
       // Admins may have closed the app before an invite was accepted. Resolve
       // durable pending room grants during every pull, not only from a roster
       // socket that exists while that workspace is open.
+      stage = 'pending-grants'
       await Promise.all(resources
         .filter((resource) => ['owner', 'admin'].includes(resource.currentMember?.role ?? ''))
         .map((resource) => completePendingGrants(client, resource.id)))
@@ -787,13 +856,19 @@ export async function fullSync() {
       // Keep the selected workspace if it remains accessible; otherwise the
       // private socket stays live and no resource socket is opened.
       if (activeLiveShareId && !knownLiveShareIds.has(activeLiveShareId)) activeLiveShareId = ''
+      stage = 'subscriptions'
       subscribeLive(client, activeLiveShareId)
+      stage = 'outbox'
       await drainOutbox(client, local, deletedElsewhereIds)
       // After the drain, so a delete queued on this device reaches the server
       // before the purge decides whether that page's window has passed.
+      stage = 'purge'
       await purgeExpired(client, local)
+      stage = 'settle'
       await settle()
+      trace.end('ok', { stage: 'complete', resources: resourceCount, private_rows: privateCount, shared_rows: sharedCount, pending: state.pending })
     } catch (error) {
+      trace.end('failed', { stage, resources: resourceCount, private_rows: privateCount, shared_rows: sharedCount }, error)
       reportFailure(error)
     }
   })().finally(() => { fullSyncPromise = null; setState({ fullSyncing: false }) })
@@ -806,7 +881,7 @@ export async function fullSync() {
 // the identity provider) confirm with a call that *can* tell them apart:
 // getUser() resolves null only on a 401 and throws everything else.
 async function confirmSignedOut() {
-  try { return (await tallpond!.auth.getUser()) === null }
+  try { return (await diagnosticRequest('auth.user.confirm-signout', () => tallpond!.auth.getUser())) === null }
   catch (error) { return isAuthError(error) }
 }
 
@@ -815,7 +890,7 @@ async function establishSession() {
   const url = new URL(window.location.href)
   if (url.searchParams.get('code') && url.searchParams.get('state')) {
     let failure: unknown = null
-    try { await tallpond.auth.handleRedirectCallback(url) }
+    try { await diagnosticRequest('auth.redirect-callback', () => tallpond!.auth.handleRedirectCallback(url)) }
     catch (error) { failure = error }
     restoreRoute()
     // A callback that was attempted and failed is reported, not swallowed:
@@ -823,7 +898,7 @@ async function establishSession() {
     // against an error only the gateway ever saw.
     if (failure) throw failure
   }
-  const session = await tallpond.auth.getSession()
+  const session = await diagnosticRequest('auth.session', () => tallpond!.auth.getSession())
   if (!session.authenticated) {
     if (rememberedLogin() && !await confirmSignedOut()) {
       throw new Error('Could not reach Tallpond to check your session.')
@@ -852,7 +927,7 @@ async function establishSession() {
   // session we cannot safely sync. Failing here is strictly better than
   // proceeding — syncing under an unknown identity is what writes one user's
   // notes into another's scope.
-  const user: User | null = await tallpond.auth.getUser()
+  const user: User | null = await diagnosticRequest('auth.user', () => tallpond!.auth.getUser())
   if (!user) return false
   // The cookie changed again between the two identity requests. Do not sync
   // either account; the retry will take a fresh, internally consistent reading.
@@ -915,7 +990,7 @@ async function resume() {
         return
       }
     } catch (error) { reportFailure(error); return }
-    await fullSync()
+    await fullSync('resume')
   })().finally(() => { resumePromise = null })
   return resumePromise
 }
@@ -941,7 +1016,7 @@ export function refreshConnection() {
         return
       }
     } catch (error) { reportFailure(error); return }
-    if (!wasConnected || currentScope() !== previousScope) await fullSync()
+    if (!wasConnected || currentScope() !== previousScope) await fullSync('account-change')
   })().finally(() => { sessionRefreshPromise = null })
   return sessionRefreshPromise
 }
@@ -969,7 +1044,7 @@ export async function connectInteractive() {
   // Clearing the phase here is what releases the sticky auth-required latch.
   setState({ phase: 'connecting', error: null })
   try {
-    if (await establishSession()) { await fullSync(); return }
+    if (await establishSession()) { await fullSync('interactive-connect'); return }
   } catch (error) { reportFailure(error); throw error }
   stashRoute()
   await tallpond.auth.signIn()
@@ -1465,6 +1540,9 @@ export async function migrateNoteTreeToShare(client: TallpondClient, store: Loca
 // Sharing is an online operation: create (or recover) the resource, durably
 // re-home the subtree, drain its full state, and only then retire private rows.
 export async function shareNoteTree(store: LocalStore, root: Note, destination?: { shareId: string; roomId: string }, workspaceName?: string, includeSubpages = true) {
+  const trace = diagnosticSpan('sharing', 'migration', {
+    note: diagnosticAlias('note', root.id), destination: destination ? diagnosticAlias('workspace', destination.shareId) : 'new', include_subpages: includeSubpages
+  })
   const client = tallpond
   if (!client) throw new Error('Sync is not configured for this deployment.')
   if (!navigator.onLine) throw new Error('Reconnect to share this page.')
@@ -1482,7 +1560,10 @@ export async function shareNoteTree(store: LocalStore, root: Note, destination?:
 
   try {
     const migrationKey = shareMigrationKey(root.id)
-    if (root.shareId && localStorage.getItem(migrationKey) !== root.shareId) return root.shareId
+    if (root.shareId && localStorage.getItem(migrationKey) !== root.shareId) {
+      trace.end('canceled', { reason: 'already-shared' })
+      return root.shareId
+    }
 
     let resource = destination
       ? await client.resource(destination.shareId).get()
@@ -1500,7 +1581,11 @@ export async function shareNoteTree(store: LocalStore, root: Note, destination?:
 
     await migrateNoteTreeToShare(client, store, root, resource.id, destination?.roomId ?? '', includeSubpages)
     localStorage.removeItem(migrationKey)
+    trace.end('ok', { workspace: diagnosticAlias('workspace', resource.id) })
     return resource.id
+  } catch (error) {
+    trace.end('failed', undefined, error)
+    throw error
   } finally {
     // Reopen feeds only after local and remote scopes agree. Any active-page
     // catch-up waiting on the barrier may replace these subscriptions once.
@@ -1524,7 +1609,7 @@ export async function setActiveLiveShare(shareId: string) {
   // Switching workspaces closes the previous resource socket immediately.
   // Pull first so a workspace idle in the background is current before its
   // live tail begins; fullSync rebuilds exactly the new active subscription.
-  await fullSync()
+  await fullSync('workspace-open')
 }
 
 export async function leaveShare(store: LocalStore, shareId: string) {
@@ -1728,4 +1813,149 @@ export async function listMembers(shareId: string, roomId = ''): Promise<MemberI
     }))
     : await resource.members.list()
   return hydrateMemberProfiles(members)
+}
+
+// Collected only when the diagnostics sheet/report asks. This is intentionally
+// local and read-only: routine diagnostics must add no network work.
+export async function collectSyncDiagnostics(store: LocalStore, docTransport: string, activeNote: Note | null): Promise<DiagnosticSnapshot> {
+  const notes = store.getSnapshot()
+  const ops = await store.listOps()
+  const warnings: string[] = []
+  const byId = new Map(notes.map((note) => [note.id, note]))
+  for (const op of ops) {
+    const note = byId.get(op.noteId)
+    if (!note) { warnings.push(`outbox_missing_note kind=${op.kind}`); continue }
+    if (op.kind === 'update' && (op.shareId !== note.shareId || op.roomId !== note.roomId)) {
+      warnings.push(`outbox_route_mismatch note=${diagnosticAlias('note', note.id)} kind=${op.kind}`)
+    }
+  }
+
+  // Canonical parent cycles make pages unreachable. Missing parents are valid
+  // access boundaries and are counted in the local line rather than warned.
+  for (const note of notes) {
+    const seen = new Set<string>()
+    let cursor: Note | undefined = note
+    while (cursor?.parentId) {
+      if (seen.has(cursor.id)) { warnings.push(`parent_cycle note=${diagnosticAlias('note', note.id)}`); break }
+      seen.add(cursor.id)
+      cursor = byId.get(cursor.parentId)
+    }
+  }
+  if (state.phase === 'synced' && ops.length) warnings.push('phase_synced_with_pending_outbox')
+  if (state.user && store.scope !== state.user.id) warnings.push('account_scope_mismatch')
+  if (activeNote && !byId.has(activeNote.id)) warnings.push('active_note_missing')
+
+  const migrationPrefix = `motion-share-migration:${store.scope}:`
+  const staleMigrations = Object.keys(localStorage).filter((key) => key.startsWith(migrationPrefix)).length
+  if (staleMigrations) warnings.push(`share_migration_markers count=${staleMigrations}`)
+
+  const docRows = await store.allDocStates()
+  const assets = await store.allAssets()
+  const orphanDocs = docRows.filter((row) => !byId.has(row.noteId)).length
+  const orphanAssets = assets.filter((asset) => !byId.has(asset.noteId)).length
+  if (orphanDocs) warnings.push(`orphan_docs count=${orphanDocs}`)
+  if (orphanAssets) warnings.push(`orphan_assets count=${orphanAssets}`)
+
+  return {
+    sync: state.phase,
+    connected: state.connected,
+    fullSync: state.fullSyncing,
+    pending: ops.length,
+    docTransport,
+    activeScope: activeNote ? (activeNote.shareId ? `${diagnosticAlias('workspace', activeNote.shareId)}/${diagnosticAlias('room', activeNote.roomId)}` : 'private') : 'none',
+    notes: notes.length,
+    privateNotes: notes.filter((note) => !note.shareId).length,
+    sharedNotes: notes.filter((note) => Boolean(note.shareId)).length,
+    roomNotes: notes.filter((note) => Boolean(note.roomId)).length,
+    deletedNotes: notes.filter((note) => Boolean(note.deletedAt)).length,
+    oldestPendingMs: ops.length ? Date.now() - Math.min(...ops.map((op) => op.createdAt)) : 0,
+    pendingNotes: ops.filter((op) => op.kind === 'note').length,
+    pendingUpdates: ops.filter((op) => op.kind === 'update').length,
+    pendingBytes: ops.reduce((total, op) => total + (op.kind === 'update' ? Math.ceil(op.payload.length * 0.75) : 0), 0),
+    invariantOk: 9 - Math.min(9, warnings.length),
+    invariantWarnings: [...new Set(warnings)].slice(0, 8),
+  }
+}
+
+export function classifyBodyConsistency(localAhead: number, remoteAhead: number, queued: boolean) {
+  return localAhead === 0 && remoteAhead === 0 ? 'equal'
+    : localAhead > 0 && remoteAhead === 0 ? (queued ? 'local-ahead-queued' : 'local-ahead-unqueued')
+      : localAhead === 0 ? 'remote-ahead' : 'both-ahead'
+}
+
+export async function checkCurrentPageConsistency(store: LocalStore, note: Note): Promise<string> {
+  const trace = diagnosticSpan('sync', 'page-check', {
+    note: diagnosticAlias('note', note.id),
+    scope: note.shareId ? diagnosticAlias('workspace', note.shareId) : 'private',
+    room: diagnosticAlias('room', note.roomId),
+  })
+  if (!tallpond || !state.connected || !navigator.onLine) {
+    trace.end('canceled', { reason: 'not-connected' })
+    return 'CHECK current_page inconclusive reason=not-connected'
+  }
+
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), 10000)
+  try {
+    const metadata = await diagnosticRequest('db.notes.select.page-check', () => notesTable(tallpond!, note.shareId, note.roomId).select().eq('noteId', note.id))
+    const remoteMeta = metadata[0]
+    const metadataState = !remoteMeta ? 'missing' : metadata.length > 1 ? 'ambiguous' : 'present'
+    const metadataEqual = Boolean(remoteMeta)
+      && String(remoteMeta.title ?? '') === note.title
+      && String(remoteMeta.parentId ?? '') === note.parentId
+      && Number(remoteMeta.deletedAt ?? 0) === note.deletedAt
+      && Number(remoteMeta.clientUpdatedAt ?? 0) === note.updatedAt
+
+    const rows: Row[] = []
+    let cursor: string | undefined
+    let payloadBytes = 0
+    let limited = false
+    do {
+      let query = updatesTable(tallpond, note.shareId, note.roomId).select().eq('noteId', note.id).limit(200)
+      if (cursor) query = query.after(cursor)
+      const page = await diagnosticRequest('db.note_updates.select.page-check', () => tallpond!.gateway.request<{ rows: Row[]; nextCursor?: string | null }>('/v1/db/query', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(query.toRequest()), signal: controller.signal
+      }))
+      for (const row of page.rows) {
+        const payload = typeof row.payload === 'string' ? row.payload : ''
+        payloadBytes += Math.ceil(payload.length * 0.75)
+        if (rows.length >= 1000 || payloadBytes > 8 * 1024 * 1024) { limited = true; break }
+        rows.push(row)
+      }
+      cursor = limited ? undefined : page.nextCursor ?? undefined
+    } while (cursor)
+
+    if (limited) {
+      trace.end('partial', { metadata: metadataState, rows: rows.length, bytes: payloadBytes, reason: 'limit' })
+      return `CHECK current_page inconclusive reason=limit metadata=${metadataState} rows=${rows.length} bytes=${payloadBytes}`
+    }
+
+    const localState = await store.getDocState(note.id)
+    const localDoc = new Y.Doc()
+    const remoteDoc = new Y.Doc()
+    if (localState) Y.applyUpdate(localDoc, fromBase64(localState))
+    let malformed = 0
+    for (const row of rows) {
+      try { if (row.payload) Y.applyUpdate(remoteDoc, fromBase64(String(row.payload))) }
+      catch { malformed += 1 }
+    }
+    const localDelta = Y.encodeStateAsUpdate(localDoc, Y.encodeStateVector(remoteDoc))
+    const remoteDelta = Y.encodeStateAsUpdate(remoteDoc, Y.encodeStateVector(localDoc))
+    const localAhead = localDelta.length > 2 ? localDelta.length : 0
+    const remoteAhead = remoteDelta.length > 2 ? remoteDelta.length : 0
+    localDoc.destroy(); remoteDoc.destroy()
+
+    const queued = (await store.listOps()).some((op) => op.noteId === note.id)
+    const body = classifyBodyConsistency(localAhead, remoteAhead, queued)
+    const outcome = metadataEqual && body === 'equal' ? 'equal' : body === 'local-ahead-queued' ? 'pending' : 'different'
+    trace.end(outcome === 'equal' || outcome === 'pending' ? 'ok' : 'partial', { metadata: metadataState, metadata_equal: metadataEqual, body, rows: rows.length, bytes: payloadBytes, malformed })
+    return `CHECK current_page outcome=${outcome} metadata=${metadataState} metadata_equal=${metadataEqual ? 'yes' : 'no'} body=${body} local_ahead_bytes=${localAhead} remote_ahead_bytes=${remoteAhead} queued=${queued ? 'yes' : 'no'} rows=${rows.length} bytes=${payloadBytes} malformed=${malformed}`
+  } catch (error) {
+    const reason = error instanceof DOMException && error.name === 'AbortError' ? 'timeout' : 'request-failed'
+    trace.end('failed', { reason }, error)
+    const requestId = (error as { requestId?: string | null } | null)?.requestId
+    return `CHECK current_page inconclusive reason=${reason}${requestId ? ` request=${requestId}` : ''}`
+  } finally {
+    window.clearTimeout(timer)
+  }
 }
