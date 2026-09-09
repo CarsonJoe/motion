@@ -150,6 +150,9 @@ nav { overflow: visible; }
 @media (hover: hover) { .page-menu button:hover { background: #383838; } }
 .page-menu .danger { color: #ee9999; }
 .sidebar-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: auto; padding: 13px 8px 0; color: #8e8e8e; font-size: 12px; }
+.sync-status { display: inline-grid; place-items: center; }
+.sync-spinner { box-sizing: border-box; width: 11px; height: 11px; border: 1px solid rgba(255, 255, 255, .18); border-top-color: rgba(255, 255, 255, .62); border-radius: 50%; animation: sync-spinner-turn 900ms linear infinite; }
+@keyframes sync-spinner-turn { to { transform: rotate(360deg); } }
 .local-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #6f6f6f; }
 .connected-dot { background: #54c98f; }
 /* The only dot left. Informational states say their piece in muted text and

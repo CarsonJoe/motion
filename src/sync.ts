@@ -258,6 +258,25 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, run: (item: T
   return results
 }
 
+// Resource listings are newest-created first, which has no relationship to
+// what the user is waiting to open. Keep the selected workspace at the front,
+// then use the newest locally known page as a useful approximation of recent
+// activity. Unknown/new memberships still follow in the server's order.
+export function prioritizeResources<T extends { id: string }>(resources: T[], notes: Array<Pick<Note, 'shareId' | 'updatedAt'>>, activeShareId: string): T[] {
+  const recency = new Map<string, number>()
+  for (const note of notes) {
+    if (!note.shareId) continue
+    recency.set(note.shareId, Math.max(recency.get(note.shareId) ?? 0, note.updatedAt))
+  }
+  return resources.map((resource, index) => ({ resource, index })).sort((a, b) => {
+    const aActive = a.resource.id === activeShareId ? 1 : 0
+    const bActive = b.resource.id === activeShareId ? 1 : 0
+    return bActive - aActive
+      || (recency.get(b.resource.id) ?? 0) - (recency.get(a.resource.id) ?? 0)
+      || a.index - b.index
+  }).map(({ resource }) => resource)
+}
+
 const rowToNote = (row: Row, shareId: string): Note => ({
   id: String(row.noteId),
   title: String(row.title ?? ''),
@@ -759,33 +778,33 @@ export async function fullSync(trigger = 'unspecified') {
       for (const row of privateRows) await local.applyRemoteNote(rowToNote(row, ''))
 
       // Shared resources are independent scopes too. Fetch them with bounded
-      // concurrency — three requests per resource, and an account in a dozen
+      // concurrency — two requests per resource, and an account in a dozen
       // workspaces must not turn startup into a several-dozen-request burst.
+      // Workspace defaults are intentionally absent here: they do not affect
+      // discovery or permissions and getWorkspaceDefault refreshes them when
+      // the sharing UI actually needs them. Pulling that one-row preference
+      // for every workspace made private-only startup wait on unrelated work.
       // Applying their rows remains ordered below so IndexedDB writes stay
       // simple and deterministic.
       stage = 'shared-inventory'
-      const sharedInventories = await mapWithConcurrency(resources, 4, async (resource) => {
+      const prioritizedResources = prioritizeResources(resources, startingNotes, activeLiveShareId)
+      const sharedInventories = await mapWithConcurrency(prioritizedResources, 4, async (resource) => {
         const handle = client.resource(resource.id)
-        const [rows, rooms, settings] = await Promise.all([
+        const [rows, rooms] = await Promise.all([
           selectAll((cursor) => {
             const query = handle.table('member_notes').select()
             return cursor ? query.after(cursor) : query
           }),
-          diagnosticRequest('rooms.list.workspace', () => handle.rooms.list()),
-          diagnosticRequest('db.member_workspace_settings.select.resource', () => handle.table('member_workspace_settings').select('settingKey,value'))
+          diagnosticRequest('rooms.list.workspace', () => handle.rooms.list())
         ])
-        return { resource, rows, rooms, settings }
+        return { resource, rows, rooms }
       })
       sharedCount = sharedInventories.reduce((total, inventory) => total + inventory.rows.length, 0)
       diagnosticEvent('sync', 'full-sync.shared-inventory', { resources: resourceCount, rows: sharedCount, rooms: sharedInventories.reduce((total, inventory) => total + inventory.rooms.length, 0), concurrency: 4 }, 'info', trace.operation)
       stage = 'apply-shared'
       const roles = { ...state.roles }
       const roomRoles: Record<string, string> = {}
-      for (const { resource, rows, rooms, settings } of sharedInventories) {
-        const defaultSetting = settings.find((row) => row.settingKey === 'pageAccessDefault')?.value
-        if (defaultSetting === 'parent' || defaultSetting === 'workspace' || defaultSetting === 'custom' || defaultSetting === 'private') {
-          localStorage.setItem(workspaceDefaultKey(currentScope(), resource.id), defaultSetting === 'private' ? 'custom' : defaultSetting)
-        }
+      for (const { resource, rows, rooms } of sharedInventories) {
         if (resource.currentMember?.role) {
           roles[resource.id] = resource.currentMember.role
           localStorage.setItem(roleKey(resource.id), resource.currentMember.role)

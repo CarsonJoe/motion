@@ -16,7 +16,7 @@ Object.defineProperty(globalThis, 'localStorage', {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: false }, configurable: true })
 
 const { openLocalStore } = await import('./local')
-const { classifyBodyConsistency, deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
+const { classifyBodyConsistency, deleteNoteTree, drainOutbox, getSyncState, migrateNoteTreeToShare, moveNoteTreeToRoom, prioritizeResources, purgeExpiredLocalCopies, reconcileAuthoritativeAbsence, restoreNoteTree, saveNote, trashRoots, TRASH_RETENTION_MS } = await import('./sync')
 const { fromBase64, toBase64 } = await import('./codec')
 import type { Note } from './local'
 import type { TallpondClient } from './sync'
@@ -68,6 +68,26 @@ const encodedInsert = (value: string) => {
   doc.getText('content').insert(0, value)
   return toBase64(Y.encodeStateAsUpdate(doc))
 }
+
+describe('workspace sync priority', () => {
+  it('pulls the open workspace first, then locally recent workspaces', () => {
+    const resources = [{ id: 'unknown' }, { id: 'older' }, { id: 'active' }, { id: 'recent' }]
+    const notes = [
+      { shareId: 'older', updatedAt: 10 },
+      { shareId: 'recent', updatedAt: 50 },
+      { shareId: 'active', updatedAt: 1 }
+    ]
+
+    expect(prioritizeResources(resources, notes, 'active').map((resource) => resource.id))
+      .toEqual(['active', 'recent', 'older', 'unknown'])
+  })
+
+  it('preserves server order when no local priority is known', () => {
+    const resources = [{ id: 'first' }, { id: 'second' }, { id: 'third' }]
+    expect(prioritizeResources(resources, [], '').map((resource) => resource.id))
+      .toEqual(['first', 'second', 'third'])
+  })
+})
 
 describe('share promotion', () => {
   it('durably re-homes the whole subtree before the first remote write can fail', async () => {
